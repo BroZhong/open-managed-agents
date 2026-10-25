@@ -1,0 +1,1958 @@
+{
+ "spike": "env-spike-20261025",
+ "issue": 299,
+ "adr": "docs/adr/0024-environments.md",
+ "window": {
+  "start": "2026-10-25T15:29:07Z",
+  "cleanupVerified": "2026-10-25T16:29:36Z"
+ },
+ "cluster": "agent-platform (kubectl --kubeconfig ~/.kube/agent-platform-config)",
+ "facts": {
+  "autoStoryV2": {
+   "resourceVersion": "66031925",
+   "generation": 20,
+   "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+   "amd64Manifest": "sha256:0f82d36af195d931c2b8981cbbef049643d937f6a8ae4287313d1b9ad8099466",
+   "layers": 65,
+   "entrypoint": [
+    "bash",
+    "/root/.jupyter/start-up.sh"
+   ],
+   "cmd": null,
+   "user": "root",
+   "workingDir": "/root",
+   "envNames": [
+    "PATH",
+    "PIP_DEFAULT_TIMEOUT",
+    "PIP_DISABLE_PIP_VERSION_CHECK",
+    "PIP_NO_CACHE_DIR",
+    "JUPYTER_CONFIG_PATH",
+    "IPYTHON_CONFIG_PATH",
+    "SERVER_PATH",
+    "JAVA_VERSION",
+    "JAVA_HOME",
+    "IJAVA_VERSION",
+    "DENO_INSTALL",
+    "DENO_VERSION",
+    "R_VERSION",
+    "HOME",
+    "WORKSPACE_DIR",
+    "STORY_SEED_WORKSPACE",
+    "MEDIAKIT_OUTPUT_PATH",
+    "XDG_CACHE_HOME",
+    "NPM_CONFIG_CACHE",
+    "NPM_CONFIG_PREFIX",
+    "NODE_PATH",
+    "PIP_CACHE_DIR",
+    "PYTHONPATH",
+    "TMPDIR",
+    "MEDIAKIT_SURFACE",
+    "MEDIAKIT_RUNTIME",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy"
+   ],
+   "proxyEnvInImageConfig": {
+    "HTTP_PROXY": "http://sing-box.oma-infra.svc.cluster.local:7890",
+    "HTTPS_PROXY": "http://sing-box.oma-infra.svc.cluster.local:7890",
+    "http_proxy": "http://sing-box.oma-infra.svc.cluster.local:7890",
+    "https_proxy": "http://sing-box.oma-infra.svc.cluster.local:7890",
+    "NO_PROXY": "localhost,127.0.0.1,::1,.svc,.cluster.local",
+    "no_proxy": "localhost,127.0.0.1,::1,.svc,.cluster.local"
+   },
+   "labels": {
+    "org.opencontainers.image.base.name": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:6f5eedfc6c0b68056c79d316b9676487a481eb28dcc2f035ffed28d8db591eb8",
+    "org.opencontainers.image.description": "E2B media sandbox with VFS, FFmpeg, Gemini, MediaKit and offline Whisper subtitles",
+    "org.opencontainers.image.revision": "7714959c04e408bcf5ca8fdb29329f6fa68af659",
+    "org.opencontainers.image.title": "auto-story-v2-runtime-overlay",
+    "org.opencontainers.image.version": "0.3.3",
+    "tech.welltop.pi-sdk.version": "0.83.0",
+    "tech.welltop.vfs-cli.version": "v0.3.19"
+   },
+   "startUpSh": "bash script: start_jupyter_server & (curl loop + uvicorn :49999); foreground `jupyter server`; no trap",
+   "envdStart": "postStart exec bash /mnt/envd/envd-run.sh (agent-runtime injected)"
+  },
+  "buildPod": {
+   "kernel": "5.10.134-013.15.2.kangaroo.al8.x86_64",
+   "runtime": "Kata (KATA_CONTAINER=true)",
+   "capEff": "00000000a80425fb (no CAP_SYS_ADMIN)",
+   "/dev/fuse": "absent",
+   "mountAsRoot": "EPERM",
+   "unshare -m": "EPERM",
+   "unshare -U -r -m": "allowed; tmpfs, native overlay and overlay+userxattr mounts succeed in the user namespace",
+   "buildahUnshareCommand": "fails: memfd_create(): Invalid argument (v1.43.5 and v1.40.1)"
+  }
+ },
+ "buildah": {
+  "images": {
+   "quay v1.43.5": "quay.io/buildah/stable@sha256:4cb71c73553ba30c0891a004636a43ee3e0aa0a04ef6cba760404b2c87949d5c",
+   "ACS doc v1.40.1": "registry-cn-hangzhou.ack.aliyuncs.com/ack-demo/buildah@sha256:32a7c27fcfb36a400dda6ebf52df82d4c49666abe83dca69ee5652c7d711e89f"
+  },
+  "storage": [
+   {
+    "image": "quay v1.43.5",
+    "config": "image default: overlay + mount_program=/usr/bin/fuse-overlayfs",
+    "pull": "ok",
+    "run": "FAIL: fuse: device /dev/fuse not found"
+   },
+   {
+    "image": "quay v1.43.5",
+    "config": "vfs",
+    "pull": "FAIL: no space left on device after 403.9 s, graphroot 51.86 GB for a 4.38 GB image (60 GiB ephemeral)",
+    "run": "ok on a small image"
+   },
+   {
+    "image": "quay v1.43.5",
+    "config": "overlay, no mount_program (native, rootless, userxattr)",
+    "pull": "ok 67.1 s, 4.38 GB",
+    "run": "ok",
+    "chosen": true
+   },
+   {
+    "image": "ACS doc v1.40.1",
+    "config": "image default: overlay, no mount_program",
+    "pull": "ok (small image)",
+    "run": "ok, overlay mounted with userxattr"
+   }
+  ],
+  "storageConfUsed": "[storage]\ndriver = \"overlay\"\nrunroot = \"/run/containers/storage-native\"\ngraphroot = \"/var/lib/containers/native\"\n[storage.options.overlay]\nmountopt = \"nodev\"\n",
+  "buildahInfoNative": {
+   "rootless": true,
+   "OCIRuntime": "crun",
+   "GraphDriverName": "overlay",
+   "GraphOptions": [
+    "overlay.mountopt=nodev"
+   ],
+   "NativeOverlayDiff": "true",
+   "BackingFilesystem": "extfs"
+  },
+  "isolation": "chroot (BUILDAH_ISOLATION=chroot from the image; RUN runs as real root, uid_map 0 0 4294967295)",
+  "results": [
+   {
+    "mode": "overlay",
+    "step": "pull-base",
+    "rc": 0,
+    "ms": 67110,
+    "start": "2026-10-25T15:35:29Z",
+    "rootBytes": 4383287232,
+    "dfUsed": 8081272832
+   },
+   {
+    "mode": "overlay",
+    "step": "build-base-tini",
+    "rc": 0,
+    "ms": 17953,
+    "start": "2026-10-25T15:37:21Z",
+    "rootBytes": 4385741881,
+    "dfUsed": 8084140032
+   },
+   {
+    "mode": "overlay",
+    "step": "push-base-tini",
+    "rc": 0,
+    "ms": 4792,
+    "start": "2026-10-25T15:37:47Z",
+    "rootBytes": 4385741881,
+    "dfUsed": 8084238336
+   },
+   {
+    "mode": "overlay",
+    "step": "pull-base-tini",
+    "rc": 0,
+    "ms": 65111,
+    "start": "2026-10-25T15:39:42Z",
+    "rootBytes": 4385681665,
+    "dfUsed": 8082337792
+   },
+   {
+    "mode": "overlay",
+    "step": "build-env-video",
+    "rc": 18,
+    "ms": 380648,
+    "start": "2026-10-25T15:40:48Z",
+    "rootBytes": 4385681733,
+    "dfUsed": 8083779584
+   },
+   {
+    "mode": "overlay",
+    "step": "build-env-video",
+    "rc": 0,
+    "ms": 29813,
+    "start": "2026-10-25T15:50:34Z",
+    "rootBytes": 4437599392,
+    "dfUsed": 8139988992
+   },
+   {
+    "mode": "overlay",
+    "step": "push-env-video",
+    "rc": 0,
+    "ms": 5453,
+    "start": "2026-10-25T15:51:26Z",
+    "rootBytes": 4437599392,
+    "dfUsed": 8140115968
+   },
+   {
+    "mode": "overlay",
+    "step": "push-env-video-index",
+    "rc": 0,
+    "ms": 3028,
+    "start": "2026-10-25T15:51:40Z",
+    "rootBytes": 4437600651,
+    "dfUsed": 8140185600
+   },
+   {
+    "mode": "overlay",
+    "step": "build-env-video-proxy",
+    "rc": 0,
+    "ms": 32417,
+    "start": "2026-10-25T16:02:58Z",
+    "rootBytes": 4489518235,
+    "dfUsed": 8198180864
+   },
+   {
+    "mode": "overlay",
+    "step": "build-env-video-proxyenv",
+    "rc": 0,
+    "ms": 26885,
+    "start": "2026-10-25T16:04:23Z",
+    "rootBytes": 4541435832,
+    "dfUsed": 8253800448
+   },
+   {
+    "mode": "vfs",
+    "step": "pull-base",
+    "rc": 125,
+    "ms": 403917,
+    "start": "2026-10-25T15:38:48Z",
+    "rootBytes": 51861091792,
+    "dfUsed": 60802142208
+   },
+   {
+    "mode": "vfs",
+    "step": "build-base-tini",
+    "rc": 125,
+    "ms": 46,
+    "start": "2026-10-25T15:45:41Z",
+    "rootBytes": 51861091792,
+    "dfUsed": 60802174976
+   }
+  ],
+  "initSteps": {
+   "env-video (pushed; GitHub via explicit --proxy, apt/pip direct, base proxy ENV unset in RUN)": {
+    "start->fetch_vfs": 0.01,
+    "fetch_vfs->fetch_mediakit": 2.71,
+    "fetch_mediakit->pip": 2.52,
+    "pip->apt": 2.69,
+    "apt->profile": 18.46,
+    "profile->done": 0.02,
+    "initTotal": 26.41,
+    "downloads": [],
+    "routes": [],
+    "aptDebug": [],
+    "proxyEnvSeenByScript": null
+   },
+   "env-video-proxy (not pushed; proxy via buildah --http-proxy passthrough; base ENV wins)": {
+    "start->fetch_vfs": 17.08,
+    "fetch_vfs->fetch_mediakit": 2.73,
+    "fetch_mediakit->pip": 2.59,
+    "pip->apt": 2.77,
+    "apt->profile": 3.73,
+    "profile->done": 0.02,
+    "initTotal": 28.93,
+    "downloads": [
+     [
+      "vfs-cli",
+      "2.623037",
+      "3587831",
+      "10.0.165.246:7890"
+     ],
+     [
+      "mediakit-cli",
+      "2.492559",
+      "3037193",
+      "10.0.165.246:7890"
+     ]
+    ],
+    "routes": [
+     [
+      "https://mirrors.aliyun.com/pypi/simple/tomli-w/",
+      "200",
+      "10.0.165.246:7890",
+      "0.080646"
+     ],
+     [
+      "https://mirrors.aliyun.com/debian/dists/bookworm/Release",
+      "200",
+      "10.0.165.246:7890",
+      "0.073362"
+     ]
+    ],
+    "aptDebug": [
+     "CONNECT mirrors.aliyun.com:443 HTTP/1.1",
+     "CONNECT deb.nodesource.com:443 HTTP/1.1",
+     "GET /debian/dists/bookworm/InRelease HTTP/1.1",
+     "GET /debian/dists/bookworm-updates/InRelease HTTP/1.1"
+    ],
+    "proxyEnvSeenByScript": "HTTPS_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890 HTTP_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890 NO_PROXY=localhost,127.0.0.1,::1,.svc,.cluster.local http_proxy=http://sing-box.oma-infra.svc.cluster.local:7890 https_proxy=http://sing-box.oma-infra.svc.cluster.local:7890 no_proxy=localhost,127.0.0.1,::1,.svc,.cluster.local "
+   },
+   "env-video-proxyenv (not pushed; proxy + NO_PROXY in the bind-mounted env file)": {
+    "start->fetch_vfs": 12.15,
+    "fetch_vfs->fetch_mediakit": 2.44,
+    "fetch_mediakit->pip": 2.76,
+    "pip->apt": 2.76,
+    "apt->profile": 3.4,
+    "profile->done": 0.02,
+    "initTotal": 23.53,
+    "downloads": [
+     [
+      "vfs-cli",
+      "2.335616",
+      "3587831",
+      "10.0.165.246:7890"
+     ],
+     [
+      "mediakit-cli",
+      "2.668949",
+      "3037193",
+      "10.0.165.246:7890"
+     ]
+    ],
+    "routes": [
+     [
+      "https://mirrors.aliyun.com/pypi/simple/tomli-w/",
+      "200",
+      "180.97.214.184:443",
+      "0.080163"
+     ],
+     [
+      "https://mirrors.aliyun.com/debian/dists/bookworm/Release",
+      "200",
+      "180.97.214.188:443",
+      "0.129908"
+     ]
+    ],
+    "aptDebug": [
+     "CONNECT deb.nodesource.com:443 HTTP/1.1",
+     "GET /debian/dists/bookworm/InRelease HTTP/1.1",
+     "GET /debian/dists/bookworm-updates/InRelease HTTP/1.1",
+     "GET /debian-security/dists/bookworm-security/InRelease HTTP/1.1"
+    ],
+    "proxyEnvSeenByScript": "HTTPS_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890 HTTP_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890 NO_PROXY=localhost,127.0.0.1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com http_proxy=http://sing-box.oma-infra.svc.cluster.local:7890 https_proxy=http://sing-box.oma-infra.svc.cluster.local:7890 no_proxy=localhost,127.0.0.1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com "
+   }
+  },
+  "firstEnvBuildFailure": "direct GitHub: vfs-cli 3.5 MB took ~290 s, mediakit-cli curl (18) HTTP/2 stream not closed cleanly; build rc=18 after 380.6 s",
+  "githubDirectProbe": [
+   "vfs-cli try1 rc=28 timeout 15 s",
+   "mediakit try1 rc=56 after 90.2 s",
+   "vfs-cli try2 rc=28 timeout 15 s",
+   "mediakit try2 rc=28 timeout 15 s"
+  ],
+  "argProbe": "ARG + --build-arg OMA_SPIKE_ARG_PROBE=… → history created_by \"|1 OMA_SPIKE_ARG_PROBE=arg-probe-value-20261025 /bin/sh -c …\" (value persisted); not in config Env",
+  "proxyProbe": {
+   "passthrough (--http-proxy=true, env on buildah)": "RUN sees base image NO_PROXY (localhost,127.0.0.1,::1,.svc,.cluster.local); build value ignored; not in history",
+   "--build-arg NO_PROXY/no_proxy": "same: base image ENV wins; not in history (predefined proxy args)",
+   "sourced env file (set -a; . file)": "build value wins; not in config Env or history"
+  }
+ },
+ "images": {
+  "base-tini": {
+   "digest": "sha256:aaec4b2da3c99ed9c4ec5414306d9921d7198d6b1632e8767bcb4e954e445471",
+   "mediaType": "application/vnd.oci.image.manifest.v1+json",
+   "layers": 66,
+   "newLayerBytes": 766967,
+   "totalBytes": 1875669065,
+   "entrypoint": [
+    "/usr/bin/tini",
+    "-g",
+    "--"
+   ],
+   "cmd": [
+    "bash",
+    "/root/.jupyter/start-up.sh"
+   ],
+   "envEqualsBase": true,
+   "historyAdded": [
+    "/bin/sh -c #(nop) USER root",
+    "/bin/sh -c env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy bash -euo pipefail -c '      apt-get update &&       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ",
+    "/bin/sh -c #(nop) ENTRYPOINT [\"/usr/bin/tini\", \"-g\", \"--\"]",
+    "/bin/sh -c #(nop) CMD [\"bash\", \"/root/.jupyter/start-up.sh\"]",
+    "/bin/sh -c #(nop) LABEL dev.oma.spike=\"env-spike-20261025\" dev.oma.base-of=\"welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d\""
+   ]
+  },
+  "env-video": {
+   "digest": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "mediaType": "application/vnd.oci.image.manifest.v1+json",
+   "layers": 67,
+   "sharedWithBaseTini": true,
+   "newLayerBytes": 32297442,
+   "newLayerUncompressedBytes": 51752794,
+   "newLayerEntries": 950,
+   "newLayerTop": {
+    "home/user/.cache (npm _cacache copied up by chown -R)": [
+     744,
+     23387500
+    ],
+    "usr/local/bin (vfs-cli, mediakit-cli)": [
+     3,
+     15950160
+    ],
+    "usr/lib/file": [
+     2,
+     8281024
+    ],
+    "var/lib/dpkg": [
+     42,
+     598227
+    ],
+    "opt/oma/manifest.json": [
+     1,
+     14392
+    ]
+   },
+   "totalBytes": 1907967983,
+   "envEqualsBaseTini": true,
+   "historyAdded": [
+    "/bin/sh -c --mount=type=bind,source=init.sh,target=/tmp/oma-init.sh     --mount=type=bind,source=build.env,target=/tmp/oma-build.env     cd /home/user && set -a && . /tmp/oma-build.env && set +a &&     env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy bash -euo pipefail /tmp/oma-init.sh:sha256:c99179175bc40d37721f851b1f2268d4271939defcd933745a0b010eaa744d47:sha256:bfa8da19988dde23f4ae39c64b592718d4e1b22cc8699ed73861659ca519e258",
+    "/bin/sh -c --mount=type=bind,source=write-manifest.sh,target=/run/oma-write-manifest     chown -R user:user /home/user && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/*     && mkdir -p /opt/oma && bash /run/oma-write-manifest > /opt/oma/manifest.json:sha256:c0d6cb15945d29d0e4b169fd26a6b5799a243393681ae7af3e17421d68316db3",
+    "/bin/sh -c #(nop) LABEL dev.oma.environment=env_spike_video_production dev.oma.build=bld_spike_20261025"
+   ],
+   "leakScan": {
+    "plain-build-value-20261025": false,
+    "OMA_SPIKE_BUILD_PLAIN": false,
+    "OMA_GITHUB_PROXY": false,
+    "oma-auth/auth.json/REGISTRY_AUTH/password/Basic/dockerconfig": false,
+    "oma-build.env (path only)": true
+   }
+  },
+  "env-video-index": {
+   "digest": "sha256:042382dcb7cbfeb0c186d99b1fa77c2e478ddc1d4d66617e06105a39feaca777",
+   "mediaType": "application/vnd.oci.image.index.v1+json",
+   "manifests": [
+    {
+     "mediaType": "application/vnd.oci.image.manifest.v1+json",
+     "digest": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+     "platform": {
+      "architecture": "amd64",
+      "os": "linux"
+     }
+    }
+   ]
+  },
+  "acrTagsBeforeDelete": "3 [('env-video-index-20261025', '042382dcb7cbfeb0c18', 'NORMAL'), ('env-video-20261025', '718bc931e3835960411', 'NORMAL'), ('base-tini-20261025', 'aaec4b2da3c99ed9c4e', 'NORMAL')]"
+ },
+ "pool": {
+  "name": "oma-env-spike-pool",
+  "createdAt": "2026-10-25T15:38:24Z",
+  "replicas": 2,
+  "terminationGracePeriodSeconds": 30,
+  "removedEnv": 18,
+  "volumes": [
+   "vfs-cli-policy (ConfigMap vfs-cli-policy-test-v1)"
+  ],
+  "note": "live template has no source.env volume/mount",
+  "poolPodPullSeconds": [
+   73.0,
+   81.0
+  ],
+  "imageCacheHit": false,
+  "autoStoryV2MatchedCache": "imc-uf6c2ys46pzt3c3grd74"
+ },
+ "samples": [
+  {
+   "label": "same-smoke",
+   "name": "oma-env-spike-pool-n2r9w",
+   "image": "sha256:aaec4b2da3c99ed9c4ec5414306d9921d7198d6b1632e8767bcb4e954e445471",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 0.1
+   },
+   "createMs": 208,
+   "createMsSource": "wallclock(createStartedAt->createEndedAt)",
+   "firstCmdMs": null,
+   "secondCmdMs": null,
+   "claimToKillingS": null,
+   "killingToOldExitS": null,
+   "oldExitCode": null,
+   "oldExitToNewStartS": null,
+   "newStartToCreateReturnS": null,
+   "restartCount": 0,
+   "containerStartedBeforeClaim": true,
+   "statusImageDigest": "sha256:aaec4b2da3c9",
+   "imageID": "sha256:aaec4b2da3c9",
+   "claimMetricsMs": {
+    "Total": 56.2,
+    "PickAndLock": 12.0,
+    "WaitReady": 29.2,
+    "InitRuntime": 15.0,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=<unset> OMA_SPIKE_HARD=<unset> OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=injected"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: /bin/bash: line 5: file: command not found",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "importlib.metadata.PackageNotFoundError: No package metadata was found for tomli-w",
+    "editor": "editor -> /usr/bin/editor",
+    "homeOwnership": [
+     "user:user /home/user",
+     "root:root /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "root:root /home/user/.local"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=755",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_NOT_WRITABLE",
+    "manifest": "MANIFEST_ABSENT",
+    "buildPlainSha": "BUILD_PLAIN_SHA_ABSENT",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=921",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1     921 tini",
+     "      7       1       7     921 bash",
+     "      9       7       7     921 jupyter-server",
+     "     20       1      11     921 envd",
+     "    504      20      11       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "dpkg-query: no packages found matching vim-tiny",
+     "dpkg-query: no packages found matching file",
+     "jq 1.6-2.1+deb12u1 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "7194330b5cccf5cf",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "same",
+   "name": "oma-env-spike-pool-krn5t",
+   "image": "sha256:aaec4b2da3c99ed9c4ec5414306d9921d7198d6b1632e8767bcb4e954e445471",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 73.0
+   },
+   "createMs": 1596,
+   "createMsSource": "sdk",
+   "firstCmdMs": 40,
+   "secondCmdMs": 33,
+   "claimToKillingS": null,
+   "killingToOldExitS": null,
+   "oldExitCode": null,
+   "oldExitToNewStartS": null,
+   "newStartToCreateReturnS": null,
+   "restartCount": 0,
+   "containerStartedBeforeClaim": true,
+   "statusImageDigest": "sha256:aaec4b2da3c9",
+   "imageID": "sha256:aaec4b2da3c9",
+   "claimMetricsMs": {
+    "Total": 1449.5,
+    "PickAndLock": 12.0,
+    "WaitReady": 23.9,
+    "InitRuntime": 1413.6,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Pulled",
+     "t": "2026-10-25T15:57:33Z",
+     "msg": "Successfully pulled image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:aaec4b2da3c99ed9c4ec541430"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T15:57:33Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T15:57:33Z",
+     "msg": "Started container sandbox"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=<unset> OMA_SPIKE_HARD=<unset> OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=injected"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: /bin/bash: line 5: file: command not found",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "importlib.metadata.PackageNotFoundError: No package metadata was found for tomli-w",
+    "editor": "editor -> /usr/bin/editor",
+    "homeOwnership": [
+     "user:user /home/user",
+     "root:root /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "root:root /home/user/.local"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=745",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_NOT_WRITABLE",
+    "manifest": "MANIFEST_ABSENT",
+    "buildPlainSha": "BUILD_PLAIN_SHA_ABSENT",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=5",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       5 tini",
+     "      8       1       8       5 bash",
+     "     17       8       8       5 bash",
+     "     18       8       8       5 jupyter-server",
+     "     21       1       9       5 envd",
+     "    388      17       8       1 uvicorn",
+     "    405      21       9       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "dpkg-query: no packages found matching vim-tiny",
+     "dpkg-query: no packages found matching file",
+     "jq 1.6-2.1+deb12u1 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "6009e9328b1e3c36",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "same",
+   "name": "oma-env-spike-pool-sdkmv",
+   "image": "sha256:aaec4b2da3c99ed9c4ec5414306d9921d7198d6b1632e8767bcb4e954e445471",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 89.0
+   },
+   "createMs": 204,
+   "createMsSource": "sdk",
+   "firstCmdMs": 111,
+   "secondCmdMs": 35,
+   "claimToKillingS": null,
+   "killingToOldExitS": null,
+   "oldExitCode": null,
+   "oldExitToNewStartS": null,
+   "newStartToCreateReturnS": null,
+   "restartCount": 0,
+   "containerStartedBeforeClaim": true,
+   "statusImageDigest": "sha256:aaec4b2da3c9",
+   "imageID": "sha256:aaec4b2da3c9",
+   "claimMetricsMs": {
+    "Total": 67.5,
+    "PickAndLock": 11.7,
+    "WaitReady": 20.6,
+    "InitRuntime": 35.2,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=<unset> OMA_SPIKE_HARD=<unset> OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=injected"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: /bin/bash: line 5: file: command not found",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "importlib.metadata.PackageNotFoundError: No package metadata was found for tomli-w",
+    "editor": "editor -> /usr/bin/editor",
+    "homeOwnership": [
+     "user:user /home/user",
+     "root:root /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "root:root /home/user/.local"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=745",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_NOT_WRITABLE",
+    "manifest": "MANIFEST_ABSENT",
+    "buildPlainSha": "BUILD_PLAIN_SHA_ABSENT",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=5",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       5 tini",
+     "      8       1       8       5 bash",
+     "     10       8       8       5 bash",
+     "     14       8       8       5 jupyter-server",
+     "     19       1       9       5 envd",
+     "    475      10       8       0 uvicorn",
+     "    488      19       9       0 bash",
+     "    499     488       9       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "dpkg-query: no packages found matching vim-tiny",
+     "dpkg-query: no packages found matching file",
+     "jq 1.6-2.1+deb12u1 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "18171af244c8a726",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "same",
+   "name": "oma-env-spike-pool-fqvrn",
+   "image": "sha256:aaec4b2da3c99ed9c4ec5414306d9921d7198d6b1632e8767bcb4e954e445471",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 92.2
+   },
+   "createMs": 182,
+   "createMsSource": "sdk",
+   "firstCmdMs": 38,
+   "secondCmdMs": 26,
+   "claimToKillingS": null,
+   "killingToOldExitS": null,
+   "oldExitCode": null,
+   "oldExitToNewStartS": null,
+   "newStartToCreateReturnS": null,
+   "restartCount": 0,
+   "containerStartedBeforeClaim": true,
+   "statusImageDigest": "sha256:aaec4b2da3c9",
+   "imageID": "sha256:aaec4b2da3c9",
+   "claimMetricsMs": {
+    "Total": 47.5,
+    "PickAndLock": 11.4,
+    "WaitReady": 23.8,
+    "InitRuntime": 12.3,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=<unset> OMA_SPIKE_HARD=<unset> OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=injected"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: /bin/bash: line 5: file: command not found",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "importlib.metadata.PackageNotFoundError: No package metadata was found for tomli-w",
+    "editor": "editor -> /usr/bin/editor",
+    "homeOwnership": [
+     "user:user /home/user",
+     "root:root /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "root:root /home/user/.local"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=755",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_NOT_WRITABLE",
+    "manifest": "MANIFEST_ABSENT",
+    "buildPlainSha": "BUILD_PLAIN_SHA_ABSENT",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=1248",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1    1248 tini",
+     "      8       1       8    1248 bash",
+     "     16       8       8    1248 jupyter-server",
+     "     19       1       9    1248 envd",
+     "    331      19       9       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "dpkg-query: no packages found matching vim-tiny",
+     "dpkg-query: no packages found matching file",
+     "jq 1.6-2.1+deb12u1 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "28469d61a6a4926b",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env",
+   "name": "oma-env-spike-pool-kwgkc",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 0.1
+   },
+   "createMs": 4160,
+   "createMsSource": "sdk",
+   "firstCmdMs": 123,
+   "secondCmdMs": 46,
+   "claimToKillingS": 1.2,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 1.0,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 4018.1,
+    "PickAndLock": 10.9,
+    "WaitReady": 3990.3,
+    "InitRuntime": 17.0,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:05:26Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:05:28Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:05:28Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:05:28Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=1",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      7       1       7       2 bash",
+     "      8       7       7       2 bash",
+     "      9       7       7       2 jupyter-server",
+     "     32       1      16       2 envd",
+     "    207      32      16       0 bash",
+     "    220       8       7 4123168608 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "89b47cc51c4b69b6",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env",
+   "name": "oma-env-spike-pool-bks2g",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 79.6
+   },
+   "createMs": 6849,
+   "createMsSource": "sdk",
+   "firstCmdMs": 108,
+   "secondCmdMs": 45,
+   "claimToKillingS": 3.8,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 1.0,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 6705.8,
+    "PickAndLock": 11.7,
+    "WaitReady": 6534.3,
+    "InitRuntime": 159.8,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Pulled",
+     "t": "2026-10-25T16:07:01Z",
+     "msg": "Successfully pulled image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:aaec4b2da3c99ed9c4ec541430"
+    },
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:07:05Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:07:07Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:07:07Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:07:07Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=4",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      9       1       9       2 bash",
+     "     10       9       9       2 bash",
+     "     11       9       9       2 jupyter-server",
+     "     30       1      23       2 envd",
+     "    217      10       9       0 uvicorn",
+     "    231      30      23       0 bash",
+     "    242     231      23       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "53f33aa70342e287",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env",
+   "name": "oma-env-spike-pool-vwxg6",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 85.9
+   },
+   "createMs": 5854,
+   "createMsSource": "sdk",
+   "firstCmdMs": 46,
+   "secondCmdMs": 48,
+   "claimToKillingS": 2.7,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 1.2,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 5718.4,
+    "PickAndLock": 11.4,
+    "WaitReady": 5469.1,
+    "InitRuntime": 237.9,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Pulled",
+     "t": "2026-10-25T16:08:46Z",
+     "msg": "Successfully pulled image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:aaec4b2da3c99ed9c4ec541430"
+    },
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:08:49Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:08:51Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:08:51Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:08:51Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=4",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      8       1       8       2 bash",
+     "      9       8       8       2 bash",
+     "     10       8       8       2 jupyter-server",
+     "     25       1      18       2 envd",
+     "    205       9       8       0 uvicorn",
+     "    214      25      18       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "b6bea247515be8fb",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-settled",
+   "name": "oma-env-spike-pool-27h8t",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 52.6,
+    "youngestReadyAgeS": 45.7
+   },
+   "createMs": 3908,
+   "createMsSource": "sdk",
+   "firstCmdMs": 39,
+   "secondCmdMs": 30,
+   "claimToKillingS": 0.7,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 1.2,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 3770.1,
+    "PickAndLock": 9.0,
+    "WaitReady": 3541.2,
+    "InitRuntime": 219.8,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:11:11Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:11:13Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:11:13Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:11:13Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=1",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      8       1       8       2 bash",
+     "      9       8       8       2 bash",
+     "     10       8       8       2 jupyter-server",
+     "     28       1      19       2 envd",
+     "    198       9       8       0 uvicorn",
+     "    199      28      19       0 bash",
+     "    209     199      19       0 bash",
+     "    210     199      19       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "c0a91a08420532a6",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-settled",
+   "name": "oma-env-spike-pool-wkcjc",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 129.3,
+    "youngestReadyAgeS": 45.0
+   },
+   "createMs": 4341,
+   "createMsSource": "sdk",
+   "firstCmdMs": 80,
+   "secondCmdMs": 31,
+   "claimToKillingS": 1.4,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 0.9,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 4207.1,
+    "PickAndLock": 8.4,
+    "WaitReady": 4033.1,
+    "InitRuntime": 165.7,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:13:37Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:13:39Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:13:39Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:13:39Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=1",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      9       1       9       2 bash",
+     "     10       9       9       2 bash",
+     "     11       9       9       2 jupyter-server",
+     "     28       1      18       2 envd",
+     "    218      28      18       0 bash",
+     "    236      10       9       0 uvicorn",
+     "    238     218      18       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "2923af81d6fb39ad",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-settled",
+   "name": "oma-env-spike-pool-8xbdg",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 129.0,
+    "youngestReadyAgeS": 47.7
+   },
+   "createMs": 4901,
+   "createMsSource": "sdk",
+   "firstCmdMs": 48,
+   "secondCmdMs": 30,
+   "claimToKillingS": 1.8,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 1.1,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 4763.8,
+    "PickAndLock": 11.9,
+    "WaitReady": 4592.8,
+    "InitRuntime": 159.1,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:16:03Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:16:05Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:16:05Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:16:05Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=4",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      7       1       7       2 bash",
+     "      8       7       7       2 bash",
+     "      9       7       7       2 jupyter-server",
+     "     30       1      19       2 envd",
+     "    206       8       7       0 uvicorn",
+     "    215      30      19       0 bash",
+     "    225     215      19       0 bash",
+     "    226     215      19       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "27b0119ff2f8267e",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-index",
+   "name": "oma-env-spike-pool-pq6zr",
+   "image": "sha256:042382dcb7cbfeb0c186d99b1fa77c2e478ddc1d4d66617e06105a39feaca777",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 111.8,
+    "youngestReadyAgeS": 47.5
+   },
+   "createMs": 3968,
+   "createMsSource": "sdk",
+   "firstCmdMs": 40,
+   "secondCmdMs": 29,
+   "claimToKillingS": 1.0,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 0.9,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:042382dcb7cb",
+   "imageID": "sha256:042382dcb7cb",
+   "claimMetricsMs": {
+    "Total": 3834.2,
+    "PickAndLock": 11.9,
+    "WaitReady": 3662.0,
+    "InitRuntime": 160.3,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:18:32Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:18:34Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:18:34Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:18:34Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:042382dcb7cbfeb0c186d99b1fa77c2e478ddc"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=1",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      8       1       8       2 bash",
+     "      9       8       8       2 bash",
+     "     10       8       8       2 jupyter-server",
+     "     28       1      17       2 envd",
+     "    214       9       8       0 uvicorn",
+     "    221      28      17       0 bash",
+     "    232     221      17       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "0151b21f0e380b69",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-index",
+   "name": "oma-env-spike-pool-6wnv8",
+   "image": "sha256:042382dcb7cbfeb0c186d99b1fa77c2e478ddc1d4d66617e06105a39feaca777",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 132.9,
+    "youngestReadyAgeS": 46.6
+   },
+   "createMs": 3632,
+   "createMsSource": "sdk",
+   "firstCmdMs": 45,
+   "secondCmdMs": 60,
+   "claimToKillingS": 0.9,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 0.7,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:042382dcb7cb",
+   "imageID": "sha256:042382dcb7cb",
+   "claimMetricsMs": {
+    "Total": 3490.4,
+    "PickAndLock": 11.8,
+    "WaitReady": 3187.8,
+    "InitRuntime": 290.9,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:21:01Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:21:03Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:21:03Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:21:03Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:042382dcb7cbfeb0c186d99b1fa77c2e478ddc"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=4",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=3",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       3 tini",
+     "      8       1       8       2 bash",
+     "      9       8       8       2 bash",
+     "     10       8       8       2 jupyter-server",
+     "     25       1      15       2 envd",
+     "    201       9       8       0 uvicorn",
+     "    215      25      15       0 bash",
+     "    226     215      15       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "3705a0e2c81b57bd",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-csi",
+   "name": "oma-env-spike-pool-6kjsk",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": true,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 132.4,
+    "youngestReadyAgeS": 46.8
+   },
+   "createMs": 5180,
+   "createMsSource": "sdk",
+   "firstCmdMs": 37,
+   "secondCmdMs": 67,
+   "claimToKillingS": 0.7,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 2.5,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 5044.5,
+    "PickAndLock": 9.8,
+    "WaitReady": 3337.1,
+    "InitRuntime": 201.4,
+    "CSIMount": 1411.1,
+    "SecurityToken": 85.1
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:23:32Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:23:34Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:23:34Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:23:34Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=5",
+    "notUserOwnedList": [],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=3",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       3 tini",
+     "      8       1       8       3 bash",
+     "      9       8       8       3 bash",
+     "     10       8       8       3 jupyter-server",
+     "     20       1      12       3 envd",
+     "    233       9       8       1 uvicorn",
+     "    251      20      12       0 bash",
+     "    261     251      12       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": {
+     "exit": 0,
+     "out": [
+      "fuseblk",
+      "lrwxrwxrwx 1 root root 56 Oct 25 16:23 /home/user/workspace -> /run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0",
+      "vfs-cli version v0.3.21"
+     ]
+    }
+   },
+   "tokenSha16": "a84c6bcd1a5f55ec",
+   "killOk": true,
+   "goneAfterKill": true
+  },
+  {
+   "label": "swap-env-extra",
+   "name": "oma-env-spike-pool-8b852",
+   "image": "sha256:718bc931e3835960411392d7cc8baaf2037e5650067183987dedb1c51bbb8079",
+   "csi": false,
+   "poolBefore": {
+    "available": 2,
+    "replicas": 2,
+    "waitedS": 52.8,
+    "youngestReadyAgeS": 45.4
+   },
+   "createMs": 4031,
+   "createMsSource": "sdk",
+   "firstCmdMs": 117,
+   "secondCmdMs": 62,
+   "claimToKillingS": 1.0,
+   "killingToOldExitS": 0.0,
+   "oldExitCode": 143,
+   "oldExitToNewStartS": 2.0,
+   "newStartToCreateReturnS": 1.0,
+   "restartCount": 1,
+   "containerStartedBeforeClaim": false,
+   "statusImageDigest": "sha256:718bc931e383",
+   "imageID": "sha256:718bc931e383",
+   "claimMetricsMs": {
+    "Total": 3892.8,
+    "PickAndLock": 11.4,
+    "WaitReady": 3656.6,
+    "InitRuntime": 224.8,
+    "CSIMount": 0.0,
+    "SecurityToken": 0.0
+   },
+   "events": [
+    {
+     "reason": "Killing",
+     "t": "2026-10-25T16:25:58Z",
+     "msg": "Container sandbox definition changed, will be restarted"
+    },
+    {
+     "reason": "Created",
+     "t": "2026-10-25T16:26:00Z",
+     "msg": "Created container: sandbox"
+    },
+    {
+     "reason": "Started",
+     "t": "2026-10-25T16:26:00Z",
+     "msg": "Started container sandbox"
+    },
+    {
+     "reason": "Pulling",
+     "t": "2026-10-25T16:26:00Z",
+     "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-env-bench@sha256:718bc931e3835960411392d7cc8baaf2037e56"
+    }
+   ],
+   "checks": {
+    "whoami/HOME (user)": "whoami=user uid=1000 HOME=/home/user PWD=/home/user SHELL0=/bin/bash",
+    "env": "OMA_SPIKE=from-profile OMA_SPIKE_HARD=from-profile-hard OMA_SPIKE_CREATE_ENV=create-1 BUILD_PLAIN=<unset> GH_PROXY=<unset>",
+    "perCommandEnv": [
+     "OMA_SPIKE=injected OMA_SPIKE_HARD=from-profile-hard"
+    ],
+    "defaultUser": [
+     "whoami=user HOME=/home/user"
+    ],
+    "vfs-cli": "vfs-cli: vfs-cli version v0.3.21",
+    "mediakit-cli": "mediakit-cli: mediakit-cli version 0.2.1",
+    "jq": "jq: jq-1.6",
+    "file": "file: file-5.44",
+    "ffmpeg": "ffmpeg: ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "tini": "tini: tini version 0.19.0",
+    "node": "node: v22.23.2",
+    "python": "genai 2.22.0 tomli-w 1.2.0",
+    "editor": "editor -> /usr/bin/vim.tiny",
+    "homeOwnership": [
+     "user:user /home/user",
+     "user:user /home/user/.cache",
+     "user:user /home/user/.cache/npm",
+     "user:user /home/user/.local",
+     "user:user /home/user/.oma-spike/marker"
+    ],
+    "notUserOwnedUnderHome": "not-user-owned-under-home=1",
+    "notUserOwnedList": [
+     "not-user-owned root:root /home/user/.cache/npm/_logs/2026-10-25T15_51_02_488Z-debug-0.log"
+    ],
+    "homeWritable": "HOME_WRITABLE",
+    "manifest": "manifest keys ['binaries', 'dpkg', 'npm', 'pip', 'schema'] dpkg 326 pip 185 npm 0 bin {\"ffmpeg\": \"ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\", \"jq\": \"jq-1.6\", \"mediakit-cli\": \"mediakit-cli version 0.2.1\", \"node\": \"v22.23.2\", \"python3\": \"Python 3.11.2\", \"tini\": \"tini version 0.19.0\", \"vfs-cli\": \"vfs-cli version v0.3.21\"}",
+    "buildPlainSha": "9f8d355ba9ed8d886ff0367029e1e6444796f855dd693355d5a04073599fe665",
+    "root": [
+     "whoami=root HOME=/root",
+     "pid1=/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh  pid1_age_s=2",
+     "    PID    PPID    PGID ELAPSED COMMAND",
+     "      1       0       1       2 tini",
+     "      7       1       7       2 bash",
+     "      8       7       7       2 bash",
+     "      9       7       7       2 jupyter-server",
+     "     22       1      12       2 envd",
+     "    215       8       7       0 uvicorn",
+     "    217      22      12       0 bash",
+     "PID1_NO_BUILD_PLAIN",
+     "pid1_base_secret_names=0",
+     "DPKG_AUDIT_OK",
+     "file 1:5.44-3 install ok installed",
+     "jq 1.6-2.1+deb12u3 install ok installed",
+     "tini 0.19.0-1+b3 install ok installed",
+     "vim-tiny 2:9.0.1378-2+deb12u2 install ok installed"
+    ],
+    "csi": null
+   },
+   "tokenSha16": "a7c8a9ea371cacb0",
+   "killOk": true,
+   "goneAfterKill": true
+  }
+ ],
+ "tokens": {
+  "distinct": 14,
+  "n": 14
+ },
+ "scripts": {
+  "init.sh": "#!/usr/bin/env bash\n# video-production init script draft (env-spike-20261025). Runs as root, cwd /home/user, fails fast.\nset -euo pipefail\nts() { date +%s.%N; }\necho \"STEP start $(ts) user=$(id -un) uid=$(id -u) cwd=$PWD\"\n# A plain build-time variable is visible to the script; record only its sha256.\nprintf 'STEP build_plain_seen=%s sha256=%s\\n' \"${OMA_SPIKE_BUILD_PLAIN:+yes}\" \"$(printf %s \"${OMA_SPIKE_BUILD_PLAIN:-}\" | sha256sum | cut -d' ' -f1)\"\nmkdir -p /opt/oma\nprintf %s \"${OMA_SPIKE_BUILD_PLAIN:-}\" | sha256sum | cut -d' ' -f1 > /opt/oma/spike-build-plain.sha256\n\nwork=$(mktemp -d)\n# GitHub is not reachable directly from ACS pods (see report); only GitHub downloads use the proxy given as a plain build variable.\necho \"STEP github_proxy=${OMA_GITHUB_PROXY:+set}\"\nVFS_URL=https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.21/vfs-cli_v0.3.21_linux_amd64.tar.gz\nVFS_SHA=13a8125d6083d4747fe74b6d74142121c8c272c10f77b23e5b22334ab48abacb\nMK_URL=https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz\nMK_SHA=8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987\n\necho \"STEP fetch_vfs $(ts)\"\ncurl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 300 ${OMA_GITHUB_PROXY:+--proxy \"$OMA_GITHUB_PROXY\"} -o \"$work/vfs.tgz\" \"$VFS_URL\"\necho \"$VFS_SHA  $work/vfs.tgz\" | sha256sum -c -\ntar -xzf \"$work/vfs.tgz\" -C \"$work\" vfs-cli\ninstall -m 0755 \"$work/vfs-cli\" /usr/local/bin/vfs-cli\necho \"STEP fetch_mediakit $(ts)\"\ncurl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 300 ${OMA_GITHUB_PROXY:+--proxy \"$OMA_GITHUB_PROXY\"} -o \"$work/mk.tgz\" \"$MK_URL\"\necho \"$MK_SHA  $work/mk.tgz\" | sha256sum -c -\ntar -xzf \"$work/mk.tgz\" -C \"$work\" mediakit-cli\ninstall -m 0755 \"$work/mediakit-cli\" /usr/local/bin/mediakit-cli\necho \"STEP pip $(ts)\"\npip install --no-cache-dir --disable-pip-version-check google-genai==2.22.0 tomli-w==1.2.0\necho \"STEP apt $(ts)\"\napt-get update\nDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq vim-tiny file\necho \"STEP profile $(ts)\"\ncat > /etc/profile.d/oma-spike.sh <<'PROFILE'\nexport OMA_SPIKE=\"${OMA_SPIKE:-from-profile}\"\nexport OMA_SPIKE_HARD=\"from-profile-hard\"\nPROFILE\nchmod 0644 /etc/profile.d/oma-spike.sh\n# Something root-owned under /home/user, to be fixed by the chown step.\nmkdir -p /home/user/.oma-spike && echo built-as-root > /home/user/.oma-spike/marker\nrm -rf \"$work\"\nvfs-cli --version; mediakit-cli --version; jq --version; file --version | head -1; update-alternatives --query editor | grep -E \"^Value\"\necho \"STEP done $(ts)\"\n",
+  "init-proxy.sh": "#!/usr/bin/env bash\n# video-production init script draft (env-spike-20261025). Runs as root, cwd /home/user, fails fast.\nset -euo pipefail\nts() { date +%s.%N; }\necho \"STEP start $(ts) user=$(id -un) uid=$(id -u) cwd=$PWD\"\n# A plain build-time variable is visible to the script; record only its sha256.\nprintf 'STEP build_plain_seen=%s sha256=%s\\n' \"${OMA_SPIKE_BUILD_PLAIN:+yes}\" \"$(printf %s \"${OMA_SPIKE_BUILD_PLAIN:-}\" | sha256sum | cut -d' ' -f1)\"\nmkdir -p /opt/oma\n\necho \"STEP proxy_env $(env | grep -iE '^(https?|no)_proxy=' | sed -E 's#//[^@/]*@#//<userinfo>@#' | sort | tr '\\n' ' ')\"\necho \"STEP dns sing-box=$(getent hosts sing-box.oma-infra.svc.cluster.local | awk '{print $1}')\"\npython3 -c 'import urllib.request as u; p=u.getproxies(); print(\"STEP py_proxies\", sorted(p), \"bypass_mirrors.aliyun.com\", bool(u.proxy_bypass(\"mirrors.aliyun.com\")), \"bypass_github.com\", bool(u.proxy_bypass(\"github.com\")))'\nfor url in https://mirrors.aliyun.com/pypi/simple/tomli-w/ https://mirrors.aliyun.com/debian/dists/bookworm/Release; do\n  curl -sS -o /dev/null --connect-timeout 15 -w \"STEP route $url code=%{http_code} via=%{remote_ip}:%{remote_port} t=%{time_total}s\\n\" \"$url\" || echo \"STEP route $url failed\"\ndone\napt-get -o Debug::Acquire::http=true -o Debug::Acquire::https=true update 2>&1 | grep -m4 -E \"^(GET|CONNECT) \" | sed 's/^/STEP apt_debug /' || true\nprintf %s \"${OMA_SPIKE_BUILD_PLAIN:-}\" | sha256sum | cut -d' ' -f1 > /opt/oma/spike-build-plain.sha256\n\nwork=$(mktemp -d)\n# GitHub is not reachable directly from ACS pods (see report); only GitHub downloads use the proxy given as a plain build variable.\necho \"STEP github_proxy=${OMA_GITHUB_PROXY:+set}\"\nVFS_URL=https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.21/vfs-cli_v0.3.21_linux_amd64.tar.gz\nVFS_SHA=13a8125d6083d4747fe74b6d74142121c8c272c10f77b23e5b22334ab48abacb\nMK_URL=https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz\nMK_SHA=8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987\n\necho \"STEP fetch_vfs $(ts)\"\ncurl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 300 ${OMA_GITHUB_PROXY:+--proxy \"$OMA_GITHUB_PROXY\"} -w \"STEP DL vfs-cli t=%{time_total}s size=%{size_download} via=%{remote_ip}:%{remote_port}\\n\" -o \"$work/vfs.tgz\" \"$VFS_URL\"\necho \"$VFS_SHA  $work/vfs.tgz\" | sha256sum -c -\ntar -xzf \"$work/vfs.tgz\" -C \"$work\" vfs-cli\ninstall -m 0755 \"$work/vfs-cli\" /usr/local/bin/vfs-cli\necho \"STEP fetch_mediakit $(ts)\"\ncurl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 300 ${OMA_GITHUB_PROXY:+--proxy \"$OMA_GITHUB_PROXY\"} -w \"STEP DL mediakit-cli t=%{time_total}s size=%{size_download} via=%{remote_ip}:%{remote_port}\\n\" -o \"$work/mk.tgz\" \"$MK_URL\"\necho \"$MK_SHA  $work/mk.tgz\" | sha256sum -c -\ntar -xzf \"$work/mk.tgz\" -C \"$work\" mediakit-cli\ninstall -m 0755 \"$work/mediakit-cli\" /usr/local/bin/mediakit-cli\necho \"STEP pip $(ts)\"\npip install --no-cache-dir --disable-pip-version-check google-genai==2.22.0 tomli-w==1.2.0\necho \"STEP apt $(ts)\"\napt-get update\nDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq vim-tiny file\necho \"STEP profile $(ts)\"\ncat > /etc/profile.d/oma-spike.sh <<'PROFILE'\nexport OMA_SPIKE=\"${OMA_SPIKE:-from-profile}\"\nexport OMA_SPIKE_HARD=\"from-profile-hard\"\nPROFILE\nchmod 0644 /etc/profile.d/oma-spike.sh\n# Something root-owned under /home/user, to be fixed by the chown step.\nmkdir -p /home/user/.oma-spike && echo built-as-root > /home/user/.oma-spike/marker\nrm -rf \"$work\"\nvfs-cli --version; mediakit-cli --version; jq --version; file --version | head -1; update-alternatives --query editor | grep -E \"^Value\"\necho \"STEP done $(ts)\"\n",
+  "write-manifest.sh": "#!/usr/bin/env bash\n# Emits /opt/oma/manifest.json content on stdout (spike version of /opt/oma/bin/write-manifest).\nset -euo pipefail\nv() { \"$@\" 2>&1 | head -1 || true; }\ndpkg-query -W -f='${Package}\\t${Version}\\n' > /tmp/oma-dpkg.tsv\npip freeze --disable-pip-version-check 2>/dev/null > /tmp/oma-pip.txt || true\nnpm ls -g --depth=0 --json 2>/dev/null > /tmp/oma-npm.json || echo '{}' > /tmp/oma-npm.json\n{\n  printf 'vfs-cli\\t%s\\n' \"$(v vfs-cli --version)\"\n  printf 'mediakit-cli\\t%s\\n' \"$(v mediakit-cli --version)\"\n  printf 'ffmpeg\\t%s\\n' \"$(v ffmpeg -version)\"\n  printf 'jq\\t%s\\n' \"$(v jq --version)\"\n  printf 'node\\t%s\\n' \"$(v node --version)\"\n  printf 'tini\\t%s\\n' \"$(v tini --version)\"\n  printf 'python3\\t%s\\n' \"$(v python3 --version)\"\n} > /tmp/oma-bin.tsv\npython3 - <<'PY'\nimport json\ndef tsv(p): return dict(l.rstrip('\\n').split('\\t', 1) for l in open(p) if '\\t' in l)\npip = dict(l.strip().split('==', 1) for l in open('/tmp/oma-pip.txt') if '==' in l)\ntry: npm = {k: v.get('version') for k, v in json.load(open('/tmp/oma-npm.json')).get('dependencies', {}).items()}\nexcept Exception: npm = {}\nprint(json.dumps({'schema': 1, 'binaries': tsv('/tmp/oma-bin.tsv'), 'dpkg': tsv('/tmp/oma-dpkg.tsv'), 'pip': pip, 'npm': npm}, sort_keys=True))\nPY\nrm -f /tmp/oma-dpkg.tsv /tmp/oma-pip.txt /tmp/oma-npm.json /tmp/oma-bin.tsv\n",
+  "Dockerfile.base-tini": "# Spike stand-in for oma-media: live auto-story-v2 image + tini as PID 1.\nFROM registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d\nUSER root\nRUN env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy bash -euo pipefail -c '      apt-get update &&       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tini &&       rm -rf /var/lib/apt/lists/* && /usr/bin/tini --version'\nENTRYPOINT [\"/usr/bin/tini\", \"-g\", \"--\"]\nCMD [\"bash\", \"/root/.jupyter/start-up.sh\"]\nLABEL dev.oma.spike=\"env-spike-20261025\" dev.oma.base-of=\"welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d\"\n",
+  "Dockerfile.env-video.in": "# Generated-Dockerfile shape from ADR-0024 (spike). BASE_REF is substituted by the driver.\nFROM @BASE_REF@\nRUN --mount=type=bind,source=init.sh,target=/tmp/oma-init.sh \\\n    --mount=type=bind,source=build.env,target=/tmp/oma-build.env \\\n    cd /home/user && set -a && . /tmp/oma-build.env && set +a && \\\n    env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy bash -euo pipefail /tmp/oma-init.sh\nRUN --mount=type=bind,source=write-manifest.sh,target=/run/oma-write-manifest \\\n    chown -R user:user /home/user && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/* \\\n    && mkdir -p /opt/oma && bash /run/oma-write-manifest > /opt/oma/manifest.json\nLABEL dev.oma.environment=env_spike_video_production dev.oma.build=bld_spike_20261025\n",
+  "Dockerfile.env-video-proxy.in": "# Variant: proxy env passed by buildah --http-proxy passthrough (not in the Dockerfile). BASE_REF substituted by the driver.\nFROM @BASE_REF@\nRUN --mount=type=bind,source=init-proxy.sh,target=/tmp/oma-init.sh \\\n    --mount=type=bind,source=build-proxy.env,target=/tmp/oma-build.env \\\n    cd /home/user && set -a && . /tmp/oma-build.env && set +a && \\\n    bash -euo pipefail /tmp/oma-init.sh\nRUN --mount=type=bind,source=write-manifest.sh,target=/run/oma-write-manifest \\\n    chown -R user:user /home/user && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/* \\\n    && mkdir -p /opt/oma && bash /run/oma-write-manifest > /opt/oma/manifest.json\nLABEL dev.oma.environment=env_spike_video_production dev.oma.build=bld_spike_20261025_proxy\n",
+  "Dockerfile.env-video-proxyenv.in": "# Variant: proxy env as platform-default variables in the bind-mounted env file (sourced inside RUN, overrides base ENV). BASE_REF substituted by the driver.\nFROM @BASE_REF@\nRUN --mount=type=bind,source=init-proxy.sh,target=/tmp/oma-init.sh \\\n    --mount=type=bind,source=build-proxyenv.env,target=/tmp/oma-build.env \\\n    cd /home/user && set -a && . /tmp/oma-build.env && set +a && \\\n    bash -euo pipefail /tmp/oma-init.sh\nRUN --mount=type=bind,source=write-manifest.sh,target=/run/oma-write-manifest \\\n    chown -R user:user /home/user && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/* \\\n    && mkdir -p /opt/oma && bash /run/oma-write-manifest > /opt/oma/manifest.json\nLABEL dev.oma.environment=env_spike_video_production dev.oma.build=bld_spike_20261025_proxyenv\n",
+  "Dockerfile.arg-probe.in": "# Probe only (not pushed): shows what ARG/--build-arg leaves in history.\nFROM @BASE_REF@\nARG OMA_SPIKE_ARG_PROBE\nRUN test -n \"$OMA_SPIKE_ARG_PROBE\" && echo arg-seen\n",
+  "Dockerfile.proxy-probe.in": "# Probe only (not pushed): which proxy values does RUN see, and what lands in history?\nFROM @BASE_REF@\nRUN env | grep -iE '^(https?|no)_proxy=' | sort | sed 's/^/RUNENV /'\n",
+  "storage-native.conf": "[storage]\ndriver = \"overlay\"\nrunroot = \"/run/containers/storage-native\"\ngraphroot = \"/var/lib/containers/native\"\n[storage.options.overlay]\nmountopt = \"nodev\"\n"
+ },
+ "buildEnvFiles": {
+  "build.env": "OMA_SPIKE_BUILD_PLAIN=plain-build-value-20261025\nOMA_GITHUB_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890",
+  "build-proxyenv.env": "OMA_SPIKE_BUILD_PLAIN=plain-build-value-20261025\nHTTP_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890\nHTTPS_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890\nhttp_proxy=http://sing-box.oma-infra.svc.cluster.local:7890\nhttps_proxy=http://sing-box.oma-infra.svc.cluster.local:7890\nNO_PROXY=localhost,127.0.0.1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com\nno_proxy=localhost,127.0.0.1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com\n"
+ },
+ "cleanupEvidence": "$ kubectl -n sandbox-system get sandboxset\nNAME                      REPLICAS   AVAILABLE   UPDATEDREPLICAS   UPDATEDAVAILABLEREPLICAS   UPDATEREVISION   AGE\nauto-story-v2             8          8           8                 8                          f9bfdfdfb        41d\noma-scale-test-20261021   0          0                                                        6c789cb6fb       4d11h\noma-scale-test-20261022   0          0                                                        6d889fd9c5       3d22h\n$ kubectl -n sandbox-system get sandboxset,sandbox,pods --no-headers | grep -c oma-env-spike\n0\n$ kubectl -n sandbox-system get sandboxset,sandbox,pods -l oma.dev/test-only=true\nNAME                                                  REPLICAS   AVAILABLE   UPDATEDREPLICAS   UPDATEDAVAILABLEREPLICAS   UPDATEREVISION   AGE\nsandboxset.agents.kruise.io/oma-scale-test-20261022   0          0                                                        6d889fd9c5       3d22h\n$ kubectl -n oma-test get pods,configmaps --no-headers | grep -c oma-env-spike\n0\n$ kubectl -n oma-test get pods,configmaps -l oma.dev/test-only=true\nNo resources found in oma-test namespace.\n$ aliyun cr GET /repos/welltop/oma-env-bench\n\"code\":\"REPO_NOT_EXIST\"\n$ aliyun oss ls oss://agentry/env-spike-20261025/ --region cn-shanghai   # current profile welltop\nObject Number is: 0\n$ kubectl -n sandbox-system get sandboxset auto-story-v2 (generation/replicas/available)\n20 8 8 registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d\n2026-10-25T16:29:36Z\n"
+}

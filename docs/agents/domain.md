@@ -30,6 +30,15 @@ For Sandbox binding creation and recovery, ADR-0023 is authoritative: the gatewa
 is the truth, a creation intent has a deadline and is reconciled by
 `oma.dev/binding`, termination reclaims by binding and every Runner sweeps. It
 supersedes ADR-0019's operator-only reconciliation and revises its budgets.
+For Environments and the Sandbox start path, ADR-0024 is authoritative: an
+Environment (Base Image + init script + variables) is built once into an image
+by `oma-image-builder`, every Sandbox is claimed from one shared Warm Pool and
+swapped in place to its Environment's image, and Environment variables are
+injected per command. It revises ADR-0008 (per-Agent `sandbox.image` template
+overrides are removed), ADR-0014 (the Pi tool runtime lives in `oma-base`; the
+release order becomes Base Images, Environment rebuilds, then Runner) and
+ADR-0023 (the Session field and Redis signal kind `environment` are renamed
+`sandbox`; "Environment failure" becomes Sandbox unavailability).
 For mounted Workspace storage and Sandbox paths, ADR-0008 supersedes the
 former storage portions of ADR-0002 and ADR-0005. ADR-0009 defines the direct
 Workspace file API and supersedes ADR-0008’s per-Session write gate.

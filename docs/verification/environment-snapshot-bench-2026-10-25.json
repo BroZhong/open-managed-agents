@@ -1,0 +1,5580 @@
+{
+ "title": "Environment snapshot startup benchmark (warm / cold / init script / filesystem checkpoint clone)",
+ "date": "2026-10-25",
+ "window": {
+  "start": "2026-10-25T04:39:55.872Z",
+  "end": "2026-10-25T05:51:09.966753Z"
+ },
+ "cluster": "agent-platform (cn-shanghai), namespace sandbox-system",
+ "label": "oma.dev/load-test=env-bench-20261025",
+ "credentials": "oma-test E2B key (team sandbox-system), read from oma-test/oma-runner process env; never written to evidence",
+ "driver": "laptop node v23.7.0 -> public ALB -> api.sandbox.agentry.welltop.tech (fake-IP proxy DNS); all timings are wall-clock ms around SDK calls",
+ "setup": {
+  "sdk": {
+   "package": "e2b",
+   "version": "2.24.0",
+   "patched": true
+  },
+  "controlPlane": [
+   {
+    "pod": "sandbox-gateway-6c85b878d6-l4sjh",
+    "containers": [
+     {
+      "name": "gateway",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+      "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+     }
+    ]
+   },
+   {
+    "pod": "sandbox-manager-6bb95d8576-dqptd",
+    "containers": [
+     {
+      "name": "controller",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+     },
+     {
+      "name": "envoy-proxy",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy@sha256:eead626be6749fa397a4e928be88bd0d0f86fb5e8a1d2fbcf17ef1c78944cf7d"
+     }
+    ]
+   }
+  ],
+  "agentRuntimeSidecar": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0 (from Checkpoint podTemplateDelta)",
+  "sourceSandboxSet": {
+   "name": "auto-story-v2",
+   "resourceVersion": "65639238",
+   "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+   "replicas": 8
+  },
+  "benchSandboxSets": [
+   {
+    "name": "oma-env-bench-cold",
+    "uid": "806eb708-1024-41c1-89c9-46858994397f",
+    "replicas": 0,
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+    "resources": {
+     "limits": {
+      "cpu": "2",
+      "memory": "4Gi"
+     },
+     "requests": {
+      "cpu": "2",
+      "ephemeral-storage": "50Gi",
+      "memory": "4Gi"
+     }
+    },
+    "runtimes": [
+     {
+      "name": "csi"
+     },
+     {
+      "name": "agent-runtime"
+     }
+    ],
+    "persistentContents": [
+     "filesystem"
+    ],
+    "templateAnnotations": {
+     "image.alibabacloud.com/enable-image-cache": "true",
+     "oma.dev/test-only": "true"
+    },
+    "templateLabels": {
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "envNames": [
+     "OSS_READ_ACCESS_KEY_ID",
+     "OSS_READ_ACCESS_KEY_SECRET",
+     "GEMINI_API_KEY",
+     "GEMINI_AUDIO_MODEL",
+     "GEMINI_VIDEO_MODEL",
+     "GOOGLE_API_KEY",
+     "MEDIAKIT_API_KEY",
+     "MEDIAKIT_RUNTIME",
+     "MEDIAKIT_SURFACE",
+     "OPENGROVE_WW_BASE_URL",
+     "OSSUTIL_BIN",
+     "OSS_READ_BUCKET",
+     "OSS_READ_ENDPOINT",
+     "OSS_READ_REGION",
+     "OSS_READ_TABLE_ID",
+     "RUNTIME_ENV",
+     "VFS_TOKEN",
+     "OPENGROVE_WW_ACCESS_TOKEN"
+    ],
+    "volumes": [
+     "vfs-cli-policy:vfs-cli-policy-test-v1"
+    ],
+    "status": {
+     "available": 0,
+     "revision": "c98fccb87"
+    }
+   },
+   {
+    "name": "oma-env-bench-warm",
+    "uid": "ac559b57-2e5e-4dba-b6d0-164f0148e604",
+    "replicas": 2,
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+    "resources": {
+     "limits": {
+      "cpu": "2",
+      "memory": "4Gi"
+     },
+     "requests": {
+      "cpu": "2",
+      "ephemeral-storage": "50Gi",
+      "memory": "4Gi"
+     }
+    },
+    "runtimes": [
+     {
+      "name": "csi"
+     },
+     {
+      "name": "agent-runtime"
+     }
+    ],
+    "persistentContents": [
+     "filesystem"
+    ],
+    "templateAnnotations": {
+     "image.alibabacloud.com/enable-image-cache": "true",
+     "oma.dev/test-only": "true"
+    },
+    "templateLabels": {
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "envNames": [
+     "OSS_READ_ACCESS_KEY_ID",
+     "OSS_READ_ACCESS_KEY_SECRET",
+     "GEMINI_API_KEY",
+     "GEMINI_AUDIO_MODEL",
+     "GEMINI_VIDEO_MODEL",
+     "GOOGLE_API_KEY",
+     "MEDIAKIT_API_KEY",
+     "MEDIAKIT_RUNTIME",
+     "MEDIAKIT_SURFACE",
+     "OPENGROVE_WW_BASE_URL",
+     "OSSUTIL_BIN",
+     "OSS_READ_BUCKET",
+     "OSS_READ_ENDPOINT",
+     "OSS_READ_REGION",
+     "OSS_READ_TABLE_ID",
+     "RUNTIME_ENV",
+     "VFS_TOKEN",
+     "OPENGROVE_WW_ACCESS_TOKEN"
+    ],
+    "volumes": [
+     "vfs-cli-policy:vfs-cli-policy-test-v1"
+    ],
+    "status": {
+     "available": 2,
+     "revision": "c98fccb87"
+    }
+   }
+  ],
+  "specDiffVsSource": [
+   "replicas 2 (warm) / 0 (cold)",
+   "template.metadata.labels += oma.dev/load-test",
+   "template.metadata.annotations += oma.dev/test-only"
+  ],
+  "createOptions": {
+   "metadata": {
+    "oma.dev/load-test": "env-bench-20261025",
+    "label:oma.dev/load-test": "env-bench-20261025",
+    "e2b.agents.kruise.io/reserve-paused-sandbox-duration": "30m (prod 24h)",
+    "e2b.agents.kruise.io/claim-timeout-seconds": "150",
+    "e2b.agents.kruise.io/wait-ready-timeout-seconds": "150",
+    "cold only: e2b.agents.kruise.io/create-on-no-stock": "true"
+   },
+   "lifecycle": {
+    "onTimeout": "pause",
+    "autoResume": false
+   },
+   "timeoutMs": 1800000,
+   "requestTimeoutMs": 185000,
+   "workspaceCsiMount": "not in main runs (one optional clone only)"
+  },
+  "snapshotHeaders": {
+   "x-e2b-kruise-snapshot-keep-running": "false",
+   "x-e2b-kruise-snapshot-ttl": "6h",
+   "x-e2b-kruise-snapshot-persistent-contents": "filesystem",
+   "x-e2b-kruise-snapshot-wait-success-seconds": "170"
+  },
+  "network": "GitHub release downloads via http://sing-box.oma-infra.svc.cluster.local:7890 (the HTTPS_PROXY the Host injects from sandbox-system/base-secret); ossutil, pip, apt direct to Aliyun CDN/mirrors"
+ },
+ "initScript": "#!/bin/bash\n# env-bench init script. HEAVY=0 -> S1 (business layer), HEAVY=1 -> S2 (S1 + heavy deps).\n# Runs as root, cwd /home/user. Prints one \"BENCH_RESULT {json}\" line at the end.\nHEAVY=${HEAVY:-0}\nGH_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890\nPIP_INDEX=https://mirrors.aliyun.com/pypi/simple/\nset -u\nts() { date +%s%3N; }\nT_START=$(ts)\nSTEPS=\"\"\nFAILED=\"\"\nNOTES=\"\"\nadd_step() { STEPS=\"${STEPS}${STEPS:+,}\\\"$1\\\":$2\"; }\nadd_note() { NOTES=\"${NOTES}${NOTES:+,}\\\"$1\\\"\"; }\n( while sleep 15; do echo \"TICK $(ts)\"; done ) &\nTICKER=$!\ntrap 'pkill -P $TICKER 2>/dev/null; kill $TICKER 2>/dev/null' EXIT\n\nmkdir -p /opt/bench/bin /opt/bench/dl\ncd /opt/bench/dl\n\n# fetch NAME URL SHA PROXY(0/1) -> downloads to /opt/bench/dl/NAME.pkg, sha256-checked; one retry on failure.\nfetch() {\n  local name=$1 url=$2 sha=$3 via=$4 attempt s e rc info\n  local proxyarg=()\n  [ \"$via\" = 1 ] && proxyarg=(--proxy \"$GH_PROXY\")\n  for attempt in 1 2; do\n    s=$(ts)\n    info=$(curl -fsSL \"${proxyarg[@]}\" --noproxy '' --connect-timeout 15 --max-time 300 -o \"/opt/bench/dl/$name.pkg\" \\\n      -w '%{http_code} %{size_download} %{speed_download} %{time_connect} %{time_starttransfer} %{time_total}' \"$url\" 2>/tmp/bench-curl-$name.err)\n    rc=$?\n    e=$(ts)\n    echo \"FETCH $name attempt=$attempt via_proxy=$via rc=$rc ms=$((e-s)) info=[$info] err=[$(head -c 200 /tmp/bench-curl-$name.err)]\"\n    add_note \"fetch:$name:attempt=$attempt:rc=$rc:ms=$((e-s)):info=$info\"\n    if [ $rc = 0 ]; then\n      if echo \"$sha  /opt/bench/dl/$name.pkg\" | sha256sum -c - >/dev/null 2>&1; then return 0; fi\n      echo \"FETCH $name sha256 mismatch\"; add_note \"fetch:$name:sha-mismatch\"\n    fi\n  done\n  return 1\n}\n\ninstall_tar_bin() { # name binarySha\n  local name=$1 bsha=$2 member\n  member=$(tar -tzf \"/opt/bench/dl/$name.pkg\" | awk -F/ -v n=\"$name\" '$NF==n' | head -1)\n  [ -n \"$member\" ] || return 1\n  tar -xzf \"/opt/bench/dl/$name.pkg\" -C /opt/bench/dl \"$member\" || return 1\n  install -m 0755 \"/opt/bench/dl/$member\" \"/opt/bench/bin/$name\" || return 1\n  echo \"$bsha  /opt/bench/bin/$name\" | sha256sum -c - >/dev/null\n}\n\nstep() { # name cmd...\n  local name=$1; shift\n  local s e rc\n  s=$(ts)\n  \"$@\"\n  rc=$?\n  e=$(ts)\n  echo \"STEP $name rc=$rc ms=$((e-s))\"\n  add_step \"$name\" \"{\\\"ms\\\":$((e-s)),\\\"rc\\\":$rc}\"\n  [ $rc = 0 ] || FAILED=\"${FAILED}${FAILED:+ }$name\"\n  return $rc\n}\n\ns_vfs() { fetch vfs-cli https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.18/vfs-cli_v0.3.18_linux_amd64.tar.gz 0f710871ade5e30d91ef170e0d352db90bf28f69ba60cb55ee8cc7b820bebacd 1 && install_tar_bin vfs-cli d80b955dd5771c03e6ebbf7fed9abec545b866578c657351c77bdbf33b20142c; }\ns_mediakit() { fetch mediakit-cli https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz 8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987 1 && install_tar_bin mediakit-cli 2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca; }\ns_ossutil() {\n  fetch ossutil https://gosspublic.alicdn.com/ossutil/v2/2.2.0/ossutil-2.2.0-linux-amd64.zip 9e02837d806cfe976ae6c1fc22557d8e0a394ca6d298b45fb9f48a360d3a67f4 0 || return 1\n  unzip -o -q /opt/bench/dl/ossutil.pkg ossutil-2.2.0-linux-amd64/ossutil -d /opt/bench/dl || return 1\n  install -m 0755 /opt/bench/dl/ossutil-2.2.0-linux-amd64/ossutil /opt/bench/bin/ossutil || return 1\n  echo \"de09edc5649d00bf9495040b09c70a52174f7ae6b812097411f46def16d47c2f  /opt/bench/bin/ossutil\" | sha256sum -c - >/dev/null\n}\ns_venv() { /opt/venv/bin/python3 -m venv /opt/bench/venv; }\ns_pip() {\n  cat > /opt/bench/requirements.txt <<'REQ'\n# No local-tokenizer extra: the image does not bundle model inference runtimes.\ngoogle-genai==2.22.0\nREQ\n  /opt/bench/venv/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check --progress-bar off --index-url \"$PIP_INDEX\" -r /opt/bench/requirements.txt\n}\ns_pip_heavy() { /opt/bench/venv/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check --progress-bar off --index-url \"$PIP_INDEX\" 'scenedetect[opencv]' pandas scipy matplotlib scikit-learn; }\ns_apt_update() { DEBIAN_FRONTEND=noninteractive apt-get update; }\ns_apt_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libreoffice-core; }\ns_verify() {\n  /opt/bench/bin/vfs-cli --version && /opt/bench/bin/mediakit-cli --version && /opt/bench/bin/ossutil version && \\\n  /opt/bench/venv/bin/python3 -c 'import google.genai as g; print(\"genai\", g.__version__)' || return 1\n  if [ \"$HEAVY\" = 1 ]; then\n    /opt/bench/venv/bin/python3 -c 'import cv2, pandas, scipy, matplotlib, sklearn, scenedetect; print(\"heavy\", cv2.__version__, pandas.__version__, scipy.__version__, sklearn.__version__, scenedetect.__version__)' || return 1\n    test -x /usr/lib/libreoffice/program/soffice.bin || return 1\n  fi\n}\ns_markers() {\n  local id\n  id=$(cat /proc/sys/kernel/random/uuid)\n  echo \"$id\" > /opt/bench/build-marker\n  echo \"$id\" > /tmp/bench-build-marker\n  echo \"$id\" > /root/bench-build-marker\n  echo \"$id\" > /var/tmp/bench-build-marker\n  su -s /bin/sh user -c \"echo $id > /home/user/bench-build-marker\"\n  rm -rf /opt/bench/dl\n}\n\nstep vfs_cli s_vfs\nstep mediakit_cli s_mediakit\nstep ossutil s_ossutil\nstep venv s_venv\nstep pip_requirements s_pip\nif [ \"$HEAVY\" = 1 ]; then\n  step pip_heavy s_pip_heavy\n  step apt_update s_apt_update\n  step apt_install s_apt_install\nfi\nstep verify s_verify\nstep markers s_markers\nT_END=$(ts)\nRESULT=\"{\\\"heavy\\\":$HEAVY,\\\"totalMs\\\":$((T_END-T_START)),\\\"failed\\\":\\\"$FAILED\\\",\\\"steps\\\":{$STEPS},\\\"notes\\\":[$NOTES]}\"\necho \"$RESULT\" > /opt/bench/build-result.json\necho \"BENCH_RESULT $RESULT\"\n[ -z \"$FAILED\" ]\n",
+ "summary": {
+  "warm.create": {
+   "n": 5,
+   "p50": 135,
+   "min": 110,
+   "max": 262
+  },
+  "warm.firstCmd": {
+   "n": 5,
+   "p50": 200,
+   "min": 166,
+   "max": 279
+  },
+  "warm.secondCmd": {
+   "n": 5,
+   "p50": 34,
+   "min": 21,
+   "max": 49
+  },
+  "warm.refillWait": {
+   "n": 4,
+   "p50": 27065.0,
+   "min": 25482,
+   "max": 31823
+  },
+  "cold.create": {
+   "n": 3,
+   "p50": 24567,
+   "min": 23981,
+   "max": 27743
+  },
+  "cold.firstCmd": {
+   "n": 3,
+   "p50": 339,
+   "min": 188,
+   "max": 390
+  },
+  "S1.create": {
+   "n": 3,
+   "p50": 192,
+   "min": 177,
+   "max": 192
+  },
+  "S1.firstCmd": {
+   "n": 3,
+   "p50": 191,
+   "min": 147,
+   "max": 211
+  },
+  "S1.script": {
+   "n": 3,
+   "p50": 24739,
+   "min": 22991,
+   "max": 25664
+  },
+  "S1.scriptInSandbox": {
+   "n": 3,
+   "p50": 24676,
+   "min": 22937,
+   "max": 25614
+  },
+  "S1.warmPlusScript": {
+   "n": 3,
+   "p50": 25063,
+   "min": 23394,
+   "max": 26047
+  },
+  "S1.steps": {
+   "vfs_cli": {
+    "n": 3,
+    "p50": 2679,
+    "min": 2408,
+    "max": 2711
+   },
+   "mediakit_cli": {
+    "n": 3,
+    "p50": 2797,
+    "min": 2521,
+    "max": 3047
+   },
+   "ossutil": {
+    "n": 3,
+    "p50": 573,
+    "min": 548,
+    "max": 779
+   },
+   "venv": {
+    "n": 3,
+    "p50": 2764,
+    "min": 2759,
+    "max": 2866
+   },
+   "pip_requirements": {
+    "n": 3,
+    "p50": 15087,
+    "min": 14180,
+    "max": 15904
+   },
+   "verify": {
+    "n": 3,
+    "p50": 487,
+    "min": 472,
+    "max": 493
+   },
+   "markers": {
+    "n": 3,
+    "p50": 39,
+    "min": 39,
+    "max": 41
+   }
+  },
+  "S1.diskUsedDelta": [
+   121102336,
+   121323520,
+   121106432
+  ],
+  "S2.create": {
+   "n": 3,
+   "p50": 219,
+   "min": 215,
+   "max": 228
+  },
+  "S2.firstCmd": {
+   "n": 3,
+   "p50": 181,
+   "min": 166,
+   "max": 334
+  },
+  "S2.script": {
+   "n": 3,
+   "p50": 272138,
+   "min": 230612,
+   "max": 309107
+  },
+  "S2.scriptInSandbox": {
+   "n": 3,
+   "p50": 272098,
+   "min": 230573,
+   "max": 309050
+  },
+  "S2.warmPlusScript": {
+   "n": 3,
+   "p50": 272687,
+   "min": 231006,
+   "max": 309507
+  },
+  "S2.steps": {
+   "vfs_cli": {
+    "n": 3,
+    "p50": 2645,
+    "min": 2639,
+    "max": 3015
+   },
+   "mediakit_cli": {
+    "n": 3,
+    "p50": 2679,
+    "min": 2477,
+    "max": 2729
+   },
+   "ossutil": {
+    "n": 3,
+    "p50": 578,
+    "min": 556,
+    "max": 774
+   },
+   "venv": {
+    "n": 3,
+    "p50": 2826,
+    "min": 2728,
+    "max": 2962
+   },
+   "pip_requirements": {
+    "n": 3,
+    "p50": 19892,
+    "min": 16854,
+    "max": 21934
+   },
+   "pip_heavy": {
+    "n": 3,
+    "p50": 161064,
+    "min": 128981,
+    "max": 184621
+   },
+   "apt_update": {
+    "n": 3,
+    "p50": 8247,
+    "min": 8014,
+    "max": 8767
+   },
+   "apt_install": {
+    "n": 3,
+    "p50": 72276,
+    "min": 65945,
+    "max": 83065
+   },
+   "verify": {
+    "n": 3,
+    "p50": 1765,
+    "min": 1754,
+    "max": 1792
+   },
+   "markers": {
+    "n": 3,
+    "p50": 34,
+    "min": 32,
+    "max": 35
+   }
+  },
+  "S2.diskUsedDelta": [
+   1082843136,
+   1082843136,
+   1082847232
+  ],
+  "cloneS1.create": {
+   "n": 5,
+   "p50": 26189,
+   "min": 25299,
+   "max": 28603
+  },
+  "cloneS1.firstCmd": {
+   "n": 5,
+   "p50": 219,
+   "min": 210,
+   "max": 282
+  },
+  "cloneS1.secondCmd": {
+   "n": 5,
+   "p50": 29,
+   "min": 27,
+   "max": 40
+  },
+  "cloneS1.createPlusFirst": {
+   "n": 5,
+   "p50": 26408,
+   "min": 25509,
+   "max": 28817
+  },
+  "cloneS2.create": {
+   "n": 5,
+   "p50": 28864,
+   "min": 24259,
+   "max": 31004
+  },
+  "cloneS2.firstCmd": {
+   "n": 5,
+   "p50": 235,
+   "min": 210,
+   "max": 308
+  },
+  "cloneS2.secondCmd": {
+   "n": 5,
+   "p50": 39,
+   "min": 25,
+   "max": 46
+  },
+  "cloneS2.createPlusFirst": {
+   "n": 5,
+   "p50": 29110,
+   "min": 24469,
+   "max": 31312
+  },
+  "gw.warm.waitReady": {
+   "n": 5,
+   "p50": 0,
+   "min": 0,
+   "max": 0
+  },
+  "gw.cold.waitReady": {
+   "n": 3,
+   "p50": 24497,
+   "min": 23910,
+   "max": 27507
+  },
+  "gw.cloneS1.waitReady": {
+   "n": 5,
+   "p50": 26136,
+   "min": 25207,
+   "max": 28359
+  },
+  "gw.cloneS2.waitReady": {
+   "n": 5,
+   "p50": 28812,
+   "min": 24189,
+   "max": 30685
+  },
+  "gw.warm.total": {
+   "n": 5,
+   "p50": 30,
+   "min": 26,
+   "max": 55
+  },
+  "gw.cold.total": {
+   "n": 3,
+   "p50": 24540,
+   "min": 23942,
+   "max": 27560
+  },
+  "gw.cloneS1.total": {
+   "n": 5,
+   "p50": 26159,
+   "min": 25278,
+   "max": 28402
+  },
+  "gw.cloneS2.total": {
+   "n": 5,
+   "p50": 28838,
+   "min": 24230,
+   "max": 30744
+  },
+  "snapshots": [
+   [
+    "script-S1",
+    5492
+   ],
+   [
+    "script-S2",
+    5654
+   ],
+   [
+    "sync-experiment",
+    5524
+   ],
+   [
+    "sync-experiment2-nosync",
+    4376
+   ],
+   [
+    "sync-experiment2-sync",
+    5536
+   ]
+  ]
+ },
+ "samples": [
+  {
+   "at": "2026-10-25T04:41:25.620Z",
+   "path": "smoke",
+   "template": "oma-env-bench-warm",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2
+   },
+   "id": "sandbox-system--oma-env-bench-warm-9ns6h",
+   "createMs": 218,
+   "firstCmd": {
+    "ok": true,
+    "ms": 162,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-9ns6h",
+    "uid": "d4ead75f-9e6e-4ded-94da-f1bfe53510cc",
+    "created": "2026-10-25T04:37:50Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:39:55Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.110.18"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:38:30Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:38:30Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "sandbox locked",
+     "cost": 0.010190312
+    },
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "runtime request completed",
+     "cost": 0.012076794
+    },
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "init runtime completed",
+     "cost": 0.021708669
+    },
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 31.959992ms, Wait: 3.132µs, RetryCost: 0s, PickAndLock: 10.190312ms, LockType: update, WaitReady: 0s, InitRuntime: 21.76968ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 31.959992ms, Wait: 3.132µs, RetryCost: 0s, PickAndLock: 10.190312ms, LockType: update, WaitReady: 0s, InitRuntime: 21.76968ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "route synced with peers",
+     "cost": 0.003908209
+    },
+    {
+     "ts": "2026-10-25T04:39:55Z",
+     "msg": "sandbox created",
+     "totalCost": 0.036239959
+    }
+   ],
+   "probe": {
+    "stdout": "whoami=root uid=0\nPRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\n2\n               total        used        free      shared  buff/cache   available\nMem:            4096         176        3649           0         270        3919\noverlay          49G   79M   47G   1% /\n/usr/local/bin/python3\n/usr/local/bin/pip3\n/usr/local/bin/node\n/usr/bin/curl\n/usr/bin/unzip\n/usr/bin/tar\n/usr/bin/sha256sum\n/usr/bin/apt-get\nPython 3.11.2\nPython 3.11.2\nauto-story\noma-pi-tools\npi-search\nvenv\nURIs: https://mirrors.aliyun.com/debian\nURIs: https://mirrors.aliyun.com/debian-security\n---getent\n100.100.2.148   mirrors.cloud.aliyuncs.com\n100.100.2.158   mirrors.cloud.aliyuncs.com\nrc=0\n222.186.17.203  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.195  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.198  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.202  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.204  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.201  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.200  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\n222.186.17.199  mirrors.aliyun.com.w.alikunlun.com mirrors.aliyun.com\nrc=0\n140.249.145.114 registry.npmmirror.com.w.cdngslb.com registry.npmmirror.com\nrc=0\n20.205.243.166  github.com\nrc=0\n---curl\nCURL http://mirrors.cloud.aliyuncs.com/pypi/simple/pip/ try=1 200 0.030582 100.100.2.148\nCURL http://mirrors.cloud.aliyuncs.com/pypi/simple/pip/ try=2 200 0.023576 100.100.2.148\nCURL http://mirrors.cloud.aliyuncs.com/pypi/simple/pip/ try=3 200 0.022480 100.100.2.148\nCURL https://mirrors.aliyun.com/pypi/simple/pip/ try=1 200 0.109857 222.186.17.195\nCURL https://mirrors.aliyun.com/pypi/simple/pip/ try=2 200 0.087688 222.186.17.202\nCURL https://mirrors.aliyun.com/pypi/simple/pip/ try=3 200 0.086813 222.186.17.198\nCURL https://registry.npmmirror.com/express try=1 200 0.378794 140.249.145.114\nCURL https://registry.npmmirror.com/express try=2 200 0.205855 140.249.145.114\nCURL https://registry.npmmirror.com/express try=3 200 0.253364 140.249.145.114\nCURL http://mirrors.cloud.aliyuncs.com/debian/dists/bookworm/Release try=1 200 0.052195 100.100.2.148\nCURL http://mirrors.cloud.aliyuncs.com/debian/dists/bookworm/Release try=2 200 0.093643 100.100.2.158\nCURL http://mirrors.cloud.aliyuncs.com/debian/dists/bookworm/Release try=3 200 0.029407 100.100.2.148\nCURL https://mirrors.aliyun.com/debian/dists/bookworm/Release try=1 200 0.121992 222.186.17.203\nCURL https://mirrors.aliyun.com/debian/dists/bookworm/Release try=2 200 0.126727 222.186.17.203\nCURL https://mirrors.aliyun.com/debian/dists/bookworm/Release try=3 200 0.113916 222.186.17.198\nCURL https://pypi.org/simple/pip/ try=1 200 7.541526 151.101.64.223\nCURL https://pypi.org/simple/pip/ try=2 200 8.077268 151.101.0.223\nCURL https://pypi.org/simple/pip/ try=3 200 1.286228 151.101.0.223\nCURL https://github.com/ try=1 curl: (28) Operation timed out after 30001 milliseconds with 0 bytes received\n200 30.001801 20.205.243.166\nCURL https://github.com/ try=2 curl: (28) Operation timed out after 30001 milliseconds with 0 bytes received\n000 30.001772 20.205.243.166\nCURL https://github.com/ try=3 curl: (28) Failed to connect to github.com port 443 after 10001 ms: Timeout was reached\n000 10.001428 \n",
+    "stderr": "",
+    "exitCode": 0
+   }
+  },
+  {
+   "at": "2026-10-25T04:46:22.896Z",
+   "path": "probe-github",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 122
+   },
+   "id": "sandbox-system--oma-env-bench-warm-kj7gb",
+   "createMs": 210,
+   "firstCmd": {
+    "ok": true,
+    "ms": 263,
+    "value": 0
+   },
+   "probe": {
+    "stdout": "DIRECT try=1 curl: (18) HTTP/2 stream 1 was not closed cleanly before end of the underlying stream 000 0 0 0.121259 90.232053 https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.18/vfs-cli_v0.3.18_linux_amd64.tar.gz\nDIRECT try=2 curl: (28) Failed to connect to github.com port 443 after 15000 ms: Timeout was reached 000 0 0 0.000000 14.999836 https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.18/vfs-cli_v0.3.18_linux_amd64.tar.gz\nPROXY 200 3602540 1381382 0.015917 2.607923\nDIRECT try=1 curl: (28) Failed to connect to github.com port 443 after 15001 ms: Timeout was reached 000 0 0 0.000000 15.001796 https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz\nDIRECT try=2 curl: (28) Failed to connect to github.com port 443 after 15000 ms: Timeout was reached 000 0 0 0.000000 15.000677 https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz\nPROXY 200 3037193 1161018 0.015829 2.615974\nOSSUTIL-DIRECT 200 10492456 22605597 0.464153\nvfs-cli version v0.3.21\nvfs rc=0\nmediakit-cli version 0.2.1\nmk rc=0\n2.2.0\noss rc=0\noverlay on / type overlay (rw,relatime,lowerdir=235/fs:234/fs:233/fs:232/fs:231/fs:230/fs:229/fs:228/fs:227/fs:226/fs:225/fs:224/fs:223/fs:222/fs:221/fs:220/fs:219/fs:218/fs:217/fs:216/fs:215/fs:214/f\nFilesystem       1B-blocks     Used   Available Use% Mounted on\noverlay        52504788992 82370560 49722126336   1% /\noverlay        52504788992 82370560 49722126336   1% /\noverlay        52504788992 82370560 49722126336   1% /\n39837696\t/opt\n11730944\t/usr\n",
+    "stderr": ""
+   }
+  },
+  {
+   "at": "2026-10-25T04:47:45.519Z",
+   "path": "script-S1",
+   "index": 0,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 302
+   },
+   "createMs": 213,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-t7gwc",
+   "firstCmd": {
+    "ok": true,
+    "ms": 199,
+    "value": 0
+   },
+   "diskBefore": "82370560\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 30094,
+   "scriptOk": true,
+   "result": {
+    "heavy": 0,
+    "totalMs": 24521,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2605,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2565,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 527,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2767,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 15533,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 477,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 37,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2399:info=200 3602540 1507771 0.017115 1.223755 2.389315",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2398:info=200 3037193 1271553 0.017407 1.308520 2.388568",
+     "fetch:ossutil:attempt=1:rc=0:ms=225:info=200 10492456 48468253 0.027378 0.077598 0.216481"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2399 info=[200 3602540 1507771 0.017115 1.223755 2.389315] err=[]",
+    "STEP vfs_cli rc=0 ms=2605",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2398 info=[200 3037193 1271553 0.017407 1.308520 2.388568] err=[]",
+    "STEP mediakit_cli rc=0 ms=2565",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=225 info=[200 10492456 48468253 0.027378 0.077598 0.216481] err=[]",
+    "STEP ossutil rc=0 ms=527",
+    "STEP venv rc=0 ms=2767",
+    "STEP pip_requirements rc=0 ms=15533",
+    "STEP verify rc=0 ms=477",
+    "STEP markers rc=0 ms=37"
+   ],
+   "stdoutTail": "Collecting pydantic-core==2.50.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/ed/60/7f2ae89c37e69a3dc0da9ff57b0388c285542c688d05f36767770429de85/pydantic_core-2.50.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.2 MB)\nCollecting typing-inspection>=0.4.4\n  Downloading https://mirrors.aliyun.com/pypi/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl (14 kB)\nCollecting charset_normalizer<4,>=2\n  Downloading https://mirrors.aliyun.com/pypi/packages/e4/ed/cf505d3011ffceb12c2067a7a5d3cfe92b875d4d44bb0ff0d69375e2c184/charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (269 kB)\nCollecting urllib3<3,>=1.26\n  Downloading https://mirrors.aliyun.com/pypi/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl (135 kB)\nCollecting cffi>=2.0.0\n  Downloading https://mirrors.aliyun.com/pypi/packages/f7/a4/4399daaf8f7dfee9d7c3327fdb0426ee041cc63edc358b93911ceb2bfc7a/cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)\nCollecting pyasn1<0.7.0,>=0.6.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl (84 kB)\nCollecting pycparser\n  Downloading https://mirrors.aliyun.com/pypi/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl (62 kB)\nInstalling collected packages: websockets, urllib3, typing-extensions, tenacity, sniffio, pycparser, pyasn1, idna, h11, distro, charset_normalizer, certifi, annotated-types, typing-inspection, requests, pydantic-core, pyasn1-modules, httpcore, cffi, anyio, pydantic, httpx, cryptography, google-auth, google-genai\nSuccessfully installed annotated-types-0.8.0 anyio-4.15.1 certifi-2026.10.23 cffi-2.1.1 charset_normalizer-3.5.2 cryptography-50.0.2 distro-1.9.0 google-auth-2.62.0 google-genai-2.22.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 pyasn1-0.6.4 pyasn1-modules-0.4.2 pycparser-3.12 pydantic-2.14.1 pydantic-core-2.50.1 requests-2.34.2 sniffio-1.3.1 tenacity-9.1.4 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 websockets-16.1.1\nSTEP pip_requirements rc=0 ms=15533\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nSTEP verify rc=0 ms=477\nSTEP markers rc=0 ms=37\nBENCH_RESULT {\"heavy\":0,\"totalMs\":24521,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2605,\"rc\":0},\"mediakit_cli\":{\"ms\":2565,\"rc\":0},\"ossutil\":{\"ms\":527,\"rc\":0},\"venv\":{\"ms\":2767,\"rc\":0},\"pip_requirements\":{\"ms\":15533,\"rc\":0},\"verify\":{\"ms\":477,\"rc\":0},\"markers\":{\"ms\":37,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2399:info=200 3602540 1507771 0.017115 1.223755 2.389315\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2398:info=200 3037193 1271553 0.017407 1.308520 2.388568\",\"fetch:ossutil:attempt=1:rc=0:ms=225:info=200 10492456 48468253 0.027378 0.077598 0.216481\"]}\n",
+   "diskAfter": "203472896\n/opt=2930490669 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-t7gwc",
+    "uid": "0a232830-12aa-4a83-8306-483f5751c355",
+    "created": "2026-10-25T04:39:55Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:47:08Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.110.20"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:40:36Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:40:36Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "sandbox locked",
+     "cost": 0.014231496
+    },
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "runtime request completed",
+     "cost": 0.010643299
+    },
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "init runtime completed",
+     "cost": 0.010753862
+    },
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 25.051663ms, Wait: 2.915µs, RetryCost: 0s, PickAndLock: 14.231496ms, LockType: update, WaitReady: 0s, InitRuntime: 10.820167ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 25.051663ms, Wait: 2.915µs, RetryCost: 0s, PickAndLock: 14.231496ms, LockType: update, WaitReady: 0s, InitRuntime: 10.820167ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "route synced with peers",
+     "cost": 0.001604629
+    },
+    {
+     "ts": "2026-10-25T04:47:08Z",
+     "msg": "sandbox created",
+     "totalCost": 0.027030091
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:50:32.292Z",
+   "path": "script-S2",
+   "index": 0,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 234
+   },
+   "createMs": 192,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-8dkxb",
+   "firstCmd": {
+    "ok": true,
+    "ms": 386,
+    "value": 0
+   },
+   "diskBefore": "82370560\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 131974,
+   "scriptOk": true,
+   "result": {
+    "heavy": 1,
+    "totalMs": 131941,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2736,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2420,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 578,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2761,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 16596,
+      "rc": 0
+     },
+     "pip_heavy": {
+      "ms": 72174,
+      "rc": 0
+     },
+     "apt_update": {
+      "ms": 3833,
+      "rc": 0
+     },
+     "apt_install": {
+      "ms": 29020,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 1777,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 33,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2525:info=200 3602540 1434133 0.016429 1.374820 2.511997",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2244:info=200 3037193 1359514 0.015806 1.228119 2.234028",
+     "fetch:ossutil:attempt=1:rc=0:ms=244:info=200 10492456 45160503 0.029569 0.083026 0.232337"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2525 info=[200 3602540 1434133 0.016429 1.374820 2.511997] err=[]",
+    "STEP vfs_cli rc=0 ms=2736",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2244 info=[200 3037193 1359514 0.015806 1.228119 2.234028] err=[]",
+    "STEP mediakit_cli rc=0 ms=2420",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=244 info=[200 10492456 45160503 0.029569 0.083026 0.232337] err=[]",
+    "STEP ossutil rc=0 ms=578",
+    "STEP venv rc=0 ms=2761",
+    "STEP pip_requirements rc=0 ms=16596",
+    "STEP pip_heavy rc=0 ms=72174",
+    "STEP apt_update rc=0 ms=3833",
+    "STEP apt_install rc=0 ms=29020",
+    "STEP verify rc=0 ms=1777",
+    "STEP markers rc=0 ms=33"
+   ],
+   "stdoutTail": "\r\nCreating config file /etc/libreoffice/registry/main.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/pdfimport.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/xsltfilter.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/lingucomponent.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/Langpack-en-US.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/res/fcfg_langpack_en-US.xcd with new version\r\nSetting up libreoffice-core (4:7.4.7-1+deb12u14) ...\r\nProcessing triggers for libc-bin (2.36-9+deb12u13) ...\r\nProcessing triggers for fontconfig (2.14.1-4) ...\r\nSTEP apt_install rc=0 ms=29020\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nheavy 5.0.0 3.1.0 1.17.1 1.9.1 0.7.2\nSTEP verify rc=0 ms=1777\nSTEP markers rc=0 ms=33\nBENCH_RESULT {\"heavy\":1,\"totalMs\":131941,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2736,\"rc\":0},\"mediakit_cli\":{\"ms\":2420,\"rc\":0},\"ossutil\":{\"ms\":578,\"rc\":0},\"venv\":{\"ms\":2761,\"rc\":0},\"pip_requirements\":{\"ms\":16596,\"rc\":0},\"pip_heavy\":{\"ms\":72174,\"rc\":0},\"apt_update\":{\"ms\":3833,\"rc\":0},\"apt_install\":{\"ms\":29020,\"rc\":0},\"verify\":{\"ms\":1777,\"rc\":0},\"markers\":{\"ms\":33,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2525:info=200 3602540 1434133 0.016429 1.374820 2.511997\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2244:info=200 3037193 1359514 0.015806 1.228119 2.234028\",\"fetch:ossutil:attempt=1:rc=0:ms=244:info=200 10492456 45160503 0.029569 0.083026 0.232337\"]}\n",
+   "diskAfter": "1165205504\n/opt=3583327472 /usr=1561688496 /var/lib=31231553 /var/cache=1895225 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-8dkxb",
+    "uid": "d7723f2c-4848-4675-9a37-10ba8d3edd64",
+    "created": "2026-10-25T04:43:56Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:48:13Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.110.18"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:44:26Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:44:26Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "sandbox locked",
+     "cost": 0.009319862
+    },
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "runtime request completed",
+     "cost": 0.009537112
+    },
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "init runtime completed",
+     "cost": 0.016909661
+    },
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 26.297589ms, Wait: 1.878µs, RetryCost: 0s, PickAndLock: 9.319862ms, LockType: update, WaitReady: 0s, InitRuntime: 16.977727ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 26.297589ms, Wait: 1.878µs, RetryCost: 0s, PickAndLock: 9.319862ms, LockType: update, WaitReady: 0s, InitRuntime: 16.977727ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "route synced with peers",
+     "cost": 0.001582958
+    },
+    {
+     "ts": "2026-10-25T04:48:13Z",
+     "msg": "sandbox created",
+     "totalCost": 0.028254699
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:51:01.715Z",
+   "path": "warm-create",
+   "index": 1,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 425
+   },
+   "createMs": 262,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-ftq5s",
+   "firstCmd": {
+    "ok": true,
+    "ms": 279,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 34,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-ftq5s",
+    "uid": "e7ee7976-a03c-4e13-91ca-c92989193135",
+    "created": "2026-10-25T04:48:13Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:51:01Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.179"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:48:42Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:48:42Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "sandbox locked",
+     "cost": 0.013429322
+    },
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "runtime request completed",
+     "cost": 0.014124375
+    },
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "init runtime completed",
+     "cost": 0.014231402
+    },
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 27.744738ms, Wait: 2.229µs, RetryCost: 0s, PickAndLock: 13.429322ms, LockType: update, WaitReady: 0s, InitRuntime: 14.315416ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 27.744738ms, Wait: 2.229µs, RetryCost: 0s, PickAndLock: 13.429322ms, LockType: update, WaitReady: 0s, InitRuntime: 14.315416ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "route synced with peers",
+     "cost": 0.001645929
+    },
+    {
+     "ts": "2026-10-25T04:51:01Z",
+     "msg": "sandbox created",
+     "totalCost": 0.029791724
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:51:34.298Z",
+   "path": "warm-create",
+   "index": 2,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 31823
+   },
+   "createMs": 110,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-dknmm",
+   "firstCmd": {
+    "ok": true,
+    "ms": 166,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 49,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-dknmm",
+    "uid": "ce9b650f-3367-46b5-8b15-24743a176c29",
+    "created": "2026-10-25T04:51:01Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:51:33Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.160"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:51:30Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:51:30Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "sandbox locked",
+     "cost": 0.013296199
+    },
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "runtime request completed",
+     "cost": 0.01095633
+    },
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "init runtime completed",
+     "cost": 0.011048558
+    },
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 24.408179ms, Wait: 2.829µs, RetryCost: 0s, PickAndLock: 13.296199ms, LockType: update, WaitReady: 0s, InitRuntime: 11.11198ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 24.408179ms, Wait: 2.829µs, RetryCost: 0s, PickAndLock: 13.296199ms, LockType: update, WaitReady: 0s, InitRuntime: 11.11198ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "route synced with peers",
+     "cost": 0.001456161
+    },
+    {
+     "ts": "2026-10-25T04:51:33Z",
+     "msg": "sandbox created",
+     "totalCost": 0.02626635
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:52:03.756Z",
+   "path": "warm-create",
+   "index": 3,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 28644
+   },
+   "createMs": 135,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-dgd72",
+   "firstCmd": {
+    "ok": true,
+    "ms": 200,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 21,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-dgd72",
+    "uid": "60bffe05-6a48-42d2-af07-294742a0c240",
+    "created": "2026-10-25T04:47:08Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:52:03Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:47:36Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:47:36Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "sandbox locked",
+     "cost": 0.013419443
+    },
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "runtime request completed",
+     "cost": 0.013452653
+    },
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "init runtime completed",
+     "cost": 0.01354325
+    },
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 27.041539ms, Wait: 2.774µs, RetryCost: 0s, PickAndLock: 13.419443ms, LockType: update, WaitReady: 0s, InitRuntime: 13.622096ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 27.041539ms, Wait: 2.774µs, RetryCost: 0s, PickAndLock: 13.419443ms, LockType: update, WaitReady: 0s, InitRuntime: 13.622096ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "route synced with peers",
+     "cost": 0.001456518
+    },
+    {
+     "ts": "2026-10-25T04:52:03Z",
+     "msg": "sandbox created",
+     "totalCost": 0.028887274
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:52:29.981Z",
+   "path": "warm-create",
+   "index": 4,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 25482
+   },
+   "createMs": 110,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-tphk6",
+   "firstCmd": {
+    "ok": true,
+    "ms": 173,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 24,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-tphk6",
+    "uid": "b8fa71b8-b170-4c01-ab49-3e3dca58b295",
+    "created": "2026-10-25T04:51:33Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:52:29Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.186"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:52:00Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:52:00Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "sandbox locked",
+     "cost": 0.009134349
+    },
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "runtime request completed",
+     "cost": 0.009932608
+    },
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "init runtime completed",
+     "cost": 0.018863334
+    },
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 28.059097ms, Wait: 2.333µs, RetryCost: 0s, PickAndLock: 9.134349ms, LockType: update, WaitReady: 0s, InitRuntime: 18.924748ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 28.059097ms, Wait: 2.333µs, RetryCost: 0s, PickAndLock: 9.134349ms, LockType: update, WaitReady: 0s, InitRuntime: 18.924748ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "route synced with peers",
+     "cost": 0.001470865
+    },
+    {
+     "ts": "2026-10-25T04:52:29Z",
+     "msg": "sandbox created",
+     "totalCost": 0.029920983
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:52:56.308Z",
+   "path": "warm-create",
+   "index": 5,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 25486
+   },
+   "createMs": 136,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-h9vx7",
+   "firstCmd": {
+    "ok": true,
+    "ms": 213,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 34,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-h9vx7",
+    "uid": "24f87283-495b-4354-8234-3abe3bc65936",
+    "created": "2026-10-25T04:52:29Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:52:55Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.179"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:52:54Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:52:54Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "sandbox locked",
+     "cost": 0.009487308
+    },
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "runtime request completed",
+     "cost": 0.035612127
+    },
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "init runtime completed",
+     "cost": 0.043109524
+    },
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 52.662088ms, Wait: 3.334µs, RetryCost: 0s, PickAndLock: 9.487308ms, LockType: update, WaitReady: 0s, InitRuntime: 43.17478ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 52.662088ms, Wait: 3.334µs, RetryCost: 0s, PickAndLock: 9.487308ms, LockType: update, WaitReady: 0s, InitRuntime: 43.17478ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "route synced with peers",
+     "cost": 0.001463751
+    },
+    {
+     "ts": "2026-10-25T04:52:55Z",
+     "msg": "sandbox created",
+     "totalCost": 0.054606869
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:53:33.608Z",
+   "path": "cold-create",
+   "index": 1,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 1
+   },
+   "createMs": 27743,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-cold-j75p8",
+   "firstCmd": {
+    "ok": true,
+    "ms": 390,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 44,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-cold-j75p8",
+    "uid": "1763d114-ba28-447a-83db-d3058139527c",
+    "created": "2026-10-25T04:53:04Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-name": "",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-cold",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-cold",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:53:04Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.110.18"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:53:32Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:53:32Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:53:04Z",
+     "msg": "sandbox locked",
+     "cost": 0.010851954
+    },
+    {
+     "ts": "2026-10-25T04:53:32Z",
+     "msg": "runtime request completed",
+     "cost": 0.040553648
+    },
+    {
+     "ts": "2026-10-25T04:53:32Z",
+     "msg": "init runtime completed",
+     "cost": 0.040689805
+    },
+    {
+     "ts": "2026-10-25T04:53:32Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 27.558542717s, Wait: 2.567µs, RetryCost: 0s, PickAndLock: 10.851954ms, LockType: create, WaitReady: 27.506939649s, InitRuntime: 40.751114ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:53:32Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 27.558542717s, Wait: 2.567µs, RetryCost: 0s, PickAndLock: 10.851954ms, LockType: create, WaitReady: 27.506939649s, InitRuntime: 40.751114ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:53:32Z",
+     "msg": "route synced with peers",
+     "cost": 0.001511335
+    },
+    {
+     "ts": "2026-10-25T04:53:32Z",
+     "msg": "sandbox created",
+     "totalCost": 27.560468787
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:53:58.664Z",
+   "path": "cold-create",
+   "index": 2,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2
+   },
+   "createMs": 23981,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-cold-6vp89",
+   "firstCmd": {
+    "ok": true,
+    "ms": 339,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 28,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-cold-6vp89",
+    "uid": "8725a86a-febe-408e-8e34-c195d44a42b3",
+    "created": "2026-10-25T04:53:33Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-name": "",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-cold",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-cold",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:53:33Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:53:57Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:53:57Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:53:33Z",
+     "msg": "sandbox locked",
+     "cost": 0.007357521
+    },
+    {
+     "ts": "2026-10-25T04:53:57Z",
+     "msg": "runtime request completed",
+     "cost": 0.022722374
+    },
+    {
+     "ts": "2026-10-25T04:53:57Z",
+     "msg": "init runtime completed",
+     "cost": 0.022847128
+    },
+    {
+     "ts": "2026-10-25T04:53:57Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 23.939913966s, Wait: 2.625µs, RetryCost: 0s, PickAndLock: 7.357521ms, LockType: create, WaitReady: 23.909646882s, InitRuntime: 22.909563ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:53:57Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 23.939913966s, Wait: 2.625µs, RetryCost: 0s, PickAndLock: 7.357521ms, LockType: create, WaitReady: 23.909646882s, InitRuntime: 22.909563ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:53:57Z",
+     "msg": "route synced with peers",
+     "cost": 0.001405608
+    },
+    {
+     "ts": "2026-10-25T04:53:57Z",
+     "msg": "sandbox created",
+     "totalCost": 23.941733331
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:54:24.192Z",
+   "path": "cold-create",
+   "index": 3,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2
+   },
+   "createMs": 24567,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-cold-w78fx",
+   "firstCmd": {
+    "ok": true,
+    "ms": 188,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 50,
+    "value": 0
+   },
+   "cr": {
+    "name": "oma-env-bench-cold-w78fx",
+    "uid": "0aa34549-c519-4cfe-b194-1f7a7ae67f42",
+    "created": "2026-10-25T04:53:58Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-name": "",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-cold",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-cold",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:53:58Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.186"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:54:23Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:54:23Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:53:58Z",
+     "msg": "sandbox locked",
+     "cost": 0.011230594
+    },
+    {
+     "ts": "2026-10-25T04:54:23Z",
+     "msg": "runtime request completed",
+     "cost": 0.02979763
+    },
+    {
+     "ts": "2026-10-25T04:54:23Z",
+     "msg": "init runtime completed",
+     "cost": 0.02993053
+    },
+    {
+     "ts": "2026-10-25T04:54:23Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 24.538108478s, Wait: 1.839µs, RetryCost: 0s, PickAndLock: 11.230594ms, LockType: create, WaitReady: 24.4968796s, InitRuntime: 29.998284ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:54:23Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 24.538108478s, Wait: 1.839µs, RetryCost: 0s, PickAndLock: 11.230594ms, LockType: create, WaitReady: 24.4968796s, InitRuntime: 29.998284ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:54:23Z",
+     "msg": "route synced with peers",
+     "cost": 0.001475267
+    },
+    {
+     "ts": "2026-10-25T04:54:23Z",
+     "msg": "sandbox created",
+     "totalCost": 24.539980782
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:55:03.743Z",
+   "path": "script-S1",
+   "index": 1,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 233
+   },
+   "createMs": 177,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-8b9zq",
+   "firstCmd": {
+    "ok": true,
+    "ms": 147,
+    "value": 0
+   },
+   "diskBefore": "82366464\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 24739,
+   "scriptOk": true,
+   "result": {
+    "heavy": 0,
+    "totalMs": 24676,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2711,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2797,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 779,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2764,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 15087,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 487,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 39,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2499:info=200 3602540 1447279 0.017296 1.375463 2.489181",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2628:info=200 3037193 1159544 0.016602 1.491193 2.619299",
+     "fetch:ossutil:attempt=1:rc=0:ms=461:info=200 10492456 23217353 0.027609 0.108154 0.451923"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2499 info=[200 3602540 1447279 0.017296 1.375463 2.489181] err=[]",
+    "STEP vfs_cli rc=0 ms=2711",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2628 info=[200 3037193 1159544 0.016602 1.491193 2.619299] err=[]",
+    "STEP mediakit_cli rc=0 ms=2797",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=461 info=[200 10492456 23217353 0.027609 0.108154 0.451923] err=[]",
+    "STEP ossutil rc=0 ms=779",
+    "STEP venv rc=0 ms=2764",
+    "STEP pip_requirements rc=0 ms=15087",
+    "STEP verify rc=0 ms=487",
+    "STEP markers rc=0 ms=39"
+   ],
+   "stdoutTail": "Collecting pydantic-core==2.50.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/ed/60/7f2ae89c37e69a3dc0da9ff57b0388c285542c688d05f36767770429de85/pydantic_core-2.50.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.2 MB)\nCollecting typing-inspection>=0.4.4\n  Downloading https://mirrors.aliyun.com/pypi/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl (14 kB)\nCollecting charset_normalizer<4,>=2\n  Downloading https://mirrors.aliyun.com/pypi/packages/e4/ed/cf505d3011ffceb12c2067a7a5d3cfe92b875d4d44bb0ff0d69375e2c184/charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (269 kB)\nCollecting urllib3<3,>=1.26\n  Downloading https://mirrors.aliyun.com/pypi/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl (135 kB)\nCollecting cffi>=2.0.0\n  Downloading https://mirrors.aliyun.com/pypi/packages/f7/a4/4399daaf8f7dfee9d7c3327fdb0426ee041cc63edc358b93911ceb2bfc7a/cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)\nCollecting pyasn1<0.7.0,>=0.6.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl (84 kB)\nCollecting pycparser\n  Downloading https://mirrors.aliyun.com/pypi/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl (62 kB)\nInstalling collected packages: websockets, urllib3, typing-extensions, tenacity, sniffio, pycparser, pyasn1, idna, h11, distro, charset_normalizer, certifi, annotated-types, typing-inspection, requests, pydantic-core, pyasn1-modules, httpcore, cffi, anyio, pydantic, httpx, cryptography, google-auth, google-genai\nSuccessfully installed annotated-types-0.8.0 anyio-4.15.1 certifi-2026.10.23 cffi-2.1.1 charset_normalizer-3.5.2 cryptography-50.0.2 distro-1.9.0 google-auth-2.62.0 google-genai-2.22.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 pyasn1-0.6.4 pyasn1-modules-0.4.2 pycparser-3.12 pydantic-2.14.1 pydantic-core-2.50.1 requests-2.34.2 sniffio-1.3.1 tenacity-9.1.4 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 websockets-16.1.1\nSTEP pip_requirements rc=0 ms=15087\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nSTEP verify rc=0 ms=487\nSTEP markers rc=0 ms=39\nBENCH_RESULT {\"heavy\":0,\"totalMs\":24676,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2711,\"rc\":0},\"mediakit_cli\":{\"ms\":2797,\"rc\":0},\"ossutil\":{\"ms\":779,\"rc\":0},\"venv\":{\"ms\":2764,\"rc\":0},\"pip_requirements\":{\"ms\":15087,\"rc\":0},\"verify\":{\"ms\":487,\"rc\":0},\"markers\":{\"ms\":39,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2499:info=200 3602540 1447279 0.017296 1.375463 2.489181\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2628:info=200 3037193 1159544 0.016602 1.491193 2.619299\",\"fetch:ossutil:attempt=1:rc=0:ms=461:info=200 10492456 23217353 0.027609 0.108154 0.451923\"]}\n",
+   "diskAfter": "203468800\n/opt=2930490669 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-8b9zq",
+    "uid": "8b43c661-d9b1-4a8e-b52a-70684264bfd4",
+    "created": "2026-10-25T04:52:55Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:54:33Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.160"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:53:23Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:53:23Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "sandbox locked",
+     "cost": 0.011783237
+    },
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "runtime request completed",
+     "cost": 0.009931453
+    },
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "init runtime completed",
+     "cost": 0.010023547
+    },
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 21.875051ms, Wait: 2.502µs, RetryCost: 0s, PickAndLock: 11.783237ms, LockType: update, WaitReady: 0s, InitRuntime: 10.091814ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 21.875051ms, Wait: 2.502µs, RetryCost: 0s, PickAndLock: 11.783237ms, LockType: update, WaitReady: 0s, InitRuntime: 10.091814ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "route synced with peers",
+     "cost": 0.001477474
+    },
+    {
+     "ts": "2026-10-25T04:54:33Z",
+     "msg": "sandbox created",
+     "totalCost": 0.023726424
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T04:55:37.138Z",
+   "path": "script-S1",
+   "index": 2,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 129
+   },
+   "createMs": 192,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-h6tgg",
+   "firstCmd": {
+    "ok": true,
+    "ms": 191,
+    "value": 0
+   },
+   "diskBefore": "82145280\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 25664,
+   "scriptOk": true,
+   "result": {
+    "heavy": 0,
+    "totalMs": 25614,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2679,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 3047,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 573,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2866,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 15904,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 493,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 41,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2442:info=200 3602540 1482042 0.016562 1.308522 2.430794",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2882:info=200 3037193 1057434 0.014961 1.767681 2.872228",
+     "fetch:ossutil:attempt=1:rc=0:ms=253:info=200 10492456 42961020 0.029339 0.075208 0.244232"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2442 info=[200 3602540 1482042 0.016562 1.308522 2.430794] err=[]",
+    "STEP vfs_cli rc=0 ms=2679",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2882 info=[200 3037193 1057434 0.014961 1.767681 2.872228] err=[]",
+    "STEP mediakit_cli rc=0 ms=3047",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=253 info=[200 10492456 42961020 0.029339 0.075208 0.244232] err=[]",
+    "STEP ossutil rc=0 ms=573",
+    "STEP venv rc=0 ms=2866",
+    "STEP pip_requirements rc=0 ms=15904",
+    "STEP verify rc=0 ms=493",
+    "STEP markers rc=0 ms=41"
+   ],
+   "stdoutTail": "Collecting pydantic-core==2.50.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/ed/60/7f2ae89c37e69a3dc0da9ff57b0388c285542c688d05f36767770429de85/pydantic_core-2.50.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.2 MB)\nCollecting typing-inspection>=0.4.4\n  Downloading https://mirrors.aliyun.com/pypi/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl (14 kB)\nCollecting charset_normalizer<4,>=2\n  Downloading https://mirrors.aliyun.com/pypi/packages/e4/ed/cf505d3011ffceb12c2067a7a5d3cfe92b875d4d44bb0ff0d69375e2c184/charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (269 kB)\nCollecting urllib3<3,>=1.26\n  Downloading https://mirrors.aliyun.com/pypi/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl (135 kB)\nCollecting cffi>=2.0.0\n  Downloading https://mirrors.aliyun.com/pypi/packages/f7/a4/4399daaf8f7dfee9d7c3327fdb0426ee041cc63edc358b93911ceb2bfc7a/cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)\nCollecting pyasn1<0.7.0,>=0.6.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl (84 kB)\nCollecting pycparser\n  Downloading https://mirrors.aliyun.com/pypi/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl (62 kB)\nInstalling collected packages: websockets, urllib3, typing-extensions, tenacity, sniffio, pycparser, pyasn1, idna, h11, distro, charset_normalizer, certifi, annotated-types, typing-inspection, requests, pydantic-core, pyasn1-modules, httpcore, cffi, anyio, pydantic, httpx, cryptography, google-auth, google-genai\nSuccessfully installed annotated-types-0.8.0 anyio-4.15.1 certifi-2026.10.23 cffi-2.1.1 charset_normalizer-3.5.2 cryptography-50.0.2 distro-1.9.0 google-auth-2.62.0 google-genai-2.22.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 pyasn1-0.6.4 pyasn1-modules-0.4.2 pycparser-3.12 pydantic-2.14.1 pydantic-core-2.50.1 requests-2.34.2 sniffio-1.3.1 tenacity-9.1.4 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 websockets-16.1.1\nSTEP pip_requirements rc=0 ms=15904\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nSTEP verify rc=0 ms=493\nSTEP markers rc=0 ms=41\nBENCH_RESULT {\"heavy\":0,\"totalMs\":25614,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2679,\"rc\":0},\"mediakit_cli\":{\"ms\":3047,\"rc\":0},\"ossutil\":{\"ms\":573,\"rc\":0},\"venv\":{\"ms\":2866,\"rc\":0},\"pip_requirements\":{\"ms\":15904,\"rc\":0},\"verify\":{\"ms\":493,\"rc\":0},\"markers\":{\"ms\":41,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2442:info=200 3602540 1482042 0.016562 1.308522 2.430794\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2882:info=200 3037193 1057434 0.014961 1.767681 2.872228\",\"fetch:ossutil:attempt=1:rc=0:ms=253:info=200 10492456 42961020 0.029339 0.075208 0.244232\"]}\n",
+   "diskAfter": "203468800\n/opt=2930490669 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-h6tgg",
+    "uid": "392682a1-f658-41e0-bc1b-34577409cf04",
+    "created": "2026-10-25T04:54:33Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:55:04Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.179"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:55:02Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:55:02Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "sandbox locked",
+     "cost": 0.012493121
+    },
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "runtime request completed",
+     "cost": 0.018814835
+    },
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "init runtime completed",
+     "cost": 0.018923858
+    },
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 31.480983ms, Wait: 2.893µs, RetryCost: 0s, PickAndLock: 12.493121ms, LockType: update, WaitReady: 0s, InitRuntime: 18.987862ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 31.480983ms, Wait: 2.893µs, RetryCost: 0s, PickAndLock: 12.493121ms, LockType: update, WaitReady: 0s, InitRuntime: 18.987862ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "route synced with peers",
+     "cost": 0.001506556
+    },
+    {
+     "ts": "2026-10-25T04:55:04Z",
+     "msg": "sandbox created",
+     "totalCost": 0.033352764
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:11:21.736Z",
+   "path": "script-S1",
+   "index": 3,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 146
+   },
+   "createMs": 192,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-57msm",
+   "firstCmd": {
+    "ok": true,
+    "ms": 211,
+    "value": 0
+   },
+   "diskBefore": "82366464\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 22991,
+   "scriptOk": true,
+   "result": {
+    "heavy": 0,
+    "totalMs": 22937,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2408,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2521,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 548,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2759,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 14180,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 472,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 39,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2198:info=200 3602540 1646326 0.017101 1.186199 2.188230",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2356:info=200 3037193 1294152 0.015475 1.268528 2.346859",
+     "fetch:ossutil:attempt=1:rc=0:ms=241:info=200 10492456 45190846 0.028101 0.075238 0.232181"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2198 info=[200 3602540 1646326 0.017101 1.186199 2.188230] err=[]",
+    "STEP vfs_cli rc=0 ms=2408",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2356 info=[200 3037193 1294152 0.015475 1.268528 2.346859] err=[]",
+    "STEP mediakit_cli rc=0 ms=2521",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=241 info=[200 10492456 45190846 0.028101 0.075238 0.232181] err=[]",
+    "STEP ossutil rc=0 ms=548",
+    "STEP venv rc=0 ms=2759",
+    "STEP pip_requirements rc=0 ms=14180",
+    "STEP verify rc=0 ms=472",
+    "STEP markers rc=0 ms=39"
+   ],
+   "stdoutTail": "Collecting pydantic-core==2.50.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/ed/60/7f2ae89c37e69a3dc0da9ff57b0388c285542c688d05f36767770429de85/pydantic_core-2.50.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.2 MB)\nCollecting typing-inspection>=0.4.4\n  Downloading https://mirrors.aliyun.com/pypi/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl (14 kB)\nCollecting charset_normalizer<4,>=2\n  Downloading https://mirrors.aliyun.com/pypi/packages/e4/ed/cf505d3011ffceb12c2067a7a5d3cfe92b875d4d44bb0ff0d69375e2c184/charset_normalizer-3.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (269 kB)\nCollecting urllib3<3,>=1.26\n  Downloading https://mirrors.aliyun.com/pypi/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl (135 kB)\nCollecting cffi>=2.0.0\n  Downloading https://mirrors.aliyun.com/pypi/packages/f7/a4/4399daaf8f7dfee9d7c3327fdb0426ee041cc63edc358b93911ceb2bfc7a/cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)\nCollecting pyasn1<0.7.0,>=0.6.1\n  Downloading https://mirrors.aliyun.com/pypi/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl (84 kB)\nCollecting pycparser\n  Downloading https://mirrors.aliyun.com/pypi/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl (62 kB)\nInstalling collected packages: websockets, urllib3, typing-extensions, tenacity, sniffio, pycparser, pyasn1, idna, h11, distro, charset_normalizer, certifi, annotated-types, typing-inspection, requests, pydantic-core, pyasn1-modules, httpcore, cffi, anyio, pydantic, httpx, cryptography, google-auth, google-genai\nSuccessfully installed annotated-types-0.8.0 anyio-4.15.1 certifi-2026.10.23 cffi-2.1.1 charset_normalizer-3.5.2 cryptography-50.0.2 distro-1.9.0 google-auth-2.62.0 google-genai-2.22.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 pyasn1-0.6.4 pyasn1-modules-0.4.2 pycparser-3.12 pydantic-2.14.1 pydantic-core-2.50.1 requests-2.34.2 sniffio-1.3.1 tenacity-9.1.4 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 websockets-16.1.1\nSTEP pip_requirements rc=0 ms=14180\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nSTEP verify rc=0 ms=472\nSTEP markers rc=0 ms=39\nBENCH_RESULT {\"heavy\":0,\"totalMs\":22937,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2408,\"rc\":0},\"mediakit_cli\":{\"ms\":2521,\"rc\":0},\"ossutil\":{\"ms\":548,\"rc\":0},\"venv\":{\"ms\":2759,\"rc\":0},\"pip_requirements\":{\"ms\":14180,\"rc\":0},\"verify\":{\"ms\":472,\"rc\":0},\"markers\":{\"ms\":39,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2198:info=200 3602540 1646326 0.017101 1.186199 2.188230\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2356:info=200 3037193 1294152 0.015475 1.268528 2.346859\",\"fetch:ossutil:attempt=1:rc=0:ms=241:info=200 10492456 45190846 0.028101 0.075238 0.232181\"]}\n",
+   "diskAfter": "203472896\n/opt=2930490669 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-57msm",
+    "uid": "b922c4a9-694d-49f2-9cf0-63603597a1a6",
+    "created": "2026-10-25T04:52:03Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:55:45Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.180"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:52:27Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:52:27Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "sandbox locked",
+     "cost": 0.012415872
+    },
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "runtime request completed",
+     "cost": 0.010368179
+    },
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "init runtime completed",
+     "cost": 0.010463419
+    },
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 22.946952ms, Wait: 3.656µs, RetryCost: 0s, PickAndLock: 12.415872ms, LockType: update, WaitReady: 0s, InitRuntime: 10.53108ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 22.946952ms, Wait: 3.656µs, RetryCost: 0s, PickAndLock: 12.415872ms, LockType: update, WaitReady: 0s, InitRuntime: 10.53108ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "route synced with peers",
+     "cost": 0.001481011
+    },
+    {
+     "ts": "2026-10-25T04:55:45Z",
+     "msg": "sandbox created",
+     "totalCost": 0.024845552
+    }
+   ],
+   "snapshot": {
+    "ms": 5492,
+    "ok": true,
+    "snapshotId": "cp-uf600987gd3y5l7gspsj"
+   },
+   "newSandboxTemplates": [
+    {
+     "name": "oma-env-bench-warm-57msm-zd2kg",
+     "owner": [
+      "Checkpoint/oma-env-bench-warm-57msm-zd2kg"
+     ]
+    }
+   ],
+   "sourceAfterSnapshot": {
+    "name": "oma-env-bench-warm-57msm",
+    "uid": "b922c4a9-694d-49f2-9cf0-63603597a1a6",
+    "created": "2026-10-25T04:52:03Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T04:55:45Z",
+    "phase": "Failed",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.180"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "False",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:56:14Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:52:27Z"
+     }
+    ]
+   },
+   "snapshotManager": [
+    {
+     "ts": "2026-10-25T04:56:19Z",
+     "msg": "API Success",
+     "cost": 5.4226896
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:12:43.986Z",
+   "path": "checkpoint-S1",
+   "name": "oma-env-bench-warm-57msm-zd2kg",
+   "created": "2026-10-25T04:56:14Z",
+   "annotations": {
+    "agents.kruise.io/checkpoint-mode": "acs",
+    "agents.kruise.io/init-runtime-request": "{\"envVars\":{\"BENCH_PLAIN\":\"p1\"},\"accessToken\":\"<redacted>\"}",
+    "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+    "agents.kruise.io/sandbox-id": "sandbox-system--oma-env-bench-warm-57msm"
+   },
+   "labels": {
+    "agents.kruise.io/checkpoint-id": "cp-uf600987gd3y5l7gspsj",
+    "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+    "agents.kruise.io/sandbox-name": "oma-env-bench-warm-57msm"
+   },
+   "spec": {
+    "keepRunning": false,
+    "persistentContents": [
+     "filesystem"
+    ],
+    "podName": "oma-env-bench-warm-57msm",
+    "ttlAfterFinished": "6h"
+   },
+   "status": {
+    "checkpointId": "cp-uf600987gd3y5l7gspsj",
+    "completionTime": "2026-10-25T04:56:19Z",
+    "observedGeneration": 1,
+    "phase": "Succeeded"
+   },
+   "ownerReferences": null,
+   "podTemplateDeltaKeys": [
+    "$setElementOrder/initContainers",
+    "initContainers"
+   ],
+   "crDurationMs": 5000
+  },
+  {
+   "at": "2026-10-25T05:13:48.059Z",
+   "path": "clone-S1",
+   "index": 1,
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "envsPassed": [
+    "BENCH_PLAIN",
+    "VFS_TOKEN"
+   ],
+   "liveBefore": 1,
+   "createMs": 28603,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-8lbkb",
+   "firstCmd": {
+    "ok": true,
+    "ms": 214,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 28,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "BUILD_RESULT_PRESENT",
+    "PRESENT /opt/bench/build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /var/tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /root/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /home/user/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "bench-build-marker bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_PRESENT",
+    "hostname=cp-uf600987gd3y5l7gspsj-8lbkb uptime_s=3.28",
+    "203472896"
+   ],
+   "benchPlainAsUser": "p1",
+   "envCheck": {
+    "asUser": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset",
+     "whoami=user"
+    ],
+    "asRoot": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset",
+     "whoami=root"
+    ],
+    "pid1": [
+     "bash /root/.jupyter/start-up.sh",
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=other-nonempty"
+    ],
+    "envd": [
+     "envd_pid=19",
+     "MISSING /tmp/.envd-env"
+    ],
+    "daemon": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset-or-empty"
+    ]
+   },
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-8lbkb",
+    "uid": "691b8aa4-e99e-4230-ba80-b6f28043858d",
+    "created": "2026-10-25T05:13:12Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-57msm-zd2kg",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:13:12Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.179"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:13:40Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:13:40Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:13:12Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.010374305
+    },
+    {
+     "ts": "2026-10-25T05:13:40Z",
+     "msg": "runtime request completed",
+     "cost": 0.029716877
+    },
+    {
+     "ts": "2026-10-25T05:13:40Z",
+     "msg": "init runtime completed",
+     "cost": 0.029877236
+    },
+    {
+     "ts": "2026-10-25T05:13:40Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.098µs, GetTemplate: 26.752µs, CreateSandbox: 10.374305ms, WaitReady: 28.358817155s, InitRuntime: 29.946697ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 28.399167007s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:13:40Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.098µs, GetTemplate: 26.752µs, CreateSandbox: 10.374305ms, WaitReady: 28.358817155s, InitRuntime: 29.946697ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 28.399167007s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:13:40Z",
+     "msg": "route synced with peers",
+     "cost": 0.002699389
+    },
+    {
+     "ts": "2026-10-25T05:13:40Z",
+     "msg": "sandbox cloned",
+     "totalCost": 28.402318766
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:14:16.060Z",
+   "path": "clone-S1",
+   "index": 2,
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "envsPassed": [],
+   "liveBefore": 1,
+   "createMs": 25299,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-ssn58",
+   "firstCmd": {
+    "ok": true,
+    "ms": 210,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 40,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "BUILD_RESULT_PRESENT",
+    "PRESENT /opt/bench/build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /var/tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /root/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /home/user/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "bench-build-marker bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_PRESENT",
+    "hostname=cp-uf600987gd3y5l7gspsj-ssn58 uptime_s=2.62",
+    "203472896"
+   ],
+   "benchPlainAsUser": "p1",
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-ssn58",
+    "uid": "4841e821-b27d-49af-a922-0836b72a9fd4",
+    "created": "2026-10-25T05:13:48Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-57msm-zd2kg",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:13:48Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.160"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:14:13Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:14:13Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:13:48Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.01084062
+    },
+    {
+     "ts": "2026-10-25T05:14:13Z",
+     "msg": "runtime request completed",
+     "cost": 0.05793164
+    },
+    {
+     "ts": "2026-10-25T05:14:13Z",
+     "msg": "init runtime completed",
+     "cost": 0.058094356
+    },
+    {
+     "ts": "2026-10-25T05:14:13Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.76µs, GetTemplate: 33.613µs, CreateSandbox: 10.84062ms, WaitReady: 25.206783737s, InitRuntime: 58.165454ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 25.275825184s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:14:13Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.76µs, GetTemplate: 33.613µs, CreateSandbox: 10.84062ms, WaitReady: 25.206783737s, InitRuntime: 58.165454ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 25.275825184s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:14:13Z",
+     "msg": "route synced with peers",
+     "cost": 0.001572253
+    },
+    {
+     "ts": "2026-10-25T05:14:13Z",
+     "msg": "sandbox cloned",
+     "totalCost": 25.277872438
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:14:45.212Z",
+   "path": "clone-S1",
+   "index": 3,
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 1,
+   "createMs": 26189,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-nrfss",
+   "firstCmd": {
+    "ok": true,
+    "ms": 219,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 27,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "BUILD_RESULT_PRESENT",
+    "PRESENT /opt/bench/build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /var/tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /root/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /home/user/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "bench-build-marker bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_PRESENT",
+    "hostname=cp-uf600987gd3y5l7gspsj-nrfss uptime_s=2.33",
+    "203472896"
+   ],
+   "benchPlainAsUser": "p1",
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-nrfss",
+    "uid": "ee8c0496-3b18-4258-83d3-e3b3d4e4d602",
+    "created": "2026-10-25T05:14:16Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-57msm-zd2kg",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:14:16Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.186"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:14:42Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:14:42Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:14:16Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.010880541
+    },
+    {
+     "ts": "2026-10-25T05:14:42Z",
+     "msg": "runtime request completed",
+     "cost": 0.010776872
+    },
+    {
+     "ts": "2026-10-25T05:14:42Z",
+     "msg": "init runtime completed",
+     "cost": 0.010896045
+    },
+    {
+     "ts": "2026-10-25T05:14:42Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.257µs, GetTemplate: 26.734µs, CreateSandbox: 10.880541ms, WaitReady: 26.135791295s, InitRuntime: 10.96283ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.157663657s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:14:42Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.257µs, GetTemplate: 26.734µs, CreateSandbox: 10.880541ms, WaitReady: 26.135791295s, InitRuntime: 10.96283ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.157663657s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:14:42Z",
+     "msg": "route synced with peers",
+     "cost": 0.001353627
+    },
+    {
+     "ts": "2026-10-25T05:14:42Z",
+     "msg": "sandbox cloned",
+     "totalCost": 26.159447478
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:15:14.848Z",
+   "path": "clone-S1",
+   "index": 4,
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 1,
+   "createMs": 26914,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-f9p5r",
+   "firstCmd": {
+    "ok": true,
+    "ms": 246,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 31,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "BUILD_RESULT_PRESENT",
+    "PRESENT /opt/bench/build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /var/tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /root/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /home/user/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "bench-build-marker bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_PRESENT",
+    "hostname=cp-uf600987gd3y5l7gspsj-f9p5r uptime_s=2.92",
+    "203472896"
+   ],
+   "benchPlainAsUser": "p1",
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-f9p5r",
+    "uid": "7a18c9d3-bc27-4ea0-97a0-e4ec2f9e57f7",
+    "created": "2026-10-25T05:14:45Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-57msm-zd2kg",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:14:45Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.180"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:15:12Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:15:12Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:14:45Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.010359882
+    },
+    {
+     "ts": "2026-10-25T05:15:12Z",
+     "msg": "runtime request completed",
+     "cost": 0.014009591
+    },
+    {
+     "ts": "2026-10-25T05:15:12Z",
+     "msg": "init runtime completed",
+     "cost": 0.014122583
+    },
+    {
+     "ts": "2026-10-25T05:15:12Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.622µs, GetTemplate: 30.598µs, CreateSandbox: 10.359882ms, WaitReady: 26.871949711s, InitRuntime: 14.194543ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.896537356s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:15:12Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.622µs, GetTemplate: 30.598µs, CreateSandbox: 10.359882ms, WaitReady: 26.871949711s, InitRuntime: 14.194543ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.896537356s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:15:12Z",
+     "msg": "route synced with peers",
+     "cost": 0.001280155
+    },
+    {
+     "ts": "2026-10-25T05:15:12Z",
+     "msg": "sandbox cloned",
+     "totalCost": 26.898270775
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:15:43.432Z",
+   "path": "clone-S1",
+   "index": 5,
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 1,
+   "createMs": 25390,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-6ppkh",
+   "firstCmd": {
+    "ok": true,
+    "ms": 282,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 29,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "BUILD_RESULT_PRESENT",
+    "PRESENT /opt/bench/build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /var/tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /root/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /home/user/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "bench-build-marker bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_PRESENT",
+    "hostname=cp-uf600987gd3y5l7gspsj-6ppkh uptime_s=3.37",
+    "203472896"
+   ],
+   "benchPlainAsUser": "p1",
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-6ppkh",
+    "uid": "9321c1bb-6d15-4e7e-a8e7-c61c4f066c0b",
+    "created": "2026-10-25T05:15:15Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-57msm-zd2kg",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:15:15Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.179"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:15:40Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:15:40Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:15:15Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.009504198
+    },
+    {
+     "ts": "2026-10-25T05:15:40Z",
+     "msg": "runtime request completed",
+     "cost": 0.034006521
+    },
+    {
+     "ts": "2026-10-25T05:15:40Z",
+     "msg": "init runtime completed",
+     "cost": 0.034219467
+    },
+    {
+     "ts": "2026-10-25T05:15:40Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.385µs, GetTemplate: 26.121µs, CreateSandbox: 9.504198ms, WaitReady: 25.312085862s, InitRuntime: 34.392204ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 25.35601077s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:15:40Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.385µs, GetTemplate: 26.121µs, CreateSandbox: 9.504198ms, WaitReady: 25.312085862s, InitRuntime: 34.392204ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 25.35601077s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:15:40Z",
+     "msg": "route synced with peers",
+     "cost": 0.00168637
+    },
+    {
+     "ts": "2026-10-25T05:15:40Z",
+     "msg": "sandbox cloned",
+     "totalCost": 25.358163029
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:16:49.893Z",
+   "path": "env-warm",
+   "variant": "with-envs",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 269
+   },
+   "createMs": 196,
+   "createOk": true,
+   "envsPassed": [
+    "BENCH_PLAIN",
+    "VFS_TOKEN"
+   ],
+   "id": "sandbox-system--oma-env-bench-warm-4xx8d",
+   "firstCmd": {
+    "ok": true,
+    "ms": 226,
+    "value": 0
+   },
+   "envCheck": {
+    "asUser": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=bench-override",
+     "whoami=user"
+    ],
+    "asRoot": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=bench-override",
+     "whoami=root"
+    ],
+    "pid1": [
+     "bash /root/.jupyter/start-up.sh",
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=other-nonempty"
+    ],
+    "envd": [
+     "envd_pid=19",
+     "MISSING /tmp/.envd-env"
+    ],
+    "daemon": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=bench-override"
+    ],
+    "perCommandEnvs": [
+     "BENCH_PLAIN=p3"
+    ]
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-4xx8d",
+    "uid": "b6f10656-0a19-464c-a841-5d417bc34d15",
+    "created": "2026-10-25T04:55:45Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:16:44Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:56:10Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:56:10Z"
+     }
+    ]
+   }
+  },
+  {
+   "at": "2026-10-25T05:17:20.549Z",
+   "path": "env-warm",
+   "variant": "no-envs",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 25469
+   },
+   "createMs": 123,
+   "createOk": true,
+   "envsPassed": [],
+   "id": "sandbox-system--oma-env-bench-warm-g99qb",
+   "firstCmd": {
+    "ok": true,
+    "ms": 171,
+    "value": 0
+   },
+   "envCheck": {
+    "asUser": [
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=unset",
+     "whoami=user"
+    ],
+    "asRoot": [
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=unset",
+     "whoami=root"
+    ],
+    "pid1": [
+     "bash /root/.jupyter/start-up.sh",
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=other-nonempty"
+    ],
+    "envd": [
+     "envd_pid=18",
+     "MISSING /tmp/.envd-env"
+    ],
+    "daemon": [
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=unset-or-empty"
+    ],
+    "perCommandEnvs": [
+     "BENCH_PLAIN=p3"
+    ]
+   },
+   "cr": {
+    "name": "oma-env-bench-warm-g99qb",
+    "uid": "77fd2662-f9db-4c5b-b047-7ddad0f1dda3",
+    "created": "2026-10-25T04:55:04Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:17:15Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.110.18"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T04:55:31Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T04:55:31Z"
+     }
+    ]
+   }
+  },
+  {
+   "at": "2026-10-25T05:23:00.426Z",
+   "path": "script-S2",
+   "index": 1,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 6576
+   },
+   "createMs": 219,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-jwv9v",
+   "firstCmd": {
+    "ok": true,
+    "ms": 181,
+    "value": 0
+   },
+   "diskBefore": "82366464\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 309107,
+   "scriptOk": true,
+   "result": {
+    "heavy": 1,
+    "totalMs": 309050,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2639,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2477,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 774,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2962,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 21934,
+      "rc": 0
+     },
+     "pip_heavy": {
+      "ms": 184621,
+      "rc": 0
+     },
+     "apt_update": {
+      "ms": 8767,
+      "rc": 0
+     },
+     "apt_install": {
+      "ms": 83065,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 1765,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 32,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2426:info=200 3602540 1491213 0.016353 1.376230 2.415845",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2295:info=200 3037193 1329460 0.017074 1.337264 2.284531",
+     "fetch:ossutil:attempt=1:rc=0:ms=465:info=200 10492456 23013052 0.028465 0.085075 0.455935"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2426 info=[200 3602540 1491213 0.016353 1.376230 2.415845] err=[]",
+    "STEP vfs_cli rc=0 ms=2639",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2295 info=[200 3037193 1329460 0.017074 1.337264 2.284531] err=[]",
+    "STEP mediakit_cli rc=0 ms=2477",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=465 info=[200 10492456 23013052 0.028465 0.085075 0.455935] err=[]",
+    "STEP ossutil rc=0 ms=774",
+    "STEP venv rc=0 ms=2962",
+    "STEP pip_requirements rc=0 ms=21934",
+    "STEP pip_heavy rc=0 ms=184621",
+    "STEP apt_update rc=0 ms=8767",
+    "STEP apt_install rc=0 ms=83065",
+    "STEP verify rc=0 ms=1765",
+    "STEP markers rc=0 ms=32"
+   ],
+   "stdoutTail": "\r\nCreating config file /etc/libreoffice/registry/main.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/pdfimport.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/xsltfilter.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/lingucomponent.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/Langpack-en-US.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/res/fcfg_langpack_en-US.xcd with new version\r\nSetting up libreoffice-core (4:7.4.7-1+deb12u14) ...\r\nProcessing triggers for libc-bin (2.36-9+deb12u13) ...\r\nProcessing triggers for fontconfig (2.14.1-4) ...\r\nSTEP apt_install rc=0 ms=83065\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nheavy 5.0.0 3.1.0 1.17.1 1.9.1 0.7.2\nSTEP verify rc=0 ms=1765\nSTEP markers rc=0 ms=32\nBENCH_RESULT {\"heavy\":1,\"totalMs\":309050,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2639,\"rc\":0},\"mediakit_cli\":{\"ms\":2477,\"rc\":0},\"ossutil\":{\"ms\":774,\"rc\":0},\"venv\":{\"ms\":2962,\"rc\":0},\"pip_requirements\":{\"ms\":21934,\"rc\":0},\"pip_heavy\":{\"ms\":184621,\"rc\":0},\"apt_update\":{\"ms\":8767,\"rc\":0},\"apt_install\":{\"ms\":83065,\"rc\":0},\"verify\":{\"ms\":1765,\"rc\":0},\"markers\":{\"ms\":32,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2426:info=200 3602540 1491213 0.016353 1.376230 2.415845\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2295:info=200 3037193 1329460 0.017074 1.337264 2.284531\",\"fetch:ossutil:attempt=1:rc=0:ms=465:info=200 10492456 23013052 0.028465 0.085075 0.455935\"]}\n",
+   "diskAfter": "1165209600\n/opt=3583327473 /usr=1561692592 /var/lib=31231553 /var/cache=1895225 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-jwv9v",
+    "uid": "9233aa7b-319f-4f75-8f15-3448a2697b6f",
+    "created": "2026-10-25T05:16:44Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:17:44Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.160"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:17:13Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:17:13Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "sandbox locked",
+     "cost": 0.018289768
+    },
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "runtime request completed",
+     "cost": 0.013884111
+    },
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "init runtime completed",
+     "cost": 0.01402621
+    },
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 32.403568ms, Wait: 2.923µs, RetryCost: 0s, PickAndLock: 18.289768ms, LockType: update, WaitReady: 0s, InitRuntime: 14.1138ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 32.403568ms, Wait: 2.923µs, RetryCost: 0s, PickAndLock: 18.289768ms, LockType: update, WaitReady: 0s, InitRuntime: 14.1138ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "route synced with peers",
+     "cost": 0.001399798
+    },
+    {
+     "ts": "2026-10-25T05:17:44Z",
+     "msg": "sandbox created",
+     "totalCost": 0.034233223
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:27:39.323Z",
+   "path": "script-S2",
+   "index": 2,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 119
+   },
+   "createMs": 215,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-tbwjn",
+   "firstCmd": {
+    "ok": true,
+    "ms": 334,
+    "value": 0
+   },
+   "diskBefore": "82370560\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 272138,
+   "scriptOk": true,
+   "result": {
+    "heavy": 1,
+    "totalMs": 272098,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 3015,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2729,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 578,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2728,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 19892,
+      "rc": 0
+     },
+     "pip_heavy": {
+      "ms": 161064,
+      "rc": 0
+     },
+     "apt_update": {
+      "ms": 8014,
+      "rc": 0
+     },
+     "apt_install": {
+      "ms": 72276,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 1754,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 34,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2806:info=200 3602540 1288409 0.018088 1.622387 2.796115",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2556:info=200 3037193 1192957 0.015234 1.404108 2.545936",
+     "fetch:ossutil:attempt=1:rc=0:ms=267:info=200 10492456 40443486 0.029614 0.081667 0.259435"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2806 info=[200 3602540 1288409 0.018088 1.622387 2.796115] err=[]",
+    "STEP vfs_cli rc=0 ms=3015",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2556 info=[200 3037193 1192957 0.015234 1.404108 2.545936] err=[]",
+    "STEP mediakit_cli rc=0 ms=2729",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=267 info=[200 10492456 40443486 0.029614 0.081667 0.259435] err=[]",
+    "STEP ossutil rc=0 ms=578",
+    "STEP venv rc=0 ms=2728",
+    "STEP pip_requirements rc=0 ms=19892",
+    "STEP pip_heavy rc=0 ms=161064",
+    "STEP apt_update rc=0 ms=8014",
+    "STEP apt_install rc=0 ms=72276",
+    "STEP verify rc=0 ms=1754",
+    "STEP markers rc=0 ms=34"
+   ],
+   "stdoutTail": "\r\nCreating config file /etc/libreoffice/registry/main.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/pdfimport.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/xsltfilter.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/lingucomponent.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/Langpack-en-US.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/res/fcfg_langpack_en-US.xcd with new version\r\nSetting up libreoffice-core (4:7.4.7-1+deb12u14) ...\r\nProcessing triggers for libc-bin (2.36-9+deb12u13) ...\r\nProcessing triggers for fontconfig (2.14.1-4) ...\r\nSTEP apt_install rc=0 ms=72276\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nheavy 5.0.0 3.1.0 1.17.1 1.9.1 0.7.2\nSTEP verify rc=0 ms=1754\nSTEP markers rc=0 ms=34\nBENCH_RESULT {\"heavy\":1,\"totalMs\":272098,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":3015,\"rc\":0},\"mediakit_cli\":{\"ms\":2729,\"rc\":0},\"ossutil\":{\"ms\":578,\"rc\":0},\"venv\":{\"ms\":2728,\"rc\":0},\"pip_requirements\":{\"ms\":19892,\"rc\":0},\"pip_heavy\":{\"ms\":161064,\"rc\":0},\"apt_update\":{\"ms\":8014,\"rc\":0},\"apt_install\":{\"ms\":72276,\"rc\":0},\"verify\":{\"ms\":1754,\"rc\":0},\"markers\":{\"ms\":34,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2806:info=200 3602540 1288409 0.018088 1.622387 2.796115\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2556:info=200 3037193 1192957 0.015234 1.404108 2.545936\",\"fetch:ossutil:attempt=1:rc=0:ms=267:info=200 10492456 40443486 0.029614 0.081667 0.259435\"]}\n",
+   "diskAfter": "1165213696\n/opt=3583327473 /usr=1561688496 /var/lib=31231553 /var/cache=1895225 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-tbwjn",
+    "uid": "12848a2b-4aad-4d6b-9e34-8f7b56924c11",
+    "created": "2026-10-25T05:17:44Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:23:01Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.186"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:18:11Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:18:11Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "sandbox locked",
+     "cost": 0.016468713
+    },
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "runtime request completed",
+     "cost": 0.009543212
+    },
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "init runtime completed",
+     "cost": 0.009669726
+    },
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 26.2131ms, Wait: 2.885µs, RetryCost: 0s, PickAndLock: 16.468713ms, LockType: update, WaitReady: 0s, InitRuntime: 9.744387ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 26.2131ms, Wait: 2.885µs, RetryCost: 0s, PickAndLock: 16.468713ms, LockType: update, WaitReady: 0s, InitRuntime: 9.744387ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "route synced with peers",
+     "cost": 0.001482222
+    },
+    {
+     "ts": "2026-10-25T05:23:01Z",
+     "msg": "sandbox created",
+     "totalCost": 0.028102323
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:29:16.935Z",
+   "path": "clone-S1",
+   "index": 6,
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 0,
+   "createMs": 26780,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-kqvzl",
+   "firstCmd": {
+    "ok": true,
+    "ms": 355,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 46,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "BUILD_RESULT_PRESENT",
+    "PRESENT /opt/bench/build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /var/tmp/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /root/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "PRESENT /home/user/bench-build-marker 8345af1f-4771-49f5-aed8-85c6c6503ea8",
+    "bench-build-marker bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_ABSENT",
+    "hostname=cp-uf600987gd3y5l7gspsj-kqvzl uptime_s=3.36",
+    "203472896"
+   ],
+   "benchPlainAsUser": "p1",
+   "envCheck": {
+    "asUser": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset",
+     "whoami=user"
+    ],
+    "asRoot": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset",
+     "whoami=root"
+    ],
+    "pid1": [
+     "bash /root/.jupyter/start-up.sh",
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=other-nonempty"
+    ],
+    "envd": [
+     "envd_pid=20",
+     "MISSING /tmp/.envd-env"
+    ],
+    "daemon": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset-or-empty"
+    ],
+    "perCommandEnvs": [
+     "BENCH_PLAIN=p3"
+    ]
+   },
+   "tokenCheck": {
+    "checkpointHasToken": true,
+    "cloneHasToken": true,
+    "cloneTokenEqualsCheckpointToken": true,
+    "cloneInitRuntimeEnvKeys": [
+     "BENCH_PLAIN"
+    ],
+    "cloneInitRuntimeBenchPlain": "p1"
+   },
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-kqvzl",
+    "uid": "78f1000f-8dbd-4ada-a529-8250794151e3",
+    "created": "2026-10-25T05:28:42Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-57msm-zd2kg",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:28:42Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.160"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:29:08Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:29:08Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:28:42Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.013899998
+    },
+    {
+     "ts": "2026-10-25T05:29:08Z",
+     "msg": "runtime request completed",
+     "cost": 0.066423107
+    },
+    {
+     "ts": "2026-10-25T05:29:08Z",
+     "msg": "init runtime completed",
+     "cost": 0.066542379
+    },
+    {
+     "ts": "2026-10-25T05:29:08Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.827µs, GetTemplate: 31.545µs, CreateSandbox: 13.899998ms, WaitReady: 26.496371575s, InitRuntime: 66.613827ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.576918772s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:29:08Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.827µs, GetTemplate: 31.545µs, CreateSandbox: 13.899998ms, WaitReady: 26.496371575s, InitRuntime: 66.613827ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.576918772s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:29:08Z",
+     "msg": "route synced with peers",
+     "cost": 0.00154387
+    },
+    {
+     "ts": "2026-10-25T05:29:08Z",
+     "msg": "sandbox cloned",
+     "totalCost": 26.578925882
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:33:30.520Z",
+   "path": "script-S2",
+   "index": 3,
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 164
+   },
+   "createMs": 228,
+   "createOk": true,
+   "id": "sandbox-system--oma-env-bench-warm-lkm26",
+   "firstCmd": {
+    "ok": true,
+    "ms": 166,
+    "value": 0
+   },
+   "diskBefore": "82370560\n/opt=2818962600 /usr=1317207553 /var/lib=7603059 /var/cache=1830083 /home/user=25445761 /tmp=8192",
+   "scriptMs": 230612,
+   "scriptOk": true,
+   "result": {
+    "heavy": 1,
+    "totalMs": 230573,
+    "failed": "",
+    "steps": {
+     "vfs_cli": {
+      "ms": 2645,
+      "rc": 0
+     },
+     "mediakit_cli": {
+      "ms": 2679,
+      "rc": 0
+     },
+     "ossutil": {
+      "ms": 556,
+      "rc": 0
+     },
+     "venv": {
+      "ms": 2826,
+      "rc": 0
+     },
+     "pip_requirements": {
+      "ms": 16854,
+      "rc": 0
+     },
+     "pip_heavy": {
+      "ms": 128981,
+      "rc": 0
+     },
+     "apt_update": {
+      "ms": 8247,
+      "rc": 0
+     },
+     "apt_install": {
+      "ms": 65945,
+      "rc": 0
+     },
+     "verify": {
+      "ms": 1792,
+      "rc": 0
+     },
+     "markers": {
+      "ms": 35,
+      "rc": 0
+     }
+    },
+    "notes": [
+     "fetch:vfs-cli:attempt=1:rc=0:ms=2423:info=200 3602540 1493179 0.016843 1.398722 2.412663",
+     "fetch:mediakit-cli:attempt=1:rc=0:ms=2515:info=200 3037193 1212432 0.015596 1.420075 2.505040",
+     "fetch:ossutil:attempt=1:rc=0:ms=255:info=200 10492456 42412783 0.054192 0.114708 0.247389"
+    ]
+   },
+   "fetchLines": [
+    "FETCH vfs-cli attempt=1 via_proxy=1 rc=0 ms=2423 info=[200 3602540 1493179 0.016843 1.398722 2.412663] err=[]",
+    "STEP vfs_cli rc=0 ms=2645",
+    "FETCH mediakit-cli attempt=1 via_proxy=1 rc=0 ms=2515 info=[200 3037193 1212432 0.015596 1.420075 2.505040] err=[]",
+    "STEP mediakit_cli rc=0 ms=2679",
+    "FETCH ossutil attempt=1 via_proxy=0 rc=0 ms=255 info=[200 10492456 42412783 0.054192 0.114708 0.247389] err=[]",
+    "STEP ossutil rc=0 ms=556",
+    "STEP venv rc=0 ms=2826",
+    "STEP pip_requirements rc=0 ms=16854",
+    "STEP pip_heavy rc=0 ms=128981",
+    "STEP apt_update rc=0 ms=8247",
+    "STEP apt_install rc=0 ms=65945",
+    "STEP verify rc=0 ms=1792",
+    "STEP markers rc=0 ms=35"
+   ],
+   "stdoutTail": "\r\nCreating config file /etc/libreoffice/registry/main.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/pdfimport.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/xsltfilter.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/lingucomponent.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/Langpack-en-US.xcd with new version\r\n\r\nCreating config file /etc/libreoffice/registry/res/fcfg_langpack_en-US.xcd with new version\r\nSetting up libreoffice-core (4:7.4.7-1+deb12u14) ...\r\nProcessing triggers for libc-bin (2.36-9+deb12u13) ...\r\nProcessing triggers for fontconfig (2.14.1-4) ...\r\nSTEP apt_install rc=0 ms=65945\nvfs-cli version v0.3.18\nmediakit-cli version 0.2.1\n2.2.0\ngenai 2.22.0\nheavy 5.0.0 3.1.0 1.17.1 1.9.1 0.7.2\nSTEP verify rc=0 ms=1792\nSTEP markers rc=0 ms=35\nBENCH_RESULT {\"heavy\":1,\"totalMs\":230573,\"failed\":\"\",\"steps\":{\"vfs_cli\":{\"ms\":2645,\"rc\":0},\"mediakit_cli\":{\"ms\":2679,\"rc\":0},\"ossutil\":{\"ms\":556,\"rc\":0},\"venv\":{\"ms\":2826,\"rc\":0},\"pip_requirements\":{\"ms\":16854,\"rc\":0},\"pip_heavy\":{\"ms\":128981,\"rc\":0},\"apt_update\":{\"ms\":8247,\"rc\":0},\"apt_install\":{\"ms\":65945,\"rc\":0},\"verify\":{\"ms\":1792,\"rc\":0},\"markers\":{\"ms\":35,\"rc\":0}},\"notes\":[\"fetch:vfs-cli:attempt=1:rc=0:ms=2423:info=200 3602540 1493179 0.016843 1.398722 2.412663\",\"fetch:mediakit-cli:attempt=1:rc=0:ms=2515:info=200 3037193 1212432 0.015596 1.420075 2.505040\",\"fetch:ossutil:attempt=1:rc=0:ms=255:info=200 10492456 42412783 0.054192 0.114708 0.247389\"]}\n",
+   "diskAfter": "1165217792\n/opt=3583327473 /usr=1561692592 /var/lib=31231553 /var/cache=1895225 /home/user=25445798 /tmp=8229",
+   "cr": {
+    "name": "oma-env-bench-warm-lkm26",
+    "uid": "6cc04494-bcff-42c3-a4b5-35ed67dc400c",
+    "created": "2026-10-25T05:23:01Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:29:26Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:23:28Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:23:28Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "sandbox locked",
+     "cost": 0.013910738
+    },
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "runtime request completed",
+     "cost": 0.010489517
+    },
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "init runtime completed",
+     "cost": 0.022255013
+    },
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "try claim sandbox result",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 36.234875ms, Wait: 2.641µs, RetryCost: 0s, PickAndLock: 13.910738ms, LockType: update, WaitReady: 0s, InitRuntime: 22.324137ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "sandbox claimed",
+     "metrics": "ClaimMetrics{Retries: 0, Total: 36.234875ms, Wait: 2.641µs, RetryCost: 0s, PickAndLock: 13.910738ms, LockType: update, WaitReady: 0s, InitRuntime: 22.324137ms, CSIMount: 0s, SecurityToken: 0s, TrafficToken: 0s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "route synced with peers",
+     "cost": 0.001541594
+    },
+    {
+     "ts": "2026-10-25T05:29:26Z",
+     "msg": "sandbox created",
+     "totalCost": 0.038158474
+    }
+   ],
+   "snapshot": {
+    "ms": 5654,
+    "ok": true,
+    "snapshotId": "cp-uf600987kmxfq1p44jqr"
+   },
+   "checkpointPolls": 1,
+   "checkpoint": {
+    "name": "oma-env-bench-warm-lkm26-p7xfn",
+    "uid": "84f06c22-d77a-4cf8-a177-d3d36b881c37",
+    "labels": {
+     "agents.kruise.io/checkpoint-id": "cp-uf600987kmxfq1p44jqr",
+     "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+     "agents.kruise.io/sandbox-name": "oma-env-bench-warm-lkm26"
+    },
+    "annotations": {
+     "agents.kruise.io/checkpoint-mode": "acs",
+     "agents.kruise.io/init-runtime-request": "{\"envVars\":{\"BENCH_PLAIN\":\"p1\"},\"accessToken\":\"<redacted>\"}",
+     "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+     "agents.kruise.io/sandbox-id": "sandbox-system--oma-env-bench-warm-lkm26"
+    },
+    "created": "2026-10-25T05:33:24Z",
+    "spec": {
+     "keepRunning": false,
+     "persistentContents": [
+      "filesystem"
+     ],
+     "podName": "oma-env-bench-warm-lkm26",
+     "ttlAfterFinished": "6h"
+    },
+    "status": {
+     "checkpointId": "cp-uf600987kmxfq1p44jqr",
+     "completionTime": "2026-10-25T05:33:29Z",
+     "observedGeneration": 1,
+     "phase": "Succeeded"
+    },
+    "podTemplateDeltaKeys": [
+     "$setElementOrder/initContainers",
+     "initContainers"
+    ]
+   },
+   "newSandboxTemplates": [
+    {
+     "name": "oma-env-bench-warm-lkm26-p7xfn",
+     "owner": [
+      "Checkpoint/oma-env-bench-warm-lkm26-p7xfn"
+     ]
+    }
+   ],
+   "sourceAfterSnapshot": {
+    "name": "oma-env-bench-warm-lkm26",
+    "uid": "6cc04494-bcff-42c3-a4b5-35ed67dc400c",
+    "created": "2026-10-25T05:23:01Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-pool": "oma-env-bench-warm",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm",
+     "agents.kruise.io/template-hash": "c98fccb87",
+     "alibabacloud.com/acs": "true",
+     "alibabacloud.com/compute-class": "agent-sandbox",
+     "alibabacloud.com/compute-qos": "default",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:29:26Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "False",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:33:24Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:23:28Z"
+     }
+    ]
+   },
+   "snapshotManager": [
+    {
+     "ts": "2026-10-25T05:33:29Z",
+     "msg": "API Success",
+     "cost": 5.440953121
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:38:03.348Z",
+   "path": "clone-S2",
+   "index": 1,
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "envsPassed": [
+    "BENCH_PLAIN",
+    "VFS_TOKEN"
+   ],
+   "liveBefore": 0,
+   "createMs": 31004,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-l8hn2",
+   "firstCmd": {
+    "ok": true,
+    "ms": 308,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 46,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "heavy 5.0.0",
+    "rc_cv2=0",
+    "rc_soffice=0",
+    "install ok installed",
+    "rc_dpkg=0",
+    "ABSENT /opt/bench/build-marker",
+    "ABSENT /tmp/bench-build-marker",
+    "ABSENT /var/tmp/bench-build-marker",
+    "ABSENT /root/bench-build-marker",
+    "ABSENT /home/user/bench-build-marker",
+    "bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_ABSENT",
+    "hostname=cp-uf600987kmxfq1p44jqr-l8hn2 uptime_s=6.32",
+    "1051865088"
+   ],
+   "benchPlainAsUser": "p1",
+   "envCheck": {
+    "asUser": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset",
+     "whoami=user"
+    ],
+    "asRoot": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset",
+     "whoami=root"
+    ],
+    "pid1": [
+     "bash /root/.jupyter/start-up.sh",
+     "BENCH_PLAIN=<unset>",
+     "VFS_TOKEN=other-nonempty"
+    ],
+    "envd": [
+     "envd_pid=17",
+     "MISSING /tmp/.envd-env"
+    ],
+    "daemon": [
+     "BENCH_PLAIN=p1",
+     "VFS_TOKEN=unset-or-empty"
+    ],
+    "perCommandEnvs": [
+     "BENCH_PLAIN=p3"
+    ]
+   },
+   "tokenCheck": {
+    "checkpointHasToken": true,
+    "cloneHasToken": true,
+    "cloneTokenEqualsCheckpointToken": true,
+    "cloneInitRuntimeEnvKeys": [
+     "BENCH_PLAIN"
+    ],
+    "cloneInitRuntimeBenchPlain": "p1"
+   },
+   "cr": {
+    "name": "cp-uf600987kmxfq1p44jqr-l8hn2",
+    "uid": "12b4baea-3ace-4fe5-b428-9210fba1ec52",
+    "created": "2026-10-25T05:37:21Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-lkm26-p7xfn",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:37:21Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:37:52Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:37:52Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:37:21Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.010629784
+    },
+    {
+     "ts": "2026-10-25T05:37:52Z",
+     "msg": "runtime request completed",
+     "cost": 0.044801462
+    },
+    {
+     "ts": "2026-10-25T05:37:52Z",
+     "msg": "init runtime completed",
+     "cost": 0.044954677
+    },
+    {
+     "ts": "2026-10-25T05:37:52Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.409µs, GetTemplate: 33.711µs, CreateSandbox: 10.629784ms, WaitReady: 30.68524253s, InitRuntime: 45.031593ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 30.740940027s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:37:52Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.409µs, GetTemplate: 33.711µs, CreateSandbox: 10.629784ms, WaitReady: 30.68524253s, InitRuntime: 45.031593ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 30.740940027s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:37:52Z",
+     "msg": "route synced with peers",
+     "cost": 0.002667551
+    },
+    {
+     "ts": "2026-10-25T05:37:52Z",
+     "msg": "sandbox cloned",
+     "totalCost": 30.744090419
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:38:34.692Z",
+   "path": "clone-S2",
+   "index": 2,
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "envsPassed": [],
+   "liveBefore": 0,
+   "createMs": 24259,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-wnmsd",
+   "firstCmd": {
+    "ok": true,
+    "ms": 210,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 39,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "heavy 5.0.0",
+    "rc_cv2=0",
+    "rc_soffice=0",
+    "install ok installed",
+    "rc_dpkg=0",
+    "ABSENT /opt/bench/build-marker",
+    "ABSENT /tmp/bench-build-marker",
+    "ABSENT /var/tmp/bench-build-marker",
+    "ABSENT /root/bench-build-marker",
+    "ABSENT /home/user/bench-build-marker",
+    "bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_ABSENT",
+    "hostname=cp-uf600987kmxfq1p44jqr-wnmsd uptime_s=6.19",
+    "1051869184"
+   ],
+   "benchPlainAsUser": "p1",
+   "tokenCheck": {
+    "checkpointHasToken": true,
+    "cloneHasToken": true,
+    "cloneTokenEqualsCheckpointToken": true,
+    "cloneInitRuntimeEnvKeys": [
+     "BENCH_PLAIN"
+    ],
+    "cloneInitRuntimeBenchPlain": "p1"
+   },
+   "cr": {
+    "name": "cp-uf600987kmxfq1p44jqr-wnmsd",
+    "uid": "e1646d75-b69e-4490-b34a-012c2615546f",
+    "created": "2026-10-25T05:38:03Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-lkm26-p7xfn",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:38:03Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.160"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:38:27Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:38:27Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:38:03Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.00948844
+    },
+    {
+     "ts": "2026-10-25T05:38:27Z",
+     "msg": "runtime request completed",
+     "cost": 0.029338871
+    },
+    {
+     "ts": "2026-10-25T05:38:27Z",
+     "msg": "init runtime completed",
+     "cost": 0.029473461
+    },
+    {
+     "ts": "2026-10-25T05:38:27Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.962µs, GetTemplate: 28.664µs, CreateSandbox: 9.48844ms, WaitReady: 24.189413597s, InitRuntime: 29.551377ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 24.22848404s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:38:27Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.962µs, GetTemplate: 28.664µs, CreateSandbox: 9.48844ms, WaitReady: 24.189413597s, InitRuntime: 29.551377ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 24.22848404s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:38:27Z",
+     "msg": "route synced with peers",
+     "cost": 0.001408522
+    },
+    {
+     "ts": "2026-10-25T05:38:27Z",
+     "msg": "sandbox cloned",
+     "totalCost": 24.230359813
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:39:10.647Z",
+   "path": "clone-S2",
+   "index": 3,
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 0,
+   "createMs": 29904,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-5pjz5",
+   "firstCmd": {
+    "ok": true,
+    "ms": 235,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 25,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "heavy 5.0.0",
+    "rc_cv2=0",
+    "rc_soffice=0",
+    "install ok installed",
+    "rc_dpkg=0",
+    "ABSENT /opt/bench/build-marker",
+    "ABSENT /tmp/bench-build-marker",
+    "ABSENT /var/tmp/bench-build-marker",
+    "ABSENT /root/bench-build-marker",
+    "ABSENT /home/user/bench-build-marker",
+    "bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_ABSENT",
+    "hostname=cp-uf600987kmxfq1p44jqr-5pjz5 uptime_s=6.05",
+    "1051860992"
+   ],
+   "benchPlainAsUser": "p1",
+   "tokenCheck": {
+    "checkpointHasToken": true,
+    "cloneHasToken": true,
+    "cloneTokenEqualsCheckpointToken": true,
+    "cloneInitRuntimeEnvKeys": [
+     "BENCH_PLAIN"
+    ],
+    "cloneInitRuntimeBenchPlain": "p1"
+   },
+   "cr": {
+    "name": "cp-uf600987kmxfq1p44jqr-5pjz5",
+    "uid": "50951d76-3d88-4e65-8bef-0a4c39205d77",
+    "created": "2026-10-25T05:38:34Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-lkm26-p7xfn",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:38:34Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.180"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:39:04Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:39:04Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:38:35Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.014467431
+    },
+    {
+     "ts": "2026-10-25T05:39:04Z",
+     "msg": "runtime request completed",
+     "cost": 0.029725834
+    },
+    {
+     "ts": "2026-10-25T05:39:04Z",
+     "msg": "init runtime completed",
+     "cost": 0.029868271
+    },
+    {
+     "ts": "2026-10-25T05:39:04Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.03µs, GetTemplate: 27.483µs, CreateSandbox: 14.467431ms, WaitReady: 29.835084571s, InitRuntime: 29.940779ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 29.879522294s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:39:04Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.03µs, GetTemplate: 27.483µs, CreateSandbox: 14.467431ms, WaitReady: 29.835084571s, InitRuntime: 29.940779ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 29.879522294s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:39:04Z",
+     "msg": "route synced with peers",
+     "cost": 0.001449656
+    },
+    {
+     "ts": "2026-10-25T05:39:04Z",
+     "msg": "sandbox cloned",
+     "totalCost": 29.881445418
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:39:46.137Z",
+   "path": "clone-S2",
+   "index": 4,
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 0,
+   "createMs": 28864,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-cqvld",
+   "firstCmd": {
+    "ok": true,
+    "ms": 246,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 25,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "heavy 5.0.0",
+    "rc_cv2=0",
+    "rc_soffice=0",
+    "install ok installed",
+    "rc_dpkg=0",
+    "ABSENT /opt/bench/build-marker",
+    "ABSENT /tmp/bench-build-marker",
+    "ABSENT /var/tmp/bench-build-marker",
+    "ABSENT /root/bench-build-marker",
+    "ABSENT /home/user/bench-build-marker",
+    "bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_ABSENT",
+    "hostname=cp-uf600987kmxfq1p44jqr-cqvld uptime_s=6.09",
+    "1051869184"
+   ],
+   "benchPlainAsUser": "p1",
+   "tokenCheck": {
+    "checkpointHasToken": true,
+    "cloneHasToken": true,
+    "cloneTokenEqualsCheckpointToken": true,
+    "cloneInitRuntimeEnvKeys": [
+     "BENCH_PLAIN"
+    ],
+    "cloneInitRuntimeBenchPlain": "p1"
+   },
+   "cr": {
+    "name": "cp-uf600987kmxfq1p44jqr-cqvld",
+    "uid": "5a9e979d-af49-419b-bf4e-8a053be451d6",
+    "created": "2026-10-25T05:39:10Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-lkm26-p7xfn",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:39:10Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.110.18"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:39:39Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:39:39Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:39:10Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.009067309
+    },
+    {
+     "ts": "2026-10-25T05:39:39Z",
+     "msg": "runtime request completed",
+     "cost": 0.014912213
+    },
+    {
+     "ts": "2026-10-25T05:39:39Z",
+     "msg": "init runtime completed",
+     "cost": 0.015033376
+    },
+    {
+     "ts": "2026-10-25T05:39:39Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.857µs, GetTemplate: 27.067µs, CreateSandbox: 9.067309ms, WaitReady: 28.812019111s, InitRuntime: 15.100443ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 28.836215787s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:39:39Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.857µs, GetTemplate: 27.067µs, CreateSandbox: 9.067309ms, WaitReady: 28.812019111s, InitRuntime: 15.100443ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 28.836215787s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:39:39Z",
+     "msg": "route synced with peers",
+     "cost": 0.001430833
+    },
+    {
+     "ts": "2026-10-25T05:39:39Z",
+     "msg": "sandbox cloned",
+     "totalCost": 28.838066757
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:40:19.828Z",
+   "path": "clone-S2",
+   "index": 5,
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "envsPassed": [
+    "BENCH_PLAIN"
+   ],
+   "liveBefore": 0,
+   "createMs": 26939,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-bn44q",
+   "firstCmd": {
+    "ok": true,
+    "ms": 233,
+    "value": 0
+   },
+   "secondCmd": {
+    "ok": true,
+    "ms": 44,
+    "value": 0
+   },
+   "verify": [
+    "vfs-cli version v0.3.18",
+    "rc_vfs=0",
+    "mediakit-cli version 0.2.1",
+    "rc_mk=0",
+    "2.2.0",
+    "rc_oss=0",
+    "genai 2.22.0",
+    "rc_genai=0",
+    "heavy 5.0.0",
+    "rc_cv2=0",
+    "rc_soffice=0",
+    "install ok installed",
+    "rc_dpkg=0",
+    "ABSENT /opt/bench/build-marker",
+    "ABSENT /tmp/bench-build-marker",
+    "ABSENT /var/tmp/bench-build-marker",
+    "ABSENT /root/bench-build-marker",
+    "ABSENT /home/user/bench-build-marker",
+    "bench-curl-mediakit-cli.err bench-curl-ossutil.err bench-curl-vfs-cli.err tmppaig0n_z_kernels ",
+    "SLEEPER_ABSENT",
+    "hostname=cp-uf600987kmxfq1p44jqr-bn44q uptime_s=6.47",
+    "1051869184"
+   ],
+   "benchPlainAsUser": "p1",
+   "tokenCheck": {
+    "checkpointHasToken": true,
+    "cloneHasToken": true,
+    "cloneTokenEqualsCheckpointToken": true,
+    "cloneInitRuntimeEnvKeys": [
+     "BENCH_PLAIN"
+    ],
+    "cloneInitRuntimeBenchPlain": "p1"
+   },
+   "cr": {
+    "name": "cp-uf600987kmxfq1p44jqr-bn44q",
+    "uid": "7ca12a79-5088-4704-8a14-a727f54a4713",
+    "created": "2026-10-25T05:39:46Z",
+    "labels": {
+     "agents.kruise.io/allow-internet-access": "true",
+     "agents.kruise.io/sandbox-claimed": "true",
+     "agents.kruise.io/sandbox-template": "oma-env-bench-warm-lkm26-p7xfn",
+     "oma.dev/load-test": "env-bench-20261025"
+    },
+    "claimTimestamp": "2026-10-25T05:39:46Z",
+    "phase": "Running",
+    "podInfo": {
+     "nodeName": "virtual-kubelet-cn-shanghai-l",
+     "podIP": "172.26.106.190"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:40:13Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:40:13Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:39:46Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.012503852
+    },
+    {
+     "ts": "2026-10-25T05:40:13Z",
+     "msg": "runtime request completed",
+     "cost": 0.056315403
+    },
+    {
+     "ts": "2026-10-25T05:40:13Z",
+     "msg": "init runtime completed",
+     "cost": 0.056447195
+    },
+    {
+     "ts": "2026-10-25T05:40:13Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.728µs, GetTemplate: 26.958µs, CreateSandbox: 12.503852ms, WaitReady: 26.841901327s, InitRuntime: 56.524874ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.910958739s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:40:13Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 1.728µs, GetTemplate: 26.958µs, CreateSandbox: 12.503852ms, WaitReady: 26.841901327s, InitRuntime: 56.524874ms, SecurityToken: 0s, TrafficToken: 0s, CSIMount: 0s, Total: 26.910958739s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:40:13Z",
+     "msg": "route synced with peers",
+     "cost": 0.001544232
+    },
+    {
+     "ts": "2026-10-25T05:40:13Z",
+     "msg": "sandbox cloned",
+     "totalCost": 26.912969348
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:42:12.035Z",
+   "path": "sync-experiment",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 298
+   },
+   "createMs": 205,
+   "id": "sandbox-system--oma-env-bench-warm-v8sjr",
+   "prep": [
+    "5d159a9a5e849cd4",
+    "118bec62fa31dd81",
+    "1792906901113"
+   ],
+   "snapshotRequestedAtMs": 1792906906615,
+   "snapshot": {
+    "ms": 5524,
+    "ok": true,
+    "snapshotId": "cp-uf600987oh4b1p2z0k6c"
+   },
+   "kill": {
+    "ok": true,
+    "ms": 37,
+    "value": true
+   },
+   "checkpoint": "oma-env-bench-warm-v8sjr-hh4tj",
+   "cloneCreateMs": 24682,
+   "cloneId": "sandbox-system--cp-uf600987oh4b1p2z0k6c-gpk6r",
+   "cloneCheck": [
+    "PRESENT /opt/sync-A.bin size=8388608 head=be14e6e602d5",
+    "PRESENT /opt/sync-A.txt size=9 head=73796e636564",
+    "PRESENT /home/user/sync-A.txt size=14 head=73796e636564",
+    "PRESENT /opt/nosync-B.bin size=8388608 head=011fc1d48474",
+    "PRESENT /opt/nosync-B.txt size=9 head=6e6f73796e63",
+    "PRESENT /tmp/nosync-B.txt size=13 head=6e6f73796e63",
+    "5d159a9a5e849cd4",
+    "118bec62fa31dd81"
+   ]
+  },
+  {
+   "at": "2026-10-25T05:43:37.511Z",
+   "path": "clone-forensics-S2",
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "createMs": 25391,
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-m6fgf",
+   "firstCmd": {
+    "ok": true,
+    "ms": 246,
+    "value": 0
+   },
+   "out": [
+    "total 24",
+    "drwxr-xr-x 5 root root 4096 Oct 25 05:29 .",
+    "drwxr-xr-x 1 root root 4096 Oct 25 05:29 ..",
+    "drwxr-xr-x 2 root root 4096 Oct 25 05:29 bin",
+    "drwxr-xr-x 3 root root 4096 Oct 25 05:29 dl",
+    "-rw-r--r-- 1 root root  101 Oct 25 05:29 requirements.txt",
+    "drwxr-xr-x 6 root root 4096 Oct 25 05:31 venv",
+    "dl_exists=yes dl_bytes=54037406",
+    "apt_archives_bytes=85846036 debs=74",
+    "apt_lists_bytes=19859807",
+    "--- newest 15 files (mtime epoch, path) on / excluding proc/sys/dev/run",
+    "1792906400.8539562500 0 /var/cache/fontconfig/CACHEDIR.TAG",
+    "1792906400.8539562500 1185 /var/log/fontconfig.log",
+    "1792906400.8549562550 126976 /var/log/dpkg.log",
+    "1792906400.8569562660 0 /var/lib/dpkg/updates/tmp.i",
+    "1792906400.8579562700 352534 /var/lib/dpkg/status",
+    "1792906990.4898313100 109 /etc/resolv.conf",
+    "1792906990.4898313100 30 /etc/hostname",
+    "1792906990.4898313100 305 /etc/hosts",
+    "1792907011.3599794000 32 /home/user/.jupyter/migrated",
+    "1792907011.4399821100 227 /home/user/.local/share/jupyter/runtime/jpserver-15.json",
+    "1792907011.4429822120 372 /home/user/.local/share/jupyter/runtime/jpserver-15-open.html",
+    "1792907013.0470327800 337 /home/user/.local/share/jupyter/runtime/kernel-094397a8-39ff-499c-916b-0848987aef67.json",
+    "1792907013.5850457640 28672 /home/user/.ipython/profile_default/history.sqlite",
+    "1792907013.6240467050 86 /home/user/.ipython/profile_default/db/dhist",
+    "1792907013.6320468980 340 /home/user/.local/share/jupyter/runtime/kernel-b162027c-63e1-4d41-8547-aedc9a193957.json",
+    "--- requirements mtime",
+    "1792906180 /opt/bench/requirements.txt",
+    "1792906178 /opt/bench/venv/bin/python3",
+    "1780780043 /usr/lib/libreoffice/program/soffice.bin",
+    "--- zero-length or truncated check in venv (files with size 0 among .so)",
+    "0",
+    "No broken requirements found.",
+    "dpkg_audit_rc=0",
+    "1051869184"
+   ]
+  },
+  {
+   "at": "2026-10-25T05:44:52.161Z",
+   "path": "sync-experiment2-nosync",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 241
+   },
+   "createMs": 203,
+   "id": "sandbox-system--oma-env-bench-warm-p8jcv",
+   "prep": [
+    "vm.dirty_ratio = 20 vm.dirty_background_ratio = 10 vm.dirty_expire_centisecs = 3000 vm.dirty_writeback_centisecs = 500 ",
+    "overlay (rw,relatime,lowerdir=235/fs:234/fs:233/fs:232/fs:231/fs:230/fs:229/fs:2",
+    "e571ed121dda5151",
+    "Dirty: 508068 kB Writeback: 264 kB ",
+    "Dirty: 508068 kB Writeback: 264 kB"
+   ],
+   "snapshot": {
+    "ms": 4376,
+    "ok": true,
+    "snapshotId": "cp-uf600987oh4b1r204r5t"
+   },
+   "kill": {
+    "ok": true,
+    "ms": 34,
+    "value": true
+   },
+   "checkpoint": "oma-env-bench-warm-p8jcv-b6ts8",
+   "cloneCreateMs": 24949,
+   "cloneId": "sandbox-system--cp-uf600987oh4b1r204r5t-lhzvl",
+   "cloneCheck": [
+    "ABSENT /opt/marker-opt",
+    "ABSENT /tmp/marker-tmp",
+    "ABSENT /root/marker-root",
+    "ABSENT /home/user/marker-home",
+    "PRESENT /opt/old-dir/f size=1048576",
+    "PRESENT /opt/big.bin size=109051904",
+    "5abc5307b7ec56d5"
+   ]
+  },
+  {
+   "at": "2026-10-25T05:45:40.995Z",
+   "path": "sync-experiment2-sync",
+   "warmBefore": {
+    "replicas": 2,
+    "available": 2,
+    "waitedMs": 286
+   },
+   "createMs": 194,
+   "id": "sandbox-system--oma-env-bench-warm-gbrbz",
+   "prep": [
+    "vm.dirty_ratio = 20 vm.dirty_background_ratio = 10 vm.dirty_expire_centisecs = 3000 vm.dirty_writeback_centisecs = 500 ",
+    "overlay (rw,relatime,lowerdir=235/fs:234/fs:233/fs:232/fs:231/fs:230/fs:229/fs:2",
+    "e5c315a39c3c6cdc",
+    "Dirty: 454740 kB Writeback: 0 kB ",
+    "Dirty: 454740 kB Writeback: 0 kB"
+   ],
+   "syncMs": 2563,
+   "afterSync": "Dirty: 264 kB Writeback: 132 kB",
+   "snapshot": {
+    "ms": 5536,
+    "ok": true,
+    "snapshotId": "cp-uf600987oh4b1r204slo"
+   },
+   "kill": {
+    "ok": true,
+    "ms": 41,
+    "value": true
+   },
+   "checkpoint": "oma-env-bench-warm-gbrbz-b6nm4",
+   "cloneCreateMs": 28652,
+   "cloneId": "sandbox-system--cp-uf600987oh4b1r204slo-5sh6q",
+   "cloneCheck": [
+    "PRESENT /opt/marker-opt size=3",
+    "PRESENT /tmp/marker-tmp size=3",
+    "PRESENT /root/marker-root size=3",
+    "PRESENT /home/user/marker-home size=3",
+    "ABSENT /opt/old-dir/f",
+    "PRESENT /opt/big.bin size=629145600",
+    "e5c315a39c3c6cdc"
+   ]
+  },
+  {
+   "at": "2026-10-25T05:46:57.870Z",
+   "path": "clone-S1-csi",
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "prefix": "env-bench-20261025/csi-clone-probe/",
+   "createMs": 28531,
+   "createOk": true,
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-vtjh2",
+   "firstCmd": {
+    "ok": true,
+    "ms": 268,
+    "value": 0
+   },
+   "check": [
+    "lrwxrwxrwx 1 root root 56 Oct 25 05:46 /home/user/workspace -> /run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0",
+    "fuseblk",
+    "mediakit-cli",
+    "ossutil",
+    "vfs-cli",
+    "8345af1f-4771-49f5-aed8-85c6c6503ea8"
+   ],
+   "cr": {
+    "name": "cp-uf600987gd3y5l7gspsj-vtjh2",
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "PodReady",
+      "lastTransitionTime": "2026-10-25T05:46:55Z"
+     },
+     {
+      "type": "InplaceUpdate",
+      "status": "True",
+      "reason": "Succeeded",
+      "lastTransitionTime": "2026-10-25T05:46:55Z"
+     }
+    ]
+   },
+   "manager": [
+    {
+     "ts": "2026-10-25T05:46:28Z",
+     "msg": "sandbox created, waiting it ready",
+     "cost": 0.014332035
+    },
+    {
+     "ts": "2026-10-25T05:46:55Z",
+     "msg": "runtime request completed",
+     "cost": 0.017133973
+    },
+    {
+     "ts": "2026-10-25T05:46:55Z",
+     "msg": "init runtime completed",
+     "cost": 0.017252256
+    },
+    {
+     "ts": "2026-10-25T05:46:55Z",
+     "msg": "sandbox security token issued",
+     "cost": 0.019639629
+    },
+    {
+     "ts": "2026-10-25T05:46:55Z",
+     "msg": "file written to runtime successfully (overwrite)",
+     "cost": 0.031602311
+    },
+    {
+     "ts": "2026-10-25T05:46:55Z",
+     "msg": "listed sandbox runtime directory",
+     "cost": 0.041703246
+    },
+    {
+     "ts": "2026-10-25T05:46:55Z",
+     "msg": "sandbox security token propagated",
+     "cost": 0.073790911
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "runtime request completed",
+     "cost": 1.436323993
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "csi mount completed",
+     "cost": 1.436602642
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "CSI mount completed successfully",
+     "duration": 1.436668739
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.554µs, GetTemplate: 30.697µs, CreateSandbox: 14.332035ms, WaitReady: 26.695707914s, InitRuntime: 17.323334ms, SecurityToken: 108.220389ms, TrafficToken: 0s, CSIMount: 1.436699589s, Total: 28.272316512s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "sandbox cloned",
+     "metrics": "CloneMetrics{Retries: 0, Wait: 2.554µs, GetTemplate: 30.697µs, CreateSandbox: 14.332035ms, WaitReady: 26.695707914s, InitRuntime: 17.323334ms, SecurityToken: 108.220389ms, TrafficToken: 0s, CSIMount: 1.436699589s, Total: 28.272316512s, LastError: }"
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "route synced with peers",
+     "cost": 0.001553763
+    },
+    {
+     "ts": "2026-10-25T05:46:56Z",
+     "msg": "sandbox cloned",
+     "totalCost": 28.274535319
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:47:12.861Z",
+   "path": "checkpoint-S2",
+   "name": "oma-env-bench-warm-lkm26-p7xfn",
+   "created": "2026-10-25T05:33:24Z",
+   "annotations": {
+    "agents.kruise.io/checkpoint-mode": "acs",
+    "agents.kruise.io/init-runtime-request": "{\"envVars\":{\"BENCH_PLAIN\":\"p1\"},\"accessToken\":\"<redacted>\"}",
+    "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+    "agents.kruise.io/sandbox-id": "sandbox-system--oma-env-bench-warm-lkm26"
+   },
+   "labels": {
+    "agents.kruise.io/checkpoint-id": "cp-uf600987kmxfq1p44jqr",
+    "agents.kruise.io/owner": "6e05836c-65ec-481a-abf4-3c9b62684cf2",
+    "agents.kruise.io/sandbox-name": "oma-env-bench-warm-lkm26"
+   },
+   "spec": {
+    "keepRunning": false,
+    "persistentContents": [
+     "filesystem"
+    ],
+    "podName": "oma-env-bench-warm-lkm26",
+    "ttlAfterFinished": "6h"
+   },
+   "status": {
+    "checkpointId": "cp-uf600987kmxfq1p44jqr",
+    "completionTime": "2026-10-25T05:33:29Z",
+    "observedGeneration": 1,
+    "phase": "Succeeded"
+   },
+   "ownerReferences": null,
+   "crDurationMs": 5000
+  },
+  {
+   "at": "2026-10-25T05:47:13.153Z",
+   "path": "infra",
+   "sdkVersion": "2.24.0",
+   "controlPlane": [
+    {
+     "pod": "sandbox-gateway-6c85b878d6-l4sjh",
+     "containers": [
+      {
+       "name": "gateway",
+       "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+       "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+      }
+     ]
+    },
+    {
+     "pod": "sandbox-manager-6bb95d8576-dqptd",
+     "containers": [
+      {
+       "name": "controller",
+       "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+       "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+      },
+      {
+       "name": "envoy-proxy",
+       "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara",
+       "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy@sha256:eead626be6749fa397a4e928be88bd0d0f86fb5e8a1d2fbcf17ef1c78944cf7d"
+      }
+     ]
+    }
+   ],
+   "sandboxSets": [
+    {
+     "name": "oma-env-bench-cold",
+     "uid": "806eb708-1024-41c1-89c9-46858994397f",
+     "replicas": 0,
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+     "resources": {
+      "limits": {
+       "cpu": "2",
+       "memory": "4Gi"
+      },
+      "requests": {
+       "cpu": "2",
+       "ephemeral-storage": "50Gi",
+       "memory": "4Gi"
+      }
+     },
+     "runtimes": [
+      {
+       "name": "csi"
+      },
+      {
+       "name": "agent-runtime"
+      }
+     ],
+     "persistentContents": [
+      "filesystem"
+     ],
+     "templateAnnotations": {
+      "image.alibabacloud.com/enable-image-cache": "true",
+      "oma.dev/test-only": "true"
+     },
+     "templateLabels": {
+      "alibabacloud.com/acs": "true",
+      "alibabacloud.com/compute-class": "agent-sandbox",
+      "alibabacloud.com/compute-qos": "default",
+      "oma.dev/load-test": "env-bench-20261025"
+     },
+     "envNames": [
+      "OSS_READ_ACCESS_KEY_ID",
+      "OSS_READ_ACCESS_KEY_SECRET",
+      "GEMINI_API_KEY",
+      "GEMINI_AUDIO_MODEL",
+      "GEMINI_VIDEO_MODEL",
+      "GOOGLE_API_KEY",
+      "MEDIAKIT_API_KEY",
+      "MEDIAKIT_RUNTIME",
+      "MEDIAKIT_SURFACE",
+      "OPENGROVE_WW_BASE_URL",
+      "OSSUTIL_BIN",
+      "OSS_READ_BUCKET",
+      "OSS_READ_ENDPOINT",
+      "OSS_READ_REGION",
+      "OSS_READ_TABLE_ID",
+      "RUNTIME_ENV",
+      "VFS_TOKEN",
+      "OPENGROVE_WW_ACCESS_TOKEN"
+     ],
+     "volumes": [
+      "vfs-cli-policy:vfs-cli-policy-test-v1"
+     ],
+     "status": {
+      "available": 0,
+      "revision": "c98fccb87"
+     }
+    },
+    {
+     "name": "oma-env-bench-warm",
+     "uid": "ac559b57-2e5e-4dba-b6d0-164f0148e604",
+     "replicas": 2,
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+     "resources": {
+      "limits": {
+       "cpu": "2",
+       "memory": "4Gi"
+      },
+      "requests": {
+       "cpu": "2",
+       "ephemeral-storage": "50Gi",
+       "memory": "4Gi"
+      }
+     },
+     "runtimes": [
+      {
+       "name": "csi"
+      },
+      {
+       "name": "agent-runtime"
+      }
+     ],
+     "persistentContents": [
+      "filesystem"
+     ],
+     "templateAnnotations": {
+      "image.alibabacloud.com/enable-image-cache": "true",
+      "oma.dev/test-only": "true"
+     },
+     "templateLabels": {
+      "alibabacloud.com/acs": "true",
+      "alibabacloud.com/compute-class": "agent-sandbox",
+      "alibabacloud.com/compute-qos": "default",
+      "oma.dev/load-test": "env-bench-20261025"
+     },
+     "envNames": [
+      "OSS_READ_ACCESS_KEY_ID",
+      "OSS_READ_ACCESS_KEY_SECRET",
+      "GEMINI_API_KEY",
+      "GEMINI_AUDIO_MODEL",
+      "GEMINI_VIDEO_MODEL",
+      "GOOGLE_API_KEY",
+      "MEDIAKIT_API_KEY",
+      "MEDIAKIT_RUNTIME",
+      "MEDIAKIT_SURFACE",
+      "OPENGROVE_WW_BASE_URL",
+      "OSSUTIL_BIN",
+      "OSS_READ_BUCKET",
+      "OSS_READ_ENDPOINT",
+      "OSS_READ_REGION",
+      "OSS_READ_TABLE_ID",
+      "RUNTIME_ENV",
+      "VFS_TOKEN",
+      "OPENGROVE_WW_ACCESS_TOKEN"
+     ],
+     "volumes": [
+      "vfs-cli-policy:vfs-cli-policy-test-v1"
+     ],
+     "status": {
+      "available": 2,
+      "revision": "c98fccb87"
+     }
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:48:09.514840Z",
+   "path": "ecs-snapshots",
+   "note": "read-only aliyun ecs DescribeSnapshots; ACS checkpoint (checkpoint-mode acs) is backed by an ECS data-disk snapshot",
+   "snapshots": [
+    {
+     "SnapshotId": "s-uf6bi5wzzb9maj7j3kzi",
+     "SnapshotName": "aliyun_acs_sandbox_check_point_from_cp-uf600987oh4b1r204slo",
+     "Status": "accomplished",
+     "FullSnapshotSizeInBytes": null,
+     "SourceDiskSize": 50,
+     "InstantAccess": true,
+     "CreationTime": "2026-10-25T05:45:02Z",
+     "LastModifiedTime": "2026-10-25T05:47:03Z",
+     "checkpointId": "cp-uf600987oh4b1r204slo",
+     "kind": "SYNC2-sync"
+    },
+    {
+     "SnapshotId": "s-uf657bxq8rp07se0lyn8",
+     "SnapshotName": "aliyun_acs_sandbox_check_point_from_cp-uf600987oh4b1r204r5t",
+     "Status": "accomplished",
+     "FullSnapshotSizeInBytes": null,
+     "SourceDiskSize": 50,
+     "InstantAccess": true,
+     "CreationTime": "2026-10-25T05:44:21Z",
+     "LastModifiedTime": "2026-10-25T05:45:28Z",
+     "checkpointId": "cp-uf600987oh4b1r204r5t",
+     "kind": "SYNC2-nosync"
+    },
+    {
+     "SnapshotId": "s-uf63aiac2hznav8winvw",
+     "SnapshotName": "aliyun_acs_sandbox_check_point_from_cp-uf600987oh4b1p2z0k6c",
+     "Status": "accomplished",
+     "FullSnapshotSizeInBytes": null,
+     "SourceDiskSize": 50,
+     "InstantAccess": true,
+     "CreationTime": "2026-10-25T05:41:42Z",
+     "LastModifiedTime": "2026-10-25T05:42:49Z",
+     "checkpointId": "cp-uf600987oh4b1p2z0k6c",
+     "kind": "SYNC"
+    },
+    {
+     "SnapshotId": "s-uf665an4cdo1958ev79v",
+     "SnapshotName": "aliyun_acs_sandbox_check_point_from_cp-uf600987kmxfq1p44jqr",
+     "Status": "accomplished",
+     "FullSnapshotSizeInBytes": 1684013056,
+     "SourceDiskSize": 50,
+     "InstantAccess": true,
+     "CreationTime": "2026-10-25T05:33:24Z",
+     "LastModifiedTime": "2026-10-25T05:42:11Z",
+     "checkpointId": "cp-uf600987kmxfq1p44jqr",
+     "kind": "S2"
+    },
+    {
+     "SnapshotId": "s-uf63imk2dwvofnf7u4fo",
+     "SnapshotName": "aliyun_acs_sandbox_check_point_from_cp-uf600987gd3y5l7gspsj",
+     "Status": "accomplished",
+     "FullSnapshotSizeInBytes": 383778816,
+     "SourceDiskSize": 50,
+     "InstantAccess": true,
+     "CreationTime": "2026-10-25T04:56:16Z",
+     "LastModifiedTime": "2026-10-25T05:04:03Z",
+     "checkpointId": "cp-uf600987gd3y5l7gspsj",
+     "kind": "S1"
+    }
+   ]
+  },
+  {
+   "at": "2026-10-25T05:51:09.966753Z",
+   "path": "cleanup-verification",
+   "sandboxsets_with_label": [],
+   "sandboxes_with_label": [],
+   "sandboxes_name_match": [],
+   "checkpoints_name_match": [],
+   "sandboxtemplates_name_match": [],
+   "pods_name_match": [],
+   "ecs_bench_snapshots_remaining": 0,
+   "oss_prefix_env_bench_objects": 0,
+   "other_sandboxsets": [
+    "auto-story-v2             8     8     8     8     f9bfdfdfb    41d",
+    "oma-scale-test-20261021   0     0                 6c789cb6fb   4d1h",
+    "oma-scale-test-20261022   0     0                 6d889fd9c5   3d11h"
+   ]
+  }
+ ],
+ "ledger": [
+  {
+   "at": "2026-10-25T04:39:55.872Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-9ns6h"
+  },
+  {
+   "at": "2026-10-25T04:41:25.731Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-9ns6h",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:43:56.815Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-kj7gb"
+  },
+  {
+   "at": "2026-10-25T04:46:23.024Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-kj7gb",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:47:08.738Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-t7gwc"
+  },
+  {
+   "at": "2026-10-25T04:47:45.620Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-t7gwc",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:48:13.876Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-8dkxb"
+  },
+  {
+   "at": "2026-10-25T04:50:32.396Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-8dkxb",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:51:01.010Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-ftq5s"
+  },
+  {
+   "at": "2026-10-25T04:51:01.749Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-ftq5s",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:51:33.682Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-dknmm"
+  },
+  {
+   "at": "2026-10-25T04:51:34.327Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-dknmm",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:52:03.107Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-dgd72"
+  },
+  {
+   "at": "2026-10-25T04:52:03.789Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-dgd72",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:52:29.383Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-tphk6"
+  },
+  {
+   "at": "2026-10-25T04:52:30.012Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-tphk6",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:52:55.635Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-h9vx7"
+  },
+  {
+   "at": "2026-10-25T04:52:56.339Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-h9vx7",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:53:32.527Z",
+   "action": "create",
+   "template": "oma-env-bench-cold",
+   "id": "sandbox-system--oma-env-bench-cold-j75p8"
+  },
+  {
+   "at": "2026-10-25T04:53:33.645Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-cold-j75p8",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:53:57.772Z",
+   "action": "create",
+   "template": "oma-env-bench-cold",
+   "id": "sandbox-system--oma-env-bench-cold-6vp89"
+  },
+  {
+   "at": "2026-10-25T04:53:58.701Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-cold-6vp89",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:54:23.400Z",
+   "action": "create",
+   "template": "oma-env-bench-cold",
+   "id": "sandbox-system--oma-env-bench-cold-w78fx"
+  },
+  {
+   "at": "2026-10-25T04:54:24.226Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-cold-w78fx",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:54:33.111Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-8b9zq"
+  },
+  {
+   "at": "2026-10-25T04:55:03.833Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-8b9zq",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:55:04.331Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-h6tgg"
+  },
+  {
+   "at": "2026-10-25T04:55:37.234Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-h6tgg",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T04:55:45.315Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-57msm"
+  },
+  {
+   "at": "2026-10-25T05:11:21.325Z",
+   "action": "sandboxtemplate-seen",
+   "name": "oma-env-bench-warm-57msm-zd2kg"
+  },
+  {
+   "at": "2026-10-25T05:11:21.843Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-57msm",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:13:40.622Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-8lbkb"
+  },
+  {
+   "at": "2026-10-25T05:13:48.095Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-8lbkb",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:14:13.576Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-ssn58"
+  },
+  {
+   "at": "2026-10-25T05:14:16.090Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-ssn58",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:14:42.502Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-nrfss"
+  },
+  {
+   "at": "2026-10-25T05:14:45.243Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-nrfss",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:15:12.370Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-f9p5r"
+  },
+  {
+   "at": "2026-10-25T05:15:14.881Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-f9p5r",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:15:40.491Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-6ppkh"
+  },
+  {
+   "at": "2026-10-25T05:15:43.465Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-6ppkh",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:16:44.739Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-4xx8d"
+  },
+  {
+   "at": "2026-10-25T05:16:49.927Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-4xx8d",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:17:15.519Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-g99qb"
+  },
+  {
+   "at": "2026-10-25T05:17:20.586Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-g99qb",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:17:44.873Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-jwv9v"
+  },
+  {
+   "at": "2026-10-25T05:23:00.535Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-jwv9v",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:23:01.068Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-tbwjn"
+  },
+  {
+   "at": "2026-10-25T05:27:39.433Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-tbwjn",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:28:16.440Z",
+   "action": "kill-retry",
+   "id": "sandbox-system--oma-env-bench-warm-57msm",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:28:34Z",
+   "action": "kubectl-delete-sandbox",
+   "name": "oma-env-bench-warm-57msm",
+   "reason": "E2B kill no-op on Failed (post keep-running=false snapshot) sandbox"
+  },
+  {
+   "at": "2026-10-25T05:29:08.675Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-kqvzl"
+  },
+  {
+   "at": "2026-10-25T05:29:16.971Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-kqvzl",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:29:26.454Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-lkm26"
+  },
+  {
+   "at": "2026-10-25T05:33:29.976Z",
+   "action": "checkpoint",
+   "name": "oma-env-bench-warm-lkm26-p7xfn",
+   "checkpointId": "cp-uf600987kmxfq1p44jqr"
+  },
+  {
+   "at": "2026-10-25T05:33:30.133Z",
+   "action": "sandboxtemplate-seen",
+   "name": "oma-env-bench-warm-lkm26-p7xfn"
+  },
+  {
+   "at": "2026-10-25T05:33:30.557Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-lkm26",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:37:52.540Z",
+   "action": "create",
+   "template": "cp-uf600987kmxfq1p44jqr",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-l8hn2"
+  },
+  {
+   "at": "2026-10-25T05:38:03.387Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-l8hn2",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:38:27.861Z",
+   "action": "create",
+   "template": "cp-uf600987kmxfq1p44jqr",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-wnmsd"
+  },
+  {
+   "at": "2026-10-25T05:38:34.745Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-wnmsd",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:39:04.856Z",
+   "action": "create",
+   "template": "cp-uf600987kmxfq1p44jqr",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-5pjz5"
+  },
+  {
+   "at": "2026-10-25T05:39:10.705Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-5pjz5",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:39:39.794Z",
+   "action": "create",
+   "template": "cp-uf600987kmxfq1p44jqr",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-cqvld"
+  },
+  {
+   "at": "2026-10-25T05:39:46.172Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-cqvld",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:40:13.328Z",
+   "action": "create",
+   "template": "cp-uf600987kmxfq1p44jqr",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-bn44q"
+  },
+  {
+   "at": "2026-10-25T05:40:19.864Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-bn44q",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:41:39.326Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-v8sjr"
+  },
+  {
+   "at": "2026-10-25T05:41:46.653Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-v8sjr",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:41:46.842Z",
+   "action": "checkpoint",
+   "name": "oma-env-bench-warm-v8sjr-hh4tj",
+   "checkpointId": "cp-uf600987oh4b1p2z0k6c"
+  },
+  {
+   "at": "2026-10-25T05:42:11.524Z",
+   "action": "create",
+   "template": "cp-uf600987oh4b1p2z0k6c",
+   "id": "sandbox-system--cp-uf600987oh4b1p2z0k6c-gpk6r"
+  },
+  {
+   "at": "2026-10-25T05:42:12.033Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987oh4b1p2z0k6c-gpk6r",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:43:28.337Z",
+   "action": "create",
+   "template": "cp-uf600987kmxfq1p44jqr",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-m6fgf"
+  },
+  {
+   "at": "2026-10-25T05:43:37.558Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987kmxfq1p44jqr-m6fgf",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:44:15.408Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-p8jcv"
+  },
+  {
+   "at": "2026-10-25T05:44:25.385Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-p8jcv",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:44:25.702Z",
+   "action": "checkpoint",
+   "name": "oma-env-bench-warm-p8jcv-b6ts8",
+   "checkpointId": "cp-uf600987oh4b1r204r5t"
+  },
+  {
+   "at": "2026-10-25T05:44:50.652Z",
+   "action": "create",
+   "template": "cp-uf600987oh4b1r204r5t",
+   "id": "sandbox-system--cp-uf600987oh4b1r204r5t-lhzvl"
+  },
+  {
+   "at": "2026-10-25T05:44:52.161Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987oh4b1r204r5t-lhzvl",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:44:52.829Z",
+   "action": "create",
+   "template": "oma-env-bench-warm",
+   "id": "sandbox-system--oma-env-bench-warm-gbrbz"
+  },
+  {
+   "at": "2026-10-25T05:45:06.682Z",
+   "action": "kill",
+   "id": "sandbox-system--oma-env-bench-warm-gbrbz",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:45:07.022Z",
+   "action": "checkpoint",
+   "name": "oma-env-bench-warm-gbrbz-b6nm4",
+   "checkpointId": "cp-uf600987oh4b1r204slo"
+  },
+  {
+   "at": "2026-10-25T05:45:35.674Z",
+   "action": "create",
+   "template": "cp-uf600987oh4b1r204slo",
+   "id": "sandbox-system--cp-uf600987oh4b1r204slo-5sh6q"
+  },
+  {
+   "at": "2026-10-25T05:45:40.994Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987oh4b1r204slo-5sh6q",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:46:56.861Z",
+   "action": "create",
+   "template": "cp-uf600987gd3y5l7gspsj",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-vtjh2"
+  },
+  {
+   "at": "2026-10-25T05:46:57.905Z",
+   "action": "kill",
+   "id": "sandbox-system--cp-uf600987gd3y5l7gspsj-vtjh2",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:48:51.760Z",
+   "action": "delete-snapshot",
+   "checkpoint": "oma-env-bench-warm-57msm-zd2kg",
+   "snapshotId": "cp-uf600987gd3y5l7gspsj",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:48:51.798Z",
+   "action": "delete-snapshot",
+   "checkpoint": "oma-env-bench-warm-gbrbz-b6nm4",
+   "snapshotId": "cp-uf600987oh4b1r204slo",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:48:51.832Z",
+   "action": "delete-snapshot",
+   "checkpoint": "oma-env-bench-warm-lkm26-p7xfn",
+   "snapshotId": "cp-uf600987kmxfq1p44jqr",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:48:51.867Z",
+   "action": "delete-snapshot",
+   "checkpoint": "oma-env-bench-warm-p8jcv-b6ts8",
+   "snapshotId": "cp-uf600987oh4b1r204r5t",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:48:51.903Z",
+   "action": "delete-snapshot",
+   "checkpoint": "oma-env-bench-warm-v8sjr-hh4tj",
+   "snapshotId": "cp-uf600987oh4b1p2z0k6c",
+   "ok": true,
+   "value": true
+  },
+  {
+   "at": "2026-10-25T05:49:14Z",
+   "action": "scale-sandboxsets-0"
+  },
+  {
+   "at": "2026-10-25T05:49:23Z",
+   "action": "delete-sandboxsets"
+  }
+ ]
+}
