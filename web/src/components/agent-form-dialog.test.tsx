@@ -73,65 +73,27 @@ it("retries capability failure without inventing choices, then disables unsuppor
   expect(screen.getByText("不支持思考")).toBeTruthy();
 });
 
-it.each([
-  ["oma-sandbox-v2", "oma-sandbox-v2"],
-  ["auto-story", undefined],
-])("preserves sandbox environment and resolves %s to the supported template when editing", async (image, expectedImage) => {
+it("sends sandbox.enabled only when editing: an Agent's image and variables are its Environment's (ADR-0024)", async () => {
   const agent: Agent = {
-    id: "agent_storyboard",
-    tenantId: "tenant_1",
-    name: "Storyboard Agent",
-    model: "openai-codex/gpt-5.5",
-    system: "Create storyboards",
-    runtime: "pi-agent",
-    sandbox: {
-      enabled: true,
-      image,
-      env: {
-        VFS_TOKEN: "vfs-token",
-        RDS_MCP_APIKEY: "vfs-token",
-      },
-    },
-    createdAt: "2026-07-12T00:00:00.000Z",
-    updatedAt: "2026-07-12T00:00:00.000Z",
+    id: "agent_storyboard", tenantId: "tenant_1", name: "Storyboard Agent", model: "openai-codex/gpt-5.5", system: "Create storyboards",
+    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_video_production",
+    createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-12T00:00:00.000Z",
   };
-  const fetchMock = vi.fn(async () =>
-    ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify(agent),
-    }) as Response,
-  );
+  const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify(agent) }) as Response);
   vi.stubGlobal("fetch", fetchMock);
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
-  });
-
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   for (const model of [...PI_MODELS.map(choice => choice.value), "openai-codex/gpt-5.5", "custom-one/vendor/model"]) {
     queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
   }
   queryClient.setQueryData(["model-providers"], []);
   queryClient.setQueryData(["environments"], []);
-  render(
-    <QueryClientProvider client={queryClient}>
-      <AgentFormDialog open onOpenChange={() => {}} agent={agent} />
-    </QueryClientProvider>,
-  );
-
+  render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} agent={agent} /></QueryClientProvider>);
   expect(screen.queryByLabelText("Sandbox")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
-
   await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
   const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-  expect(JSON.parse(String(init.body)).model).toBe("openai-codex/gpt-5.5");
-  expect(JSON.parse(String(init.body)).sandbox).toEqual({
-    enabled: true,
-    ...(expectedImage ? { image: expectedImage } : {}),
-    env: {
-      VFS_TOKEN: "vfs-token",
-      RDS_MCP_APIKEY: "vfs-token",
-    },
-  });
+  expect(JSON.parse(String(init.body))).toMatchObject({ model: "openai-codex/gpt-5.5", sandbox: { enabled: true }, environmentId: "env_video_production" });
+  expect(JSON.parse(String(init.body)).sandbox).toEqual({ enabled: true });
 });
 
 it.each(PI_MODELS.map((choice) => choice.value))("creates an Agent with %s and the default sandbox", async (model) => {
@@ -224,7 +186,7 @@ describe("the Agent's Environment (ADR-0024)", () => {
     environment("env_unbuilt", "unbuilt", "pending"),
     environment("env_broken", "broken", "failed"),
   ];
-  function renderDialog(agent?: Agent) {
+  function renderDialog(agent?: Agent, environments = listed) {
     const fetchMock = vi.fn(async () => Response.json({ id: agent?.id ?? "created" }));
     vi.stubGlobal("fetch", fetchMock);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
@@ -232,7 +194,7 @@ describe("the Agent's Environment (ADR-0024)", () => {
       queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
     }
     queryClient.setQueryData(["model-providers"], []);
-    queryClient.setQueryData(["environments"], listed);
+    queryClient.setQueryData(["environments"], environments);
     render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} agent={agent} /></QueryClientProvider>);
     const saved = async () => {
       await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
@@ -250,36 +212,37 @@ describe("the Agent's Environment (ADR-0024)", () => {
   const agent: Agent = { id: "agent_bound", tenantId: "t", name: "Bound", model: "openai-codex/gpt-5.5", system: "s", runtime: "pi-agent",
     sandbox: { enabled: true }, environmentId: "env_tools", createdAt: "", updatedAt: "" };
 
-  it("offers only ready Environments, built-ins first, and binds the chosen one to a new Agent", async () => {
+  it("offers only ready Environments, built-ins first, video-production by default, and binds the chosen one to a new Agent", async () => {
     const { saved } = renderDialog();
-    expect(screen.getByLabelText("Environment").textContent).toBe("None (the Host's default image)");
-    expect(options()).toEqual([
-      "None (the Host's default image)", "video-production · 平台内置", "tools",
-    ]);
-    fireEvent.click(screen.getByRole("button", { name: "video-production · 平台内置" }));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Video" } });
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · 平台内置");
+    expect(options()).toEqual(["video-production · 平台内置", "tools"]);
+    fireEvent.click(screen.getByRole("button", { name: "tools" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Tools" } });
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
-    expect(await saved()).toMatchObject({ name: "Video", environmentId: "env_video_production" });
+    expect(await saved()).toMatchObject({ name: "Tools", environmentId: "env_tools" });
   });
 
-  it("creates an Agent without an Environment by sending none", async () => {
-    const { saved } = renderDialog();
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Plain" } });
+  it("creates an Agent in the default by sending none, which the Host binds while it still builds", async () => {
+    const { saved } = renderDialog(undefined, [
+      environment("env_video_production", "video-production", "building", "platform"), environment("env_tools", "tools", "ready"),
+    ]);
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · 平台内置 (default, 构建中)");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Video" } });
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     expect(await saved()).not.toHaveProperty("environmentId");
   });
 
-  it("keeps an edited Agent's Environment, and unbinds it with None", async () => {
+  it("keeps an edited Agent's Environment, and rebinds it to another", async () => {
     const kept = renderDialog(agent);
     expect(screen.getByLabelText("Environment").textContent).toBe("tools");
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
     expect(await kept.saved()).toMatchObject({ environmentId: "env_tools" });
     cleanup();
-    const cleared = renderDialog(agent);
+    const rebound = renderDialog(agent);
     options();
-    fireEvent.click(screen.getByRole("button", { name: "None (the Host's default image)" }));
+    fireEvent.click(screen.getByRole("button", { name: "video-production · 平台内置" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
-    expect((await cleared.saved()).environmentId).toBeNull();
+    expect((await rebound.saved()).environmentId).toBe("env_video_production");
   });
 
   it("keeps showing an Agent's Environment that is rebuilding, without offering others that are not ready", async () => {

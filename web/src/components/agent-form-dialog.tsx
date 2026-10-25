@@ -23,21 +23,26 @@ import {
 const ENVIRONMENT_STATUS: Record<EnvironmentSummary["status"], string> = {
   pending: "待构建", building: "构建中", failed: "构建失败", ready: "就绪",
 };
-const NO_ENVIRONMENT_LABEL = "None (the Host's default image)";
+/** The built-in a Sandboxed Agent runs in unless it names another (ADR-0024). */
+export const DEFAULT_ENVIRONMENT_ID = "env_video_production";
 
 /**
  * The Environments an Agent can be bound to (ADR-0024): the ready ones,
- * built-ins first, and the Agent's own binding whatever its status, which an
- * edit keeps.
+ * built-ins first, and, whatever their status, the Agent's own binding,
+ * which an edit keeps, and the default, which the Host binds as it is.
  */
 function environmentChoices(environments: EnvironmentSummary[], current?: string) {
   const rank = (environment: EnvironmentSummary) => (environment.ownerType === "platform" ? 0 : 1);
+  const label = (environment: EnvironmentSummary) => environment.ownerType === "platform" ? `${environment.name} · 平台内置` : environment.name;
   const choices = environments.filter((environment) => environment.status === "ready")
     .sort((a, b) => rank(a) - rank(b))
-    .map((environment) => ({ value: environment.id, label: environment.ownerType === "platform" ? `${environment.name} · 平台内置` : environment.name }));
-  if (current && !choices.some((choice) => choice.value === current)) {
-    const bound = environments.find((environment) => environment.id === current);
-    choices.push({ value: current, label: `${bound?.name ?? current} (current${bound ? `, ${ENVIRONMENT_STATUS[bound.status]}` : ""})` });
+    .map((environment) => ({ value: environment.id, label: label(environment) }));
+  for (const kept of new Set([current ?? DEFAULT_ENVIRONMENT_ID, DEFAULT_ENVIRONMENT_ID])) {
+    if (choices.some((choice) => choice.value === kept)) continue;
+    const listed = environments.find((environment) => environment.id === kept);
+    if (!listed && kept === DEFAULT_ENVIRONMENT_ID && kept !== current) continue;
+    const role = kept === current ? "current" : "default";
+    choices.push({ value: kept, label: `${listed ? label(listed) : kept} (${role}${listed ? `, ${ENVIRONMENT_STATUS[listed.status]}` : ""})` });
   }
   return choices;
 }
@@ -63,7 +68,7 @@ export function AgentFormDialog({
   const [system, setSystem] = useState(agent?.system ?? "");
   const [model, setModel] = useState<string>(agent?.model ?? DEFAULT_MODEL);
   const [thinking, setThinking] = useState<ThinkingLevel | undefined>(agent?.thinking ?? undefined);
-  const [environmentId, setEnvironmentId] = useState(agent?.environmentId ?? "");
+  const [environmentId, setEnvironmentId] = useState(agent?.environmentId ?? DEFAULT_ENVIRONMENT_ID);
   const environments = useEnvironments(open);
   const environmentOptions = environmentChoices(environments.data ?? [], agent?.environmentId);
   const [lastInput, setLastInput] = useState({ open, agent });
@@ -82,14 +87,14 @@ export function AgentFormDialog({
         setSystem(agent.system);
         setModel(agent.model);
         setThinking(agent.thinking ?? undefined);
-        setEnvironmentId(agent.environmentId ?? "");
+        setEnvironmentId(agent.environmentId ?? DEFAULT_ENVIRONMENT_ID);
       } else {
         setName("");
         setDescription("");
         setSystem("");
         setModel(DEFAULT_MODEL);
         setThinking(undefined);
-        setEnvironmentId("");
+        setEnvironmentId(DEFAULT_ENVIRONMENT_ID);
       }
     }
   }
@@ -112,17 +117,12 @@ export function AgentFormDialog({
       thinking: thinking ?? null,
       system: system.trim() || defaultSystem,
       runtime,
-      // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
-      // New Agents inherit the Host's default Sandbox template.
-      sandbox: {
-        // Preserve deployment-specific settings that this form does not expose.
-        ...agent?.sandbox,
-        enabled: true,
-        // The retired auto-story choice follows the Host default when saved.
-        image: agent?.sandbox?.image === "auto-story" ? undefined : agent?.sandbox?.image,
-      },
-      // An edit sends None as null to unbind; a new Agent names one or none.
-      ...(environmentId ? { environmentId } : isEdit ? { environmentId: null } : {}),
+      // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox,
+      // whose image and variables its Environment provides (ADR-0024).
+      sandbox: { enabled: true },
+      // An Agent without an Environment sends none for the default, which
+      // the Host binds whatever it is building.
+      ...(environmentId === DEFAULT_ENVIRONMENT_ID && !agent?.environmentId ? {} : { environmentId }),
     };
 
     if (isEdit) {
@@ -231,7 +231,6 @@ export function AgentFormDialog({
             value={environmentId}
             onChange={(e) => setEnvironmentId(e.target.value)}
           >
-            <option value="">{NO_ENVIRONMENT_LABEL}</option>
             {environmentOptions.map((choice) => (
               <option key={choice.value} value={choice.value}>{choice.label}</option>
             ))}

@@ -168,12 +168,13 @@ oma-cli environment logs --environment-id env-example --follow --raw
 oma-cli environment rebuild --environment-id env-example
 oma-cli environment delete --environment-id env-example --yes
 oma-cli agent update --agent-id agent-example --environment env-example
-oma-cli agent update --agent-id agent-example --no-environment
 oma-cli session create --agent-id agent-example --environment env_video_production
 ```
 
-An Agent bound with `--environment` runs its new Sessions in that
-Environment; `--no-environment` unbinds it. Only a ready Environment can be
+An Agent runs its new Sessions in its Environment: `--environment` binds one,
+and a new Agent that names none runs in the built-in `env_video_production`.
+An Agent's Sandbox image and variables are its Environment's; there is no
+Agent-level image or variable. Only a ready Environment can be
 bound or passed to `session create --environment`, which overrides the
 Agent's for that Session (exit 5, `environment_not_ready`, otherwise). A
 Session keeps the Environment it was created with for its lifetime, as its

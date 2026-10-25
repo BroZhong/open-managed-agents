@@ -16,7 +16,7 @@ const host = () =>
   });
 const sent = (f, index = -1) => JSON.parse(f.requests.at(index).body.toString());
 
-test("agent create and update bind an Environment with --environment; update unbinds it with --no-environment", async () => {
+test("agent create and update bind an Environment with --environment; a new Agent that names none is the Host's to default", async () => {
   const f = await host();
   try {
     const created = await run(["agent", "create", "--name", "A", "--runtime", "pi-agent", "--model", "m", "--system", "s", "--environment", "env_1"], auth(f));
@@ -29,33 +29,27 @@ test("agent create and update bind an Environment with --environment; update unb
     assert.equal(f.requests.at(-1).url, "/prefix/v1/agents/a");
     assert.deepEqual(sent(f), { environmentId: "env_video_production" });
 
-    const unbound = await run(["agent", "update", "--agent-id", "a", "--no-environment"], auth(f));
-    assert.equal(unbound.code, 0, unbound.stderr);
-    assert.deepEqual(sent(f), { environmentId: null });
-    // The same through --body.
-    const viaBody = await run(["agent", "update", "--agent-id", "a", "--body", '{"environmentId":null}'], auth(f));
-    assert.equal(viaBody.code, 0, viaBody.stderr);
-    assert.deepEqual(sent(f), { environmentId: null });
+    const defaulted = await run(["agent", "create", "--name", "B", "--runtime", "pi-agent", "--model", "m", "--system", "s"], auth(f));
+    assert.equal(defaulted.code, 0, defaulted.stderr);
+    assert.equal("environmentId" in sent(f), false);
   } finally {
     await f.close();
   }
 });
 
-test("agent update refuses contradictory or empty Environment flags before any request", async () => {
+test("agent update refuses an empty Environment, an unbinding and the removed sandbox fields before any request", async () => {
   const f = await host();
   try {
     for (const args of [
-      ["--environment", "env_1", "--no-environment"],
-      ["--no-environment", "--body", '{"environmentId":"env_1"}'],
       ["--environment", ""],
+      ["--no-environment"],
+      ["--body", '{"environmentId":null}'],
       ["--body", '{"environmentId":7}'],
+      ["--body", '{"sandbox":{"enabled":true,"env":{"A":"1"}}}'],
     ]) {
       const r = await run(["agent", "update", "--agent-id", "a", ...args], auth(f));
       assert.equal(r.code, 2, `${args.join(" ")}: ${r.stderr}`);
     }
-    // --no-environment is update's: a new Agent has none unless --environment names one.
-    const create = await run(["agent", "create", "--name", "A", "--runtime", "pi-agent", "--model", "m", "--system", "s", "--no-environment"], auth(f));
-    assert.equal(create.code, 2);
     assert.equal(f.requests.length, 0);
   } finally {
     await f.close();

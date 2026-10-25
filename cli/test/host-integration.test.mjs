@@ -439,10 +439,8 @@ test("CLI binds an Agent to a ready Environment against the real Host, and Sessi
     assert.deepEqual((await call(["session", "get", "--session-id", session.id])).environment, { id: "env_cli_tools", name: "cli-tools" });
     assert.equal((await call(["session", "create", "--agent-id", config.agentId, "--environment", "env_video_production"], 5)).subtype, "environment_not_ready");
     assert.equal((await call(["environment", "delete", "--environment-id", "env_cli_tools", "--yes"], 5)).subtype, "environment_in_use");
-    const unbound = await call(["agent", "update", "--agent-id", config.agentId, "--no-environment"]);
-    assert.equal(unbound.environmentId, undefined);
-    assert.equal((await call(["session", "create", "--agent-id", config.agentId])).environment, null);
-    await call(["environment", "delete", "--environment-id", "env_cli_tools", "--yes"]);
-    // The Session keeps the Environment it was created in, deleted or not.
-    assert.deepEqual((await call(["session", "get", "--session-id", session.id])).environment, { id: "env_cli_tools", name: "cli-tools" });
+    // A new Sandboxed Agent that names none runs in video-production, built or not.
+    const defaulted = await call(["agent", "create", "--name", "Defaulted", "--runtime", "mock", "--model", "test", "--system", "test"]);
+    assert.equal(defaulted.environmentId, "env_video_production");
+    assert.deepEqual((await call(["session", "create", "--agent-id", defaulted.id])).environment, { id: "env_video_production", name: "video-production" });
   }));

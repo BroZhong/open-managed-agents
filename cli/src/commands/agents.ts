@@ -39,9 +39,9 @@ const config: Record<string, Flag> = {
 const configFlags = Object.fromEntries(
   Object.entries(config).map(([k, v]) => [k, { ...v, field: k }]),
 );
-/** The ready Environment an Agent's new Sessions run in; null (update only) unbinds it. */
+/** The ready Environment an Agent's new Sessions run in; a new Agent that names none runs in env_video_production. */
 const environmentFields: Record<string, Flag> = {
-  environmentId: { type: "json", description: "Environment ID, or null to unbind" },
+  environmentId: string("Environment ID"),
 };
 for (const action of ["create", "update"] as const)
   agents.push({
@@ -54,27 +54,25 @@ for (const action of ["create", "update"] as const)
         field: "system",
         source: "text-file",
       }),
-      environment: string("Ready Environment ID new Sessions run in", { field: "environmentId" }),
-      ...(action === "update"
-        ? { "no-environment": boolean("Unbind the Agent's Environment") }
-        : {}),
+      environment: string(
+        action === "create"
+          ? "Ready Environment ID new Sessions run in (default env_video_production)"
+          : "Ready Environment ID new Sessions run in",
+        { field: "environmentId" },
+      ),
     },
     bodyFields: { ...config, ...environmentFields },
     requiredBody:
       action === "create" ? ["name", "runtime", "model", "system"] : [],
-    exclusive: [["system", "system-file"], ["environment", "no-environment"]],
+    exclusive: [["system", "system-file"]],
     write: true,
     effects: "Changes Agent configuration only; no historical Session updates.",
     api: [`POST /v1/agents${action === "update" ? "/{id}" : ""}`],
-    validate: (f, b) => {
-      if (f["no-environment"]) {
-        if ("environmentId" in b) invalid("Duplicate field environmentId", "--no-environment");
-        b.environmentId = null;
-      }
+    validate: (_f, b) => {
       if (!Object.keys(b).length) invalid("Provide at least one update field");
       for (const k of ["name", "model", "system"])
         if (k in b && !b[k]) invalid(`${k} cannot be empty`, k);
-      if ("environmentId" in b && !(typeof b.environmentId === "string" && b.environmentId) && !(action === "update" && b.environmentId === null))
+      if ("environmentId" in b && !b.environmentId)
         invalid("Environment ID cannot be empty", "--environment");
     },
     run: (c) =>

@@ -25,12 +25,9 @@ export interface Agent {
   skills?: string[];
   /** MCP connections configured for this Agent (not a tenant-wide library). */
   mcpServers?: ManagedMcpServerRef[];
-  sandbox?: {
-    enabled: boolean;
-    image?: string;
-    env?: Record<string, string>;
-  };
-  /** The Environment the Agent's new Sessions run in; absent: none. */
+  /** Whether its Turns run in a Sandbox, which its Environment defines. */
+  sandbox?: { enabled: boolean };
+  /** The Environment the Agent's new Sessions run in; absent only without a Sandbox. */
   environmentId?: string;
   createdAt: string;
   updatedAt: string;
@@ -46,8 +43,8 @@ export interface AgentMutationBody {
   skills?: string[];
   mcpServers?: ManagedMcpServerRef[];
   sandbox?: Agent["sandbox"];
-  /** A ready Environment to bind; null unbinds (update only). */
-  environmentId?: string | null;
+  /** A ready Environment to bind; none binds video-production. */
+  environmentId?: string;
 }
 
 interface AgentsResponse {
