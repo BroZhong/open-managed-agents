@@ -66,6 +66,7 @@ describe("Sidebar global navigation", () => {
     expect(screen.getByRole("link", { name: "Agent" }).getAttribute("href")).toBe("/agents");
     expect(screen.getByRole("link", { name: "Skill" }).getAttribute("href")).toBe("/skills");
     expect(screen.getByRole("link", { name: "MCP" }).getAttribute("href")).toBe("/mcp");
+    expect(screen.getByRole("link", { name: "Environment" }).getAttribute("href")).toBe("/environments");
     expect(screen.getByRole("link", { name: "API-Key" }).getAttribute("href")).toBe("/api-keys");
   });
 });

@@ -19,6 +19,7 @@ import {
   MessagesSquare,
   Repeat2,
   MoreHorizontal,
+  Boxes,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -81,6 +82,7 @@ const navGroups = [
       { label: "Skill", icon: BookOpen, path: "/skills" },
       { label: "MCP", icon: Plug, path: "/mcp" },
       { label: "Models", icon: Plug, path: "/model-providers" },
+      { label: "Environment", icon: Boxes, path: "/environments" },
     ],
   },
   {
