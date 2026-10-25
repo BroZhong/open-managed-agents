@@ -1,10 +1,13 @@
 {
-  "imageVersion": "0.1.0",
+  "imageVersion": "0.1.1",
   "platform": "linux/amd64",
   "repository": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox",
   "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
   "baseStartup": {
-    "entrypoint": ["bash", "/root/.jupyter/start-up.sh"],
+    "entrypoint": [
+      "bash",
+      "/root/.jupyter/start-up.sh"
+    ],
     "cmd": null
   },
   "node": {
@@ -19,7 +22,8 @@
   "debian": {
     "tini": "0.19.0-1+b3",
     "procps": "2:4.0.2-3",
-    "unzip": "6.0-28+deb12u1"
+    "unzip": "6.0-28+deb12u1",
+    "libglib2.0-0": "2.74.6-2+deb12u9"
   },
   "search": {
     "rg": "15.1.0",

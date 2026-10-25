@@ -55,6 +55,10 @@ def versions():
         match = re.search(r"(\d+\.\d+\.\d+)", output)
         require(match and match.group(1) == expected, f"{binary}: expected {expected}, got {output[:120]}")
         found[binary] = match.group(1)
+    installed = dict(line.split("\t") for line in run(["dpkg-query", "-W", "-f=${Package}\t${Version}\n",
+                                                          *IDENTITY["debian"]]).splitlines())
+    require(installed == IDENTITY["debian"], f"Debian packages: expected {IDENTITY['debian']}, got {installed}")
+    found["debian"] = installed
     for binary in ("ps", "unzip", "npm", "python3", "pip3"):
         require(shutil.which(binary, path="/usr/local/bin:/usr/bin:/bin"), f"Missing executable: {binary}")
     return found

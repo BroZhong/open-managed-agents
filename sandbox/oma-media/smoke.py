@@ -16,6 +16,9 @@ IDENTITY = json.loads(Path("/opt/oma/images/oma-media.json").read_text())
 ENCODERS = ["libopenh264", "libx264", "libx265", "libvpx-vp9", "libaom-av1", "libmp3lame", "libopus",
             "libvorbis", "libwebp", "aac"]
 FILTERS = ["subtitles", "ass", "drawtext"]
+# Environments rely on these from the media Base Image (video-production: fontconfig).
+PACKAGES = ["fontconfig", "fonts-noto-cjk", "fonts-dejavu-core", "libass9", "libopenh264-7", "libx264-164",
+            "libx265-199", "libharfbuzz0b", "libfreetype6"]
 CHECKS = []
 
 
@@ -50,13 +53,17 @@ def build():
         missing = [line.strip() for line in run(["ldd", f"/usr/local/bin/{binary}"]).splitlines() if "not found" in line]
         require(not missing, f"{binary} lacks runtime libraries: {missing}")
         found[binary] = match.group(1)
+    statuses = dict(line.split("\t", 1) for line in run(["dpkg-query", "-W", "-f=${Package}\t${db:Status-Abbrev}\n",
+                                                            *PACKAGES]).splitlines())
+    missing = [name for name in PACKAGES if not statuses.get(name, "").startswith("ii")]
+    require(not missing, f"Runtime packages not installed: {missing}")
     encoders = run(["ffmpeg", "-hide_banner", "-encoders"])
     absent = [name for name in ENCODERS if not re.search(rf"^\s*\S+\s+{re.escape(name)}\s", encoders, re.M)]
     require(not absent, f"Missing encoders: {absent}")
     filters = run(["ffmpeg", "-hide_banner", "-filters"])
     absent = [name for name in FILTERS if not re.search(rf"^\s*\S+\s+{re.escape(name)}\s", filters, re.M)]
     require(not absent, f"Missing filters: {absent}")
-    return {**found, "encoders": ENCODERS, "filters": FILTERS}
+    return {**found, "encoders": ENCODERS, "filters": FILTERS, "packages": PACKAGES}
 
 
 def probe(path):

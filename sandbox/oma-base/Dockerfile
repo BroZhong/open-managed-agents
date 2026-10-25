@@ -15,8 +15,11 @@ USER root
 ARG TINI_VERSION
 ARG PROCPS_VERSION
 ARG UNZIP_VERSION
+ARG GLIB_VERSION
 # Debian through the Aliyun mirror. The nodesource list is dropped: Node comes
 # from the Host's node-base below; the base's apt Node 20 stays only for npm.
+# procps/unzip are everyday tools; libglib2.0-0 lets the ACS venv's OpenCV load
+# once an Environment adds libGL (video-production installs libgl1).
 RUN rm -f /etc/apt/sources.list.d/nodesource.list && \
     sed -i \
       -e 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
@@ -24,7 +27,8 @@ RUN rm -f /etc/apt/sources.list.d/nodesource.list && \
       /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      "tini=${TINI_VERSION}" "procps=${PROCPS_VERSION}" "unzip=${UNZIP_VERSION}" && \
+      "tini=${TINI_VERSION}" "procps=${PROCPS_VERSION}" "unzip=${UNZIP_VERSION}" \
+      "libglib2.0-0=${GLIB_VERSION}" && \
     rm -rf /var/lib/apt/lists/*
 COPY pip.conf /etc/pip.conf
 # npm resolves its global config from the running node's prefix (/usr/local).
@@ -51,7 +55,7 @@ RUN printf '%s  %s\n' \
       printf '#!/bin/sh\nexec /opt/venv/bin/python3 -m pip "$@"\n' > "/usr/local/bin/${name}"; done && \
     chmod 0755 /usr/local/bin/python3 /usr/local/bin/python /usr/local/bin/pip3 /usr/local/bin/pip && \
     mkdir -p /opt/oma/images && \
-    /usr/bin/python3 -I -c 'import json; v = json.load(open("/tmp/oma-base-versions.json")); json.dump({"name": "oma-base", "version": v["imageVersion"], "baseImage": v["baseImage"], "node": v["node"]["version"], "pi": v["pi-coding-agent"]["version"]}, open("/opt/oma/images/oma-base.json", "w"))' && \
+    /usr/bin/python3 -I -c 'import json; v = json.load(open("/tmp/oma-base-versions.json")); json.dump({"name": "oma-base", "version": v["imageVersion"], "baseImage": v["baseImage"], "node": v["node"]["version"], "pi": v["pi-coding-agent"]["version"], "debian": v["debian"]}, open("/opt/oma/images/oma-base.json", "w"))' && \
     rm /tmp/oma-base-versions.json && \
     test ! -e /home/user/workspace && \
     find /home/user \( ! -user user -o ! -group user \) -exec chown -h user:user {} +

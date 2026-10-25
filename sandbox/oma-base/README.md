@@ -10,7 +10,7 @@ every Sandbox:
 | Node.js | 22.23.2 | `/usr/local/bin/node` from the Host's pinned `welltop/node-base` |
 | Pi tool runtime | `@earendil-works/pi-coding-agent` 0.83.0 | `/opt/oma-pi-tools`, `npm ci` from `pi-tools/package-lock.json` |
 | rg / fd | 15.1.0 / 10.4.2 | `../prepare-search-binaries.py` (pinned archives and binaries) |
-| tini, procps, unzip | Debian versions in `versions.json` | Aliyun Debian mirror |
+| tini, procps, unzip, libglib2.0-0 | Debian versions in `versions.json` | Aliyun Debian mirror |
 | `write-manifest` | | `/opt/oma/bin/write-manifest` |
 
 - **Mirrors**: apt uses `https://mirrors.aliyun.com/debian` (the base's
@@ -51,7 +51,7 @@ RG_SRC=… FD_SRC=… PUSH=1 bash sandbox/oma-base/build.sh   # then push a new 
 
 `verify-image.sh` checks the config (tini entrypoint, original command, `Env`
 equal to the ACS base, no proxy variables), runs `smoke.py` as `user` with no
-network (versions, Pi's seven tools, rg/fd syntax, python/pip/npm/apt mirrors,
+network (versions and the pinned Debian packages, Pi's seven tools, rg/fd syntax, python/pip/npm/apt mirrors,
 `/home/user`, `write-manifest`), starts the image until Jupyter is healthy and
 requires PID 1 to exit with 143 within 5 s of SIGTERM. A push never overwrites
 an existing tag (`oma-base-<imageVersion>`). The published digest is the lock

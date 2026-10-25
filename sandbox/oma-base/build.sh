@@ -41,6 +41,7 @@ docker buildx build --platform linux/amd64 --load --provenance=false --progress 
   --build-arg "TINI_VERSION=$(read_version debian.tini)" \
   --build-arg "PROCPS_VERSION=$(read_version debian.procps)" \
   --build-arg "UNZIP_VERSION=$(read_version debian.unzip)" \
+  --build-arg "GLIB_VERSION=$(read_version debian.libglib2.0-0)" \
   --build-arg "IMAGE_VERSION=${image_version}" \
   --build-arg "BUILD_REVISION=$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
   --tag "$image" .

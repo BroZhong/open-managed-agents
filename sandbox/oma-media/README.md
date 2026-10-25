@@ -27,7 +27,8 @@ FFMPEG_SRC=… PUSH=1 bash sandbox/oma-media/build.sh
 ```
 
 Verification runs oma-base's `verify-image.sh` with both smokes: the oma-base
-contract, then `smoke.py` here (FFmpeg version and linked libraries, encoders
+contract, then `smoke.py` here (FFmpeg version and linked libraries, the
+runtime and font packages Environments rely on (fontconfig among them), encoders
 and filters, OpenH264 and x264 encodes, CJK subtitles burned through libass
 from SRT and ASS, Noto CJK and DejaVu fonts, `/home/user` untouched). The
 build also checks that the image extends oma-base's layers. The published
