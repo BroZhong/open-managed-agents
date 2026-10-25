@@ -271,6 +271,32 @@ one of those is adopted only if a Sandbox appeared after the listing).
 sweep-logs [since] [report]` collects every Runner Pod's lines, checks their
 spacing and makes this comparison.
 
+## Production release of ADR-0023
+
+Released 2026-10-25 (#293), image `oma-server@sha256:d668ced005b8…` (tag
+`afcea76b87ed`, the image oma-test accepted in #292; main `146be51`) for
+`oma-api` and the three `oma-runner` replicas; `oma-web` unchanged.
+
+1. Read-only report: 2 Sandboxes listed (oma-test's, under the old shared key,
+   unlabelled and without a row in `oma`), no action planned.
+2. `oma-runner-config`: `OMA_ENVIRONMENT=production` added and
+   `E2B_REQUEST_TIMEOUT_MS` removed. Only these keys and the images changed;
+   the live replica count (3) and the known drift (`WORKSPACE_OSS_INTERNAL_ENDPOINT`
+   left to the code default) were kept.
+3. Runners scaled to 0 at 01:22:35Z with no pending input or live claim,
+   migrations 0024 and 0025 applied to `oma` (10 pending rows became
+   Creating(epoch)), API and Runner images set, Runners back at 01:23:30Z.
+4. First sweeper round of each Runner, 01:25:54–01:29:54Z: `listed 2`, every
+   planned counter 0 as in the report; the first round settled the 10 expired
+   intents (`expired 10, cleared 10`), the 2026-10-22 bindings whose Sessions
+   were terminated. Afterwards no binding is Creating or reclaiming.
+
+Rollback: Runners to 0, `0025_binding_environment_status.rollback.sql` then
+`0024_binding_creating_since.rollback.sql` (through `migration-for-env.mjs
+production`), images `oma-server@sha256:efc577190e34…` (tag `e2edb6655355`) for
+`oma-api` and `oma-runner`, restore `E2B_REQUEST_TIMEOUT_MS=185000` and remove
+`OMA_ENVIRONMENT` in `oma-runner-config`.
+
 ## Verification
 
 `verify-native-sandbox-lifecycle.mjs` and its 2026-10-10 evidence document the SDK,
