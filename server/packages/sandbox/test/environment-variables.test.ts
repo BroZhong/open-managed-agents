@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ENVIRONMENT_VARIABLE_NAME,
   PLATFORM_DEFAULT_ENV,
+  RESERVED_ENVIRONMENT_VARIABLE_NAMES,
+  RESERVED_ENVIRONMENT_VARIABLE_PREFIXES,
   isReservedEnvironmentVariable,
 } from "../src/environment-variables.js";
 import { WORKSPACE_ENV } from "../src/workspace-environment.js";
@@ -29,5 +32,12 @@ describe("Environment variable policy (ADR-0024)", () => {
       NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com",
     });
     for (const name of Object.keys(PLATFORM_DEFAULT_ENV)) expect(name).toMatch(ENVIRONMENT_VARIABLE_NAME);
+  });
+
+  it("is the policy migration 0029 drops reserved Agent variables by, name for name", () => {
+    const sql = readFileSync(new URL("../../../../deploy/migrations/0029_environment_migration.sql", import.meta.url), "utf8");
+    const names = /AND v\.key NOT IN \(([^)]*)\)/.exec(sql)![1]!.match(/'([A-Z0-9_]+)'/g)!.map((quoted) => quoted.slice(1, -1));
+    expect(new Set(names)).toEqual(RESERVED_ENVIRONMENT_VARIABLE_NAMES);
+    expect(/AND v\.key !~ '\^\(([^)]*)\)'/.exec(sql)![1]!.split("|")).toEqual([...RESERVED_ENVIRONMENT_VARIABLE_PREFIXES]);
   });
 });

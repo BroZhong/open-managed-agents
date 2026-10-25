@@ -29,7 +29,7 @@ export const PLATFORM_DEFAULT_ENV: Readonly<Record<string, string>> = Object.fre
  *   files `ENV`/`BASH_ENV`, word splitting, tracing and read-only bash state;
  * - `LD_PRELOAD`, which would load into the platform's tool runtime.
  */
-const RESERVED_NAMES: ReadonlySet<string> = new Set([
+export const RESERVED_ENVIRONMENT_VARIABLE_NAMES: ReadonlySet<string> = new Set([
   ...Object.keys(WORKSPACE_ENV),
   "PATH", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "SHLVL", "HOSTNAME",
   "UID", "EUID", "PPID", "IFS", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND",
@@ -40,8 +40,8 @@ const RESERVED_NAMES: ReadonlySet<string> = new Set([
  * Prefixes the platform owns: `OMA_` (the Host's own variables), `E2B_` and
  * `ENVD_` (the Sandbox daemon's), `BASH_` (bash's own state).
  */
-const RESERVED_PREFIXES = ["OMA_", "E2B_", "ENVD_", "BASH_"] as const;
+export const RESERVED_ENVIRONMENT_VARIABLE_PREFIXES = ["OMA_", "E2B_", "ENVD_", "BASH_"] as const;
 
 export function isReservedEnvironmentVariable(name: string): boolean {
-  return RESERVED_NAMES.has(name) || RESERVED_PREFIXES.some((prefix) => name.startsWith(prefix));
+  return RESERVED_ENVIRONMENT_VARIABLE_NAMES.has(name) || RESERVED_ENVIRONMENT_VARIABLE_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
