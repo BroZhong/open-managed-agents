@@ -1,4 +1,5 @@
 import { useModelProviders } from "@/lib/hooks/use-model-providers";
+import { useEnvironments, type EnvironmentSummary } from "@/lib/hooks/use-environments";
 import { useModelThinkingOptions, type ThinkingLevel } from "@/lib/hooks/use-thinking-options";
 import { AgentThinkingPicker } from "@/components/agent-thinking-picker";
 import { useState } from "react";
@@ -18,6 +19,28 @@ import {
   DEFAULT_MODEL,
   PI_MODELS,
 } from "@/lib/agent-runtime";
+
+const ENVIRONMENT_STATUS: Record<EnvironmentSummary["status"], string> = {
+  pending: "待构建", building: "构建中", failed: "构建失败", ready: "就绪",
+};
+const NO_ENVIRONMENT_LABEL = "None (the Host's default image)";
+
+/**
+ * The Environments an Agent can be bound to (ADR-0024): the ready ones,
+ * built-ins first, and the Agent's own binding whatever its status, which an
+ * edit keeps.
+ */
+function environmentChoices(environments: EnvironmentSummary[], current?: string) {
+  const rank = (environment: EnvironmentSummary) => (environment.ownerType === "platform" ? 0 : 1);
+  const choices = environments.filter((environment) => environment.status === "ready")
+    .sort((a, b) => rank(a) - rank(b))
+    .map((environment) => ({ value: environment.id, label: environment.ownerType === "platform" ? `${environment.name} · 平台内置` : environment.name }));
+  if (current && !choices.some((choice) => choice.value === current)) {
+    const bound = environments.find((environment) => environment.id === current);
+    choices.push({ value: current, label: `${bound?.name ?? current} (current${bound ? `, ${ENVIRONMENT_STATUS[bound.status]}` : ""})` });
+  }
+  return choices;
+}
 
 interface AgentFormDialogProps {
   open: boolean;
@@ -40,6 +63,9 @@ export function AgentFormDialog({
   const [system, setSystem] = useState(agent?.system ?? "");
   const [model, setModel] = useState<string>(agent?.model ?? DEFAULT_MODEL);
   const [thinking, setThinking] = useState<ThinkingLevel | undefined>(agent?.thinking ?? undefined);
+  const [environmentId, setEnvironmentId] = useState(agent?.environmentId ?? "");
+  const environments = useEnvironments(open);
+  const environmentOptions = environmentChoices(environments.data ?? [], agent?.environmentId);
   const [lastInput, setLastInput] = useState({ open, agent });
   const thinkingOptions = useModelThinkingOptions(model, open);
   const runtime = LOCKED_RUNTIME;
@@ -56,12 +82,14 @@ export function AgentFormDialog({
         setSystem(agent.system);
         setModel(agent.model);
         setThinking(agent.thinking ?? undefined);
+        setEnvironmentId(agent.environmentId ?? "");
       } else {
         setName("");
         setDescription("");
         setSystem("");
         setModel(DEFAULT_MODEL);
         setThinking(undefined);
+        setEnvironmentId("");
       }
     }
   }
@@ -93,6 +121,8 @@ export function AgentFormDialog({
         // The retired auto-story choice follows the Host default when saved.
         image: agent?.sandbox?.image === "auto-story" ? undefined : agent?.sandbox?.image,
       },
+      // An edit sends None as null to unbind; a new Agent names one or none.
+      ...(environmentId ? { environmentId } : isEdit ? { environmentId: null } : {}),
     };
 
     if (isEdit) {
@@ -195,8 +225,20 @@ export function AgentFormDialog({
             value={system}
             onChange={(e) => setSystem(e.target.value)}
           />
+          <Select
+            id="agent-environment"
+            label="Environment"
+            value={environmentId}
+            onChange={(e) => setEnvironmentId(e.target.value)}
+          >
+            <option value="">{NO_ENVIRONMENT_LABEL}</option>
+            {environmentOptions.map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+          </Select>
           <p className="text-xs text-neutral-500">
-            Every agent runs inside an isolated sandbox.
+            Every agent runs inside an isolated sandbox. New Sessions run in the chosen Environment; existing Sessions keep theirs.
+            {environments.error ? " Environments could not be loaded." : ""}
           </p>
         </div>
         <DialogFooter>

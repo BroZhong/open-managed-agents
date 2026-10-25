@@ -161,3 +161,38 @@ it.each([false, true])("waits for complete history before showing the empty welc
   view.unmount();
   queryClient.clear();
 });
+
+it.each([
+  [{ id: "env_tools", name: "tools" }, "tools"],
+  [null, undefined],
+])("shows the Environment the Session runs in (ADR-0024): %o", async (environment, shown) => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const session: Session = {
+    id: "environment-session", agentId: "agent_1", workspaceId: "workspace_1", status: "idle", title: "In an Environment",
+    agent: { id: "agent_1", name: "Test Agent", model: "test/model", runtime: "mock" }, environment,
+    createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z",
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const accept = new Headers(init?.headers).get("Accept");
+    if (accept === "application/json") return Response.json({ data: [], has_more: false });
+    if (accept === "text/event-stream") return new Response(new ReadableStream({ start(controller) {
+      init?.signal?.addEventListener("abort", () => controller.close(), { once: true });
+    } }));
+    if (String(input).endsWith("/v1/sessions/environment-session")) return Response.json(session);
+    return Response.json({ data: [] });
+  }));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={["/sessions/environment-session"]}><Routes>
+    <Route path="/sessions/:id" element={<SessionDetailPage />} />
+  </Routes></MemoryRouter></QueryClientProvider>);
+  await screen.findByText("Test Agent");
+  const label = screen.queryByTitle(/^Environment /);
+  if (shown) {
+    expect(label?.textContent).toBe(shown);
+    expect(label?.getAttribute("title")).toBe("Environment tools (env_tools)");
+  } else {
+    expect(label).toBeNull();
+  }
+  view.unmount();
+  queryClient.clear();
+});

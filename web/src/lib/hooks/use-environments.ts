@@ -51,9 +51,10 @@ export interface EnvironmentInput {
   env?: EnvironmentVariableInput[];
 }
 
-export function useEnvironments() {
+export function useEnvironments(enabled = true) {
   return useQuery({
     queryKey: ["environments"],
+    enabled,
     queryFn: ({ signal }) => apiFetch<{ data: EnvironmentSummary[] }>("/v1/environments", { signal }).then((result) => result.data),
   });
 }

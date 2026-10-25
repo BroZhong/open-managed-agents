@@ -30,6 +30,8 @@ export interface Agent {
     image?: string;
     env?: Record<string, string>;
   };
+  /** The Environment the Agent's new Sessions run in; absent: none. */
+  environmentId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -44,6 +46,8 @@ export interface AgentMutationBody {
   skills?: string[];
   mcpServers?: ManagedMcpServerRef[];
   sandbox?: Agent["sandbox"];
+  /** A ready Environment to bind; null unbinds (update only). */
+  environmentId?: string | null;
 }
 
 interface AgentsResponse {

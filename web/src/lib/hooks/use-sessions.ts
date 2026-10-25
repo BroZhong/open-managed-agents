@@ -17,6 +17,11 @@ export interface Session {
   title?: string;
   /** The Workspace this Session is bound to (used to group by workspace). */
   workspaceId: string;
+  /**
+   * The Environment its Sandboxes run, frozen at creation (ADR-0024), by its
+   * current name; null when it runs in none.
+   */
+  environment?: { id: string; name: string } | null;
   /** Present when this Session was created by a scheduled Loop. */
   loopId?: string;
   agent: { id: string; name: string; model: string; runtime: string; thinking?: Agent["thinking"] };

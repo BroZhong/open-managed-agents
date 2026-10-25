@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router";
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, Boxes, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { SessionLoading } from "@/components/session-loading";
@@ -91,6 +91,16 @@ export default function SessionDetailPage() {
               <span className="text-[var(--color-border)]">|</span>
               <span className="session-agent-name">
                 {session.agent.name}
+              </span>
+            </>
+          )}
+          {session?.environment && (
+            <>
+              <span className="text-[var(--color-border)]">|</span>
+              <span className="session-agent-name inline-flex items-center gap-1"
+                title={`Environment ${session.environment.name} (${session.environment.id})`}>
+                <Boxes aria-hidden="true" className="h-3 w-3 shrink-0" />
+                {session.environment.name}
               </span>
             </>
           )}
