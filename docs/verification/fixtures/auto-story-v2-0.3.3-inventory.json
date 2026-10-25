@@ -1,0 +1,3853 @@
+{
+ "binaries": {
+  "R": null,
+  "curl": {
+   "exit": 0,
+   "path": "/usr/bin/curl",
+   "realpath": "/usr/bin/curl",
+   "sha256": "58824afa640f512e07e895c0f2d1e1fe2c3fd1456acab689b6e4c1c75cef2593",
+   "version": "curl 7.88.1 (x86_64-pc-linux-gnu) libcurl/7.88.1 OpenSSL/3.0.18 zlib/1.2.13 brotli/1.0.9 zstd/1.5.4 libidn2/2.3.3 libpsl/0.21.2 (+libidn2/2.3.3) libssh2/1.10.0 nghttp2/1.52.0 librtmp/2.3 OpenLDAP/2.5.13"
+  },
+  "deno": null,
+  "fc-list": {
+   "exit": 0,
+   "path": "/usr/bin/fc-list",
+   "realpath": "/usr/bin/fc-list",
+   "sha256": "ac2758a5c5e5543647e3ba2d0989d35e4f2b1f8e9db4e082b023df841105fa36",
+   "version": "fontconfig version 2.14.1"
+  },
+  "fd": {
+   "exit": 0,
+   "path": "/usr/local/bin/fd",
+   "realpath": "/usr/local/bin/fd",
+   "sha256": "0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8",
+   "version": "fd 10.4.2"
+  },
+  "ffmpeg": {
+   "exit": 0,
+   "path": "/usr/local/bin/ffmpeg",
+   "realpath": "/usr/local/bin/ffmpeg",
+   "sha256": "fc07a1ce9bea22b8be0e2cf29d1860b529c2facf5cc411aa893ae9add5be53bb",
+   "version": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers"
+  },
+  "ffprobe": {
+   "exit": 0,
+   "path": "/usr/local/bin/ffprobe",
+   "realpath": "/usr/local/bin/ffprobe",
+   "sha256": "e25884f943e02ae6d3e1209d387b32cb867582f010722aed9df0cf1985ef7512",
+   "version": "ffprobe version 9.0.1 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "git": {
+   "exit": 0,
+   "path": "/usr/bin/git",
+   "realpath": "/usr/bin/git",
+   "sha256": "2540879925a6881e3877ff7e3330746ba3027b04edf16a3a12dccd1644c4f32d",
+   "version": "git version 2.39.5"
+  },
+  "java": null,
+  "jq": {
+   "exit": 0,
+   "path": "/usr/bin/jq",
+   "realpath": "/usr/bin/jq",
+   "sha256": "69f059a1758c49bdb0c40aca6ba639451c5932b729be43821a18b0a438d7306b",
+   "version": "jq-1.6"
+  },
+  "jupyter": {
+   "exit": 0,
+   "path": "/opt/venv/bin/jupyter",
+   "realpath": "/opt/venv/bin/jupyter",
+   "sha256": "030a9c33d6a26cab3b0c5a7ee5aba577fb11b24d6b5a9c1473a6eec3b3983c87",
+   "version": "IPython          : 9.2.0"
+  },
+  "mediakit-cli": {
+   "exit": 0,
+   "path": "/usr/local/bin/mediakit-cli",
+   "realpath": "/usr/local/bin/mediakit-cli",
+   "sha256": "2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca",
+   "version": "mediakit-cli version 0.2.1"
+  },
+  "node": {
+   "exit": 0,
+   "path": "/usr/local/bin/node",
+   "realpath": "/usr/local/bin/node",
+   "sha256": "3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327",
+   "version": "v22.23.2"
+  },
+  "npm": {
+   "exit": 0,
+   "path": "/usr/bin/npm",
+   "realpath": "/usr/lib/node_modules/npm/bin/npm-cli.js",
+   "sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+   "version": "10.8.2"
+  },
+  "ossutil": {
+   "exit": 0,
+   "path": "/usr/local/bin/ossutil",
+   "realpath": "/usr/local/bin/ossutil",
+   "sha256": "de09edc5649d00bf9495040b09c70a52174f7ae6b812097411f46def16d47c2f",
+   "version": "2.2.0"
+  },
+  "pip3": {
+   "exit": 0,
+   "path": "/usr/local/bin/pip3",
+   "realpath": "/usr/local/bin/pip3",
+   "sha256": "f9adbad08aeefad922d293ec307caaa14210d25e10726255b14378bdce5a7a4c",
+   "version": "pip 23.0.1 from /opt/auto-story/venv/lib/python3.11/site-packages/pip (python 3.11)"
+  },
+  "ps": {
+   "exit": 0,
+   "path": "/usr/bin/ps",
+   "realpath": "/usr/bin/ps",
+   "sha256": "b2a1f7b6ae39ca71cf915d9553877df8f65e1b5ee39c4c269ee3c0d0bb282546",
+   "version": "ps from procps-ng 4.0.2"
+  },
+  "python3": {
+   "exit": 0,
+   "path": "/usr/local/bin/python3",
+   "realpath": "/usr/local/bin/python3",
+   "sha256": "6248c8ec3dc434b32298aeeaf10bd444464805a349b4b43b15e030796eb33353",
+   "version": "Python 3.11.2"
+  },
+  "rg": {
+   "exit": 0,
+   "path": "/usr/local/bin/rg",
+   "realpath": "/usr/local/bin/rg",
+   "sha256": "ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2",
+   "version": "ripgrep 15.1.0 (rev af60c2de9d)"
+  },
+  "tini": null,
+  "unzip": {
+   "exit": 0,
+   "path": "/usr/bin/unzip",
+   "realpath": "/usr/bin/unzip",
+   "sha256": "fa4b862a50784b6630259e50d5c4fd85d59006aa2190b23e840d2747e46f0484",
+   "version": "UnZip 6.00 of 20 April 2009, by Debian. Original by Info-ZIP."
+  },
+  "vfs-cli": {
+   "exit": 0,
+   "path": "/usr/local/bin/vfs-cli",
+   "realpath": "/usr/local/bin/vfs-cli",
+   "sha256": "d4493416139db06f69cbaffd7edf80b64355fd98e77c7f904a06da737295e020",
+   "version": "vfs-cli version v0.3.21"
+  }
+ },
+ "capturedAt": "2026-10-25T17:34:23Z",
+ "dpkg": {
+  "adduser": "3.134",
+  "apt": "2.6.1",
+  "apt-transport-https": "2.6.1",
+  "base-files": "12.4+deb12u13",
+  "base-passwd": "3.6.1",
+  "bash": "5.2.15-2+b10",
+  "binutils": "2.40-2",
+  "binutils-common:amd64": "2.40-2",
+  "binutils-x86-64-linux-gnu": "2.40-2",
+  "bsdutils": "1:2.38.1-5+deb12u3",
+  "build-essential": "12.9",
+  "bzip2": "1.0.8-5+b1",
+  "ca-certificates": "20250419~deb12u1",
+  "coreutils": "9.1-1",
+  "cpp": "4:12.2.0-3",
+  "cpp-12": "12.2.0-14+deb12u1",
+  "curl": "7.88.1-10+deb12u14",
+  "dash": "0.5.12-2",
+  "debconf": "1.5.82",
+  "debian-archive-keyring": "2023.3+deb12u2",
+  "debianutils": "5.7-0.5~deb12u1",
+  "diffutils": "1:3.8-4",
+  "dirmngr": "2.2.40-1.1+deb12u2",
+  "dpkg": "1.21.22",
+  "dpkg-dev": "1.21.22",
+  "e2fsprogs": "1.47.0-2+b2",
+  "fakeroot": "1.31-1.2",
+  "findutils": "4.9.0-4",
+  "fontconfig": "2.14.1-4",
+  "fontconfig-config": "2.14.1-4",
+  "fonts-dejavu-core": "2.37-6",
+  "fonts-noto-cjk": "1:20220127+repack1-1",
+  "g++": "4:12.2.0-3",
+  "g++-12": "12.2.0-14+deb12u1",
+  "gcc": "4:12.2.0-3",
+  "gcc-12": "12.2.0-14+deb12u1",
+  "gcc-12-base:amd64": "12.2.0-14+deb12u1",
+  "git": "1:2.39.5-0+deb12u3",
+  "git-man": "1:2.39.5-0+deb12u3",
+  "gnupg": "2.2.40-1.1+deb12u2",
+  "gnupg-l10n": "2.2.40-1.1+deb12u2",
+  "gnupg-utils": "2.2.40-1.1+deb12u2",
+  "gpg": "2.2.40-1.1+deb12u2",
+  "gpg-agent": "2.2.40-1.1+deb12u2",
+  "gpg-wks-client": "2.2.40-1.1+deb12u2",
+  "gpg-wks-server": "2.2.40-1.1+deb12u2",
+  "gpgconf": "2.2.40-1.1+deb12u2",
+  "gpgsm": "2.2.40-1.1+deb12u2",
+  "gpgv": "2.2.40-1.1+deb12u2",
+  "grep": "3.8-5",
+  "gzip": "1.12-1",
+  "hostname": "3.23+nmu1",
+  "init-system-helpers": "1.65.2+deb12u1",
+  "javascript-common": "11+nmu1",
+  "jq": "1.6-2.1+deb12u1",
+  "krb5-locales": "1.20.1-2+deb12u4",
+  "less": "590-2.1~deb12u2",
+  "libabsl20220623:amd64": "20220623.1-1+deb12u2",
+  "libacl1:amd64": "2.3.1-3",
+  "libalgorithm-diff-perl": "1.201-1",
+  "libalgorithm-diff-xs-perl:amd64": "0.04-8+b1",
+  "libalgorithm-merge-perl": "0.08-5",
+  "libaom3:amd64": "3.6.0-1+deb12u3",
+  "libapt-pkg6.0:amd64": "2.6.1",
+  "libasan8:amd64": "12.2.0-14+deb12u1",
+  "libass9:amd64": "1:0.17.1-1+deb12u1",
+  "libassuan0:amd64": "2.5.5-5",
+  "libatomic1:amd64": "12.2.0-14+deb12u1",
+  "libattr1:amd64": "1:2.5.1-4",
+  "libaudit-common": "1:3.0.9-1",
+  "libaudit1:amd64": "1:3.0.9-1",
+  "libavif15:amd64": "0.11.1-1+deb12u1",
+  "libbinutils:amd64": "2.40-2",
+  "libblkid1:amd64": "2.38.1-5+deb12u3",
+  "libbrotli1:amd64": "1.0.9-2+b6",
+  "libbsd0:amd64": "0.11.7-2",
+  "libbz2-1.0:amd64": "1.0.8-5+b1",
+  "libc-bin": "2.36-9+deb12u13",
+  "libc-dev-bin": "2.36-9+deb12u13",
+  "libc-devtools": "2.36-9+deb12u13",
+  "libc6-dev:amd64": "2.36-9+deb12u13",
+  "libc6:amd64": "2.36-9+deb12u13",
+  "libcap-ng0:amd64": "0.8.3-1+b3",
+  "libcap2:amd64": "1:2.66-4+deb12u2+b2",
+  "libcbor0.8:amd64": "0.8.0-2+b1",
+  "libcc1-0:amd64": "12.2.0-14+deb12u1",
+  "libcom-err2:amd64": "1.47.0-2+b2",
+  "libcrypt-dev:amd64": "1:4.4.33-2",
+  "libcrypt1:amd64": "1:4.4.33-2",
+  "libctf-nobfd0:amd64": "2.40-2",
+  "libctf0:amd64": "2.40-2",
+  "libcurl3-gnutls:amd64": "7.88.1-10+deb12u14",
+  "libcurl4:amd64": "7.88.1-10+deb12u14",
+  "libdav1d6:amd64": "1.0.0-2+deb12u1",
+  "libdb5.3:amd64": "5.3.28+dfsg2-1",
+  "libde265-0:amd64": "1.0.11-1+deb12u2",
+  "libdebconfclient0:amd64": "0.270",
+  "libdeflate0:amd64": "1.14-1",
+  "libdpkg-perl": "1.21.22",
+  "libdrm-amdgpu1:amd64": "2.4.114-1+b1",
+  "libdrm-common": "2.4.114-1",
+  "libdrm-intel1:amd64": "2.4.114-1+b1",
+  "libdrm-nouveau2:amd64": "2.4.114-1+b1",
+  "libdrm-radeon1:amd64": "2.4.114-1+b1",
+  "libdrm2:amd64": "2.4.114-1+b1",
+  "libedit2:amd64": "3.1-20221030-2",
+  "libelf1:amd64": "0.188-2.1",
+  "liberror-perl": "0.17029-2",
+  "libexpat1-dev:amd64": "2.5.0-1+deb12u2",
+  "libexpat1:amd64": "2.5.0-1+deb12u2",
+  "libext2fs2:amd64": "1.47.0-2+b2",
+  "libfakeroot:amd64": "1.31-1.2",
+  "libffi8:amd64": "3.4.4-1",
+  "libfido2-1:amd64": "1.12.0-2+b1",
+  "libfile-fcntllock-perl": "0.22-4+b1",
+  "libfontconfig1:amd64": "2.14.1-4",
+  "libfreetype6:amd64": "2.12.1+dfsg-5+deb12u4",
+  "libfribidi0:amd64": "1.0.8-2.1",
+  "libgav1-1:amd64": "0.18.0-1+b1",
+  "libgcc-12-dev:amd64": "12.2.0-14+deb12u1",
+  "libgcc-s1:amd64": "12.2.0-14+deb12u1",
+  "libgcrypt20:amd64": "1.10.1-3",
+  "libgd3:amd64": "2.3.3-9",
+  "libgdbm-compat4:amd64": "1.23-3",
+  "libgdbm6:amd64": "1.23-3",
+  "libgl1-mesa-dri:amd64": "22.3.6-1+deb12u2",
+  "libgl1:amd64": "1.6.0-1",
+  "libglapi-mesa:amd64": "22.3.6-1+deb12u2",
+  "libglib2.0-0:amd64": "2.74.6-2+deb12u9",
+  "libglvnd0:amd64": "1.6.0-1",
+  "libglx-mesa0:amd64": "22.3.6-1+deb12u2",
+  "libglx0:amd64": "1.6.0-1",
+  "libgmp10:amd64": "2:6.2.1+dfsg1-1.1",
+  "libgnutls30:amd64": "3.7.9-2+deb12u7",
+  "libgomp1:amd64": "12.2.0-14+deb12u1",
+  "libgpg-error0:amd64": "1.46-1",
+  "libgpm2:amd64": "1.20.7-10+b1",
+  "libgprofng0:amd64": "2.40-2",
+  "libgraphite2-3:amd64": "1.3.14-1+deb12u1",
+  "libgssapi-krb5-2:amd64": "1.20.1-2+deb12u4",
+  "libharfbuzz0b:amd64": "6.0.0+dfsg-3",
+  "libheif1:amd64": "1.15.1-1+deb12u1",
+  "libhogweed6:amd64": "3.8.1-2",
+  "libicu72:amd64": "72.1-3+deb12u1",
+  "libidn2-0:amd64": "2.3.3-1+b1",
+  "libisl23:amd64": "0.25-1.1",
+  "libitm1:amd64": "12.2.0-14+deb12u1",
+  "libjansson4:amd64": "2.14-2",
+  "libjbig0:amd64": "2.1-6.1",
+  "libjpeg62-turbo:amd64": "1:2.1.5-2",
+  "libjq1:amd64": "1.6-2.1+deb12u1",
+  "libjs-jquery": "3.6.1+dfsg+~3.5.14-1",
+  "libjs-sphinxdoc": "5.3.0-4",
+  "libjs-underscore": "1.13.4~dfsg+~1.11.4-3",
+  "libk5crypto3:amd64": "1.20.1-2+deb12u4",
+  "libkeyutils1:amd64": "1.6.3-2",
+  "libkrb5-3:amd64": "1.20.1-2+deb12u4",
+  "libkrb5support0:amd64": "1.20.1-2+deb12u4",
+  "libksba8:amd64": "1.6.3-2",
+  "libldap-2.5-0:amd64": "2.5.13+dfsg-5",
+  "libldap-common": "2.5.13+dfsg-5",
+  "liblerc4:amd64": "4.0.0+ds-2",
+  "libllvm15:amd64": "1:15.0.6-4+b1",
+  "liblocale-gettext-perl": "1.07-5",
+  "liblsan0:amd64": "12.2.0-14+deb12u1",
+  "liblz4-1:amd64": "1.9.4-1",
+  "liblzma5:amd64": "5.4.1-1",
+  "libmd0:amd64": "1.0.4-2",
+  "libmount1:amd64": "2.38.1-5+deb12u3",
+  "libmp3lame0:amd64": "3.100-6",
+  "libmpc3:amd64": "1.3.1-1",
+  "libmpfr6:amd64": "4.2.0-1",
+  "libncursesw6:amd64": "6.4-4",
+  "libnettle8:amd64": "3.8.1-2",
+  "libnghttp2-14:amd64": "1.52.0-1+deb12u2",
+  "libnpth0:amd64": "1.6-3",
+  "libnsl-dev:amd64": "1.3.0-2",
+  "libnsl2:amd64": "1.3.0-2",
+  "libnuma1:amd64": "2.0.16-1",
+  "libogg0:amd64": "1.3.5-3",
+  "libonig5:amd64": "6.9.8-1",
+  "libopenh264-7:amd64": "2.3.1+dfsg-3+deb12u2",
+  "libopus0:amd64": "1.3.1-3",
+  "libp11-kit0:amd64": "0.24.1-2",
+  "libpam-modules-bin": "1.5.2-6+deb12u2",
+  "libpam-modules:amd64": "1.5.2-6+deb12u2",
+  "libpam-runtime": "1.5.2-6+deb12u2",
+  "libpam0g:amd64": "1.5.2-6+deb12u2",
+  "libpciaccess0:amd64": "0.17-2",
+  "libpcre2-8-0:amd64": "10.42-1",
+  "libperl5.36:amd64": "5.36.0-7+deb12u3",
+  "libpng16-16:amd64": "1.6.39-2+deb12u1",
+  "libproc2-0:amd64": "2:4.0.2-3",
+  "libpsl5:amd64": "0.21.2-1",
+  "libpython3-dev:amd64": "3.11.2-1+b1",
+  "libpython3-stdlib:amd64": "3.11.2-1+b1",
+  "libpython3.11-dev:amd64": "3.11.2-6+deb12u6",
+  "libpython3.11-minimal:amd64": "3.11.2-6+deb12u6",
+  "libpython3.11-stdlib:amd64": "3.11.2-6+deb12u6",
+  "libpython3.11:amd64": "3.11.2-6+deb12u6",
+  "libquadmath0:amd64": "12.2.0-14+deb12u1",
+  "librav1e0:amd64": "0.5.1-6",
+  "libreadline8:amd64": "8.2-1.3",
+  "librtmp1:amd64": "2.4+20151223.gitfa8646d.1-2+b2",
+  "libsasl2-2:amd64": "2.1.28+dfsg-10",
+  "libsasl2-modules-db:amd64": "2.1.28+dfsg-10",
+  "libsasl2-modules:amd64": "2.1.28+dfsg-10",
+  "libseccomp2:amd64": "2.5.4-1+deb12u1",
+  "libselinux1:amd64": "3.4-1+b6",
+  "libsemanage-common": "3.4-1",
+  "libsemanage2:amd64": "3.4-1+b5",
+  "libsensors-config": "1:3.6.0-7.1",
+  "libsensors5:amd64": "1:3.6.0-7.1",
+  "libsepol2:amd64": "3.4-2.1",
+  "libsmartcols1:amd64": "2.38.1-5+deb12u3",
+  "libsqlite3-0:amd64": "3.40.1-2+deb12u2",
+  "libss2:amd64": "1.47.0-2+b2",
+  "libssh2-1:amd64": "1.10.0-3+b1",
+  "libssl3:amd64": "3.0.18-1~deb12u1",
+  "libstdc++-12-dev:amd64": "12.2.0-14+deb12u1",
+  "libstdc++6:amd64": "12.2.0-14+deb12u1",
+  "libsvtav1enc1:amd64": "1.4.1+dfsg-1",
+  "libsystemd0:amd64": "252.39-1~deb12u1",
+  "libtasn1-6:amd64": "4.19.0-2+deb12u1",
+  "libtiff6:amd64": "4.5.0-6+deb12u3",
+  "libtinfo6:amd64": "6.4-4",
+  "libtirpc-common": "1.3.3+ds-1",
+  "libtirpc-dev:amd64": "1.3.3+ds-1",
+  "libtirpc3:amd64": "1.3.3+ds-1",
+  "libtsan2:amd64": "12.2.0-14+deb12u1",
+  "libubsan1:amd64": "12.2.0-14+deb12u1",
+  "libudev1:amd64": "252.39-1~deb12u1",
+  "libunistring2:amd64": "1.0-2",
+  "libuuid1:amd64": "2.38.1-5+deb12u3",
+  "libvorbis0a:amd64": "1.3.7-1",
+  "libvorbisenc2:amd64": "1.3.7-1",
+  "libvpx7:amd64": "1.12.0-1+deb12u5",
+  "libwebp7:amd64": "1.2.4-0.2+deb12u1",
+  "libwebpmux3:amd64": "1.2.4-0.2+deb12u1",
+  "libx11-6:amd64": "2:1.8.4-2+deb12u2",
+  "libx11-data": "2:1.8.4-2+deb12u2",
+  "libx11-xcb1:amd64": "2:1.8.4-2+deb12u2",
+  "libx264-164:amd64": "2:0.164.3095+gitbaee400-3",
+  "libx265-199:amd64": "3.5-2+b1",
+  "libxau6:amd64": "1:1.0.9-1",
+  "libxcb-dri2-0:amd64": "1.15-1",
+  "libxcb-dri3-0:amd64": "1.15-1",
+  "libxcb-glx0:amd64": "1.15-1",
+  "libxcb-present0:amd64": "1.15-1",
+  "libxcb-randr0:amd64": "1.15-1",
+  "libxcb-shm0:amd64": "1.15-1",
+  "libxcb-sync1:amd64": "1.15-1",
+  "libxcb-xfixes0:amd64": "1.15-1",
+  "libxcb1:amd64": "1.15-1",
+  "libxdmcp6:amd64": "1:1.1.2-3",
+  "libxext6:amd64": "2:1.3.4-1+b1",
+  "libxfixes3:amd64": "1:6.0.0-2",
+  "libxml2:amd64": "2.9.14+dfsg-1.3~deb12u6",
+  "libxmuu1:amd64": "2:1.1.3-3",
+  "libxpm4:amd64": "1:3.5.12-1.1+deb12u1",
+  "libxshmfence1:amd64": "1.3-1",
+  "libxxf86vm1:amd64": "1:1.1.4-1+b2",
+  "libxxhash0:amd64": "0.8.1-1",
+  "libyuv0:amd64": "0.0~git20230123.b2528b0-1",
+  "libz3-4:amd64": "4.8.12-3.1",
+  "libzstd1:amd64": "1.5.4+dfsg2-5",
+  "linux-libc-dev:amd64": "6.1.159-1",
+  "login": "1:4.13+dfsg1-1+deb12u2",
+  "logsave": "1.47.0-2+b2",
+  "make": "4.3-4.1",
+  "manpages": "6.03-2",
+  "manpages-dev": "6.03-2",
+  "mawk": "1.3.4.20200120-3.1",
+  "media-types": "10.0.0",
+  "mount": "2.38.1-5+deb12u3",
+  "ncurses-base": "6.4-4",
+  "ncurses-bin": "6.4-4",
+  "netbase": "6.4",
+  "nodejs": "20.20.0-1nodesource1",
+  "openssh-client": "1:9.2p1-2+deb12u7",
+  "openssl": "3.0.18-1~deb12u1",
+  "passwd": "1:4.13+dfsg1-1+deb12u2",
+  "patch": "2.7.6-7",
+  "perl": "5.36.0-7+deb12u3",
+  "perl-base": "5.36.0-7+deb12u3",
+  "perl-modules-5.36": "5.36.0-7+deb12u3",
+  "pinentry-curses": "1.2.1-1",
+  "procps": "2:4.0.2-3",
+  "publicsuffix": "20230209.2326-1",
+  "python3": "3.11.2-1+b1",
+  "python3-dev": "3.11.2-1+b1",
+  "python3-distutils": "3.11.2-3",
+  "python3-lib2to3": "3.11.2-3",
+  "python3-minimal": "3.11.2-1+b1",
+  "python3-pip": "23.0.1+dfsg-1",
+  "python3-pip-whl": "23.0.1+dfsg-1",
+  "python3-pkg-resources": "66.1.1-1+deb12u2",
+  "python3-setuptools": "66.1.1-1+deb12u2",
+  "python3-setuptools-whl": "66.1.1-1+deb12u2",
+  "python3-venv": "3.11.2-1+b1",
+  "python3-wheel": "0.38.4-2",
+  "python3.11": "3.11.2-6+deb12u6",
+  "python3.11-dev": "3.11.2-6+deb12u6",
+  "python3.11-minimal": "3.11.2-6+deb12u6",
+  "python3.11-venv": "3.11.2-6+deb12u6",
+  "readline-common": "8.2-1.3",
+  "rpcsvc-proto": "1.4.3-1",
+  "sed": "4.9-1",
+  "sudo": "1.9.13p3-1+deb12u3",
+  "sysvinit-utils": "3.06-4",
+  "tar": "1.34+dfsg-1.2+deb12u1",
+  "tzdata": "2025b-0+deb12u2",
+  "unzip": "6.0-28+deb12u1",
+  "usr-is-merged": "37~deb12u1",
+  "util-linux": "2.38.1-5+deb12u3",
+  "util-linux-extra": "2.38.1-5+deb12u3",
+  "xauth": "1:1.1.2-1",
+  "xz-utils": "5.4.1-1",
+  "zlib1g-dev:amd64": "1:1.2.13.dfsg-1",
+  "zlib1g:amd64": "1:1.2.13.dfsg-1"
+ },
+ "files": {
+  "listings": {
+   "/etc/oma": {
+    "proxy.env": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "1527ed1a6fdf253c693a41e71f3d50698ed17ae80e651bde514bc9927f323934",
+     "size": 348,
+     "uid": 0
+    }
+   },
+   "/etc/vfs-cli": {},
+   "/home/user": {
+    ".bash_logout": {
+     "gid": 1000,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "26882b79471c25f945c970f8233d8ce29d54e9d5eedcd2884f88affa84a18f56",
+     "size": 220,
+     "uid": 1000
+    },
+    ".bashrc": {
+     "gid": 1000,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "afae8986f549c6403410e029f9cce7983311512d04b1f02af02e4ce0af0dd2bf",
+     "size": 3526,
+     "uid": 1000
+    },
+    ".cache": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    ".local": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    ".mediakit": {
+     "gid": 1000,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 1000
+    },
+    ".profile": {
+     "gid": 1000,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "28b4a453b68dde64f814e94bab14ee651f4f162e15dd9920490aa1d49f05d2a4",
+     "size": 807,
+     "uid": 1000
+    }
+   },
+   "/opt": {
+    "auto-story": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "oma-pi-tools": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "pi-search": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "venv": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    }
+   },
+   "/opt/auto-story": {
+    "debian-packages.txt": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "520816117799737a26064d182127727eb9400499770a0094471bed775f62afcc",
+     "size": 8958,
+     "uid": 0
+    },
+    "models": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "prepare-whisper.py": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "49d7dbe7fb1d1e3d35ca0749b26974a9d9813f9edaef459f2395116c05484657",
+     "size": 2161,
+     "uid": 0
+    },
+    "python-packages.txt": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "9530d40b1609fc41cd2db4297eb517206fe91550926fafc8713eb3767710217f",
+     "size": 3245,
+     "uid": 0
+    },
+    "requirements.txt": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "47acf7367fd3a0c8ed02d4657f3b1a041ccd178bbedcdf54de4e24f9566dfb49",
+     "size": 91,
+     "uid": 0
+    },
+    "runtime-overlay": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "tool-sha256.txt": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "ea5ca4c8fe17bb813e42de5186c6e23374edbb1a79a6142476fe857512edbac7",
+     "size": 449,
+     "uid": 0
+    },
+    "venv": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "versions.json": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "a2da7970c02080fdd641189c2e7cd55dcc0592b76ef3a9ee5438c257e64d28ef",
+     "size": 1409,
+     "uid": 0
+    },
+    "vfs-cli-0.3.20": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "vfs-cli-0.3.21": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    },
+    "whisper-models.json": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "1401e27c9b31cf902b55408bbec60541349e49917b0c5573d4e0b2418623019a",
+     "size": 1717,
+     "uid": 0
+    },
+    "whisper-packages.txt": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "4e55d82af55ec732ce80f5bb1ae3a5dc82321c062bc93097c1e8a6804a4d0bab",
+     "size": 384,
+     "uid": 0
+    },
+    "whisper-requirements.txt": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o644",
+     "sha256": "8407c30f9d44dcc2d0188d520e3f138d8a5aadf9b5b595d3d7afb31149e99355",
+     "size": 127,
+     "uid": 0
+    },
+    "whisper-venv": {
+     "gid": 0,
+     "kind": "dir",
+     "mode": "0o755",
+     "uid": 0
+    }
+   },
+   "/opt/oma": null,
+   "/usr/local/bin": {
+    "auto-story-smoke": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "b049248011fe0c5cc0fc6dec25b8d19d032b5ed18a87adce6846c93b1e6ab280",
+     "size": 20676,
+     "uid": 0
+    },
+    "auto-story-transcribe": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "c7d4b3f817d7b5b71c805468622647ff3ac3d301e72ee3f6edd0b501f37d7139",
+     "size": 10830,
+     "uid": 0
+    },
+    "fd": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8",
+     "size": 4065136,
+     "uid": 0
+    },
+    "ffmpeg": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "fc07a1ce9bea22b8be0e2cf29d1860b529c2facf5cc411aa893ae9add5be53bb",
+     "size": 24820232,
+     "uid": 0
+    },
+    "ffprobe": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "e25884f943e02ae6d3e1209d387b32cb867582f010722aed9df0cf1985ef7512",
+     "size": 24615304,
+     "uid": 0
+    },
+    "mediakit-cli": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca",
+     "size": 7229592,
+     "uid": 0
+    },
+    "node": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327",
+     "size": 124836408,
+     "uid": 0
+    },
+    "ossutil": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "de09edc5649d00bf9495040b09c70a52174f7ae6b812097411f46def16d47c2f",
+     "size": 20983729,
+     "uid": 0
+    },
+    "pip": {
+     "gid": 0,
+     "kind": "link",
+     "mode": "0o777",
+     "target": "/usr/local/bin/pip3",
+     "uid": 0
+    },
+    "pip3": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "f9adbad08aeefad922d293ec307caaa14210d25e10726255b14378bdce5a7a4c",
+     "size": 60,
+     "uid": 0
+    },
+    "python": {
+     "gid": 0,
+     "kind": "link",
+     "mode": "0o777",
+     "target": "/usr/local/bin/python3",
+     "uid": 0
+    },
+    "python3": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "6248c8ec3dc434b32298aeeaf10bd444464805a349b4b43b15e030796eb33353",
+     "size": 53,
+     "uid": 0
+    },
+    "rg": {
+     "gid": 0,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2",
+     "size": 5445512,
+     "uid": 0
+    },
+    "vfs-cli": {
+     "gid": 50,
+     "kind": "file",
+     "mode": "0o755",
+     "sha256": "d4493416139db06f69cbaffd7edf80b64355fd98e77c7f904a06da737295e020",
+     "size": 8720568,
+     "uid": 501
+    }
+   }
+  },
+  "profile.d": {},
+  "sha256": {
+   "/opt/auto-story/runtime-overlay/smoke.py": "5cd58ff559a43aa47a6cd3f95b378c151a112e527dc15938c0a35d4eae0fb265",
+   "/opt/oma-pi-tools/package-lock.json": "7696df017c2279cefc3534719359f4bdd7f7c4a4ce2d854b19a73b7b1b4b6c9f",
+   "/opt/oma-pi-tools/smoke.mjs": "40316fef75b2bf333e6b786f81d76c4e381cc52ab93f2466320f3a9677ec085e",
+   "/root/.jupyter/start-up.sh": "e0b0d615dbdafea2f4a471bc689f6fbb40a7a01aa956843a89ff83e84657af9c",
+   "/usr/local/bin/auto-story-smoke": "b049248011fe0c5cc0fc6dec25b8d19d032b5ed18a87adce6846c93b1e6ab280"
+  },
+  "text": {
+   "/etc/oma/proxy.env": "HTTP_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890\nHTTPS_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890\nhttp_proxy=http://sing-box.oma-infra.svc.cluster.local:7890\nhttps_proxy=http://sing-box.oma-infra.svc.cluster.local:7890\nNO_PROXY=localhost,127.0.0.1,::1,.svc,.cluster.local\nno_proxy=localhost,127.0.0.1,::1,.svc,.cluster.local\n",
+   "/etc/pip.conf": "[global]\nindex-url = https://mirrors.aliyun.com/pypi/simple/\n",
+   "/opt/auto-story/requirements.txt": "# Gemini stays independent; Whisper is installed in a dedicated venv.\ngoogle-genai==2.22.0\n",
+   "/opt/auto-story/tool-sha256.txt": "d4493416139db06f69cbaffd7edf80b64355fd98e77c7f904a06da737295e020  /usr/local/bin/vfs-cli\n2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca  /usr/local/bin/mediakit-cli\nfc07a1ce9bea22b8be0e2cf29d1860b529c2facf5cc411aa893ae9add5be53bb  /usr/local/bin/ffmpeg\ne25884f943e02ae6d3e1209d387b32cb867582f010722aed9df0cf1985ef7512  /usr/local/bin/ffprobe\nde09edc5649d00bf9495040b09c70a52174f7ae6b812097411f46def16d47c2f  /usr/local/bin/ossutil\n",
+   "/opt/auto-story/versions.json": "{\n  \"imageVersion\": \"0.3.3\",\n  \"verifiedAt\": \"2026-09-09\",\n  \"platform\": \"linux/amd64\",\n  \"baseImage\": \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb\",\n  \"vfs-cli\": {\n    \"version\": \"v0.3.21\",\n    \"binarySha256\": \"d4493416139db06f69cbaffd7edf80b64355fd98e77c7f904a06da737295e020\"\n  },\n  \"ffmpeg\": {\n    \"version\": \"9.0.1\",\n    \"url\": \"https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz\",\n    \"sha256\": \"cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635\",\n    \"signature\": \"https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz.asc\",\n    \"signingKey\": \"https://ffmpeg.org/ffmpeg-devel.asc\",\n    \"signingFingerprint\": \"FCF986EA15E6E293A5644F10B4322F04D67658D8\"\n  },\n  \"google-genai\": {\n    \"version\": \"2.22.0\",\n    \"url\": \"https://pypi.org/project/google-genai/2.22.0/\"\n  },\n  \"mediakit-cli\": {\n    \"version\": \"0.2.1\",\n    \"url\": \"https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz\",\n    \"sha256\": \"8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987\",\n    \"binarySha256\": \"2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca\"\n  },\n  \"parentImage\": \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:f95eebfa2adb297747d4ccb17d1c151ddf73e82549b76abecdc703ce39843309\",\n  \"runtimeOverlay\": \"runtime-overlay/release.json\"\n}\n",
+   "/opt/auto-story/whisper-requirements.txt": "# Independent from the ACS scientific stack and the Gemini environment.\nfaster-whisper==1.2.1\nctranslate2==4.8.2\nnumpy==1.26.4\n",
+   "/opt/oma/manifest.json": null
+  }
+ },
+ "fonts": {
+  "count": 18,
+  "families": [
+   "DejaVu Sans",
+   "DejaVu Sans Mono",
+   "DejaVu Serif",
+   "Noto Sans CJK HK",
+   "Noto Sans CJK JP",
+   "Noto Sans CJK KR",
+   "Noto Sans CJK SC",
+   "Noto Sans CJK TC",
+   "Noto Sans Mono CJK HK",
+   "Noto Sans Mono CJK JP",
+   "Noto Sans Mono CJK KR",
+   "Noto Sans Mono CJK SC",
+   "Noto Sans Mono CJK TC",
+   "Noto Serif CJK HK",
+   "Noto Serif CJK JP",
+   "Noto Serif CJK KR",
+   "Noto Serif CJK SC",
+   "Noto Serif CJK TC"
+  ]
+ },
+ "homeOwnership": {
+  "entries": 754,
+  "notOwnedByUser": 742,
+  "notOwnedByUserByPrefix": {
+   ".cache": 1,
+   ".cache/npm": 740,
+   ".local": 1
+  }
+ },
+ "image": {
+  "architecture": "amd64",
+  "config": {
+   "Cmd": null,
+   "Entrypoint": [
+    "bash",
+    "/root/.jupyter/start-up.sh"
+   ],
+   "Env": [
+    "PATH=/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "PIP_DEFAULT_TIMEOUT=100",
+    "PIP_DISABLE_PIP_VERSION_CHECK=1",
+    "PIP_NO_CACHE_DIR=1",
+    "JUPYTER_CONFIG_PATH=/root/.jupyter",
+    "IPYTHON_CONFIG_PATH=/root/.ipython",
+    "SERVER_PATH=/root/.server",
+    "JAVA_VERSION=11",
+    "JAVA_HOME=/usr/lib/jvm/jdk-",
+    "IJAVA_VERSION=1.3.0",
+    "DENO_INSTALL=/opt/deno",
+    "DENO_VERSION=v2.4.0",
+    "R_VERSION=4.5.*",
+    "HOME=/home/user",
+    "WORKSPACE_DIR=/home/user/workspace",
+    "STORY_SEED_WORKSPACE=/home/user/workspace",
+    "MEDIAKIT_OUTPUT_PATH=/home/user/workspace/media",
+    "XDG_CACHE_HOME=/home/user/.cache",
+    "NPM_CONFIG_CACHE=/home/user/.cache/npm",
+    "NPM_CONFIG_PREFIX=/home/user/.local/npm",
+    "NODE_PATH=/home/user/.local/oma-node/node_modules",
+    "PIP_CACHE_DIR=/home/user/.cache/pip",
+    "PYTHONPATH=/home/user/.local/oma-python",
+    "TMPDIR=/tmp",
+    "MEDIAKIT_SURFACE=skill",
+    "MEDIAKIT_RUNTIME=pi-agent",
+    "HTTP_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890",
+    "HTTPS_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890",
+    "http_proxy=http://sing-box.oma-infra.svc.cluster.local:7890",
+    "https_proxy=http://sing-box.oma-infra.svc.cluster.local:7890",
+    "NO_PROXY=localhost,127.0.0.1,::1,.svc,.cluster.local",
+    "no_proxy=localhost,127.0.0.1,::1,.svc,.cluster.local"
+   ],
+   "Labels": {
+    "org.opencontainers.image.base.name": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:6f5eedfc6c0b68056c79d316b9676487a481eb28dcc2f035ffed28d8db591eb8",
+    "org.opencontainers.image.description": "E2B media sandbox with VFS, FFmpeg, Gemini, MediaKit and offline Whisper subtitles",
+    "org.opencontainers.image.revision": "7714959c04e408bcf5ca8fdb29329f6fa68af659",
+    "org.opencontainers.image.title": "auto-story-v2-runtime-overlay",
+    "org.opencontainers.image.version": "0.3.3",
+    "tech.welltop.pi-sdk.version": "0.83.0",
+    "tech.welltop.vfs-cli.version": "v0.3.19"
+   },
+   "User": "root",
+   "WorkingDir": "/root"
+  },
+  "id": "sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+  "layers": 65,
+  "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+  "repoDigests": [
+   "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d"
+  ],
+  "size": 1874914169
+ },
+ "loginEnv": {
+  "HOME": "/home/user",
+  "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games",
+  "PWD": "/home/user",
+  "SHLVL": "0"
+ },
+ "npm": {
+  "/opt/oma-pi-tools": {
+   "direct": {
+    "@earendil-works/pi-coding-agent": "0.83.0"
+   },
+   "lockedPackages": 140,
+   "pi-coding-agent": "0.83.0"
+  },
+  "/usr/lib/node_modules": {
+   "corepack": "0.34.1",
+   "ijavascript": "5.2.1",
+   "npm": "10.8.2"
+  },
+  "/usr/local/lib/node_modules": null
+ },
+ "python": {
+  "/opt/auto-story/venv/bin/python3": {
+   "executable": "/opt/auto-story/venv/bin/python3",
+   "packages": {
+    "aiohappyeyeballs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.6.1"
+    },
+    "aiohttp": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.12.14"
+    },
+    "aiosignal": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "annotated-types": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.8.0"
+    },
+    "anyio": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "4.15.1"
+    },
+    "argon2-cffi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.1.0"
+    },
+    "argon2-cffi-bindings": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.1.0"
+    },
+    "arrow": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "asttokens": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.1"
+    },
+    "attrs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.4.0"
+    },
+    "audioread": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.0"
+    },
+    "beautifulsoup4": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.13.4"
+    },
+    "bleach": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.3.0"
+    },
+    "blis": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.3"
+    },
+    "bokeh": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.7.3"
+    },
+    "catalogue": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.10"
+    },
+    "certifi": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2026.7.22"
+    },
+    "cffi": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.1.1"
+    },
+    "charset-normalizer": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "3.5.1"
+    },
+    "choreographer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.2.1"
+    },
+    "click": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.1"
+    },
+    "cloudpathlib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.23.0"
+    },
+    "comm": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.3"
+    },
+    "confection": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.5"
+    },
+    "contourpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.3"
+    },
+    "cryptography": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "50.0.1"
+    },
+    "cycler": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.12.1"
+    },
+    "cymem": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.13"
+    },
+    "debugpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.19"
+    },
+    "decorator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.2.1"
+    },
+    "defusedxml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.1"
+    },
+    "distro": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "1.9.0"
+    },
+    "e2b-charts": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.0.4"
+    },
+    "et-xmlfile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.0"
+    },
+    "executing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.2.1"
+    },
+    "fastjsonschema": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.21.2"
+    },
+    "fonttools": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.61.1"
+    },
+    "fqdn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.1"
+    },
+    "frozenlist": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.0"
+    },
+    "gensim": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.3.3"
+    },
+    "google-auth": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.58.0"
+    },
+    "google-genai": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.22.0"
+    },
+    "h11": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.16.0"
+    },
+    "httpcore": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "1.0.9"
+    },
+    "httpx": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.28.1"
+    },
+    "idna": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "3.19"
+    },
+    "imageio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.37.0"
+    },
+    "iniconfig": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.3.0"
+    },
+    "ipykernel": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.29.5"
+    },
+    "ipython": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "9.2.0"
+    },
+    "ipython-pygments-lexers": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.1"
+    },
+    "isoduration": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "20.11.0"
+    },
+    "jedi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.19.2"
+    },
+    "jinja2": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.6"
+    },
+    "joblib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.0"
+    },
+    "jsonpointer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.0"
+    },
+    "jsonschema": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.26.0"
+    },
+    "jsonschema-specifications": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.9.1"
+    },
+    "jupyter-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.8.0"
+    },
+    "jupyter-core": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.9.1"
+    },
+    "jupyter-events": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.12.0"
+    },
+    "jupyter-server": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.16.0"
+    },
+    "jupyter-server-terminals": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.5.4"
+    },
+    "jupyterlab-pygments": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.3.0"
+    },
+    "kaleido": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.0"
+    },
+    "kiwisolver": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.9"
+    },
+    "langcodes": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.5.1"
+    },
+    "lark": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.1"
+    },
+    "lazy-loader": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4"
+    },
+    "librosa": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.11.0"
+    },
+    "llvmlite": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.44.0"
+    },
+    "logistro": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "lxml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.2"
+    },
+    "markdown-it-py": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.0.0"
+    },
+    "markupsafe": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.3"
+    },
+    "matplotlib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.10.3"
+    },
+    "matplotlib-inline": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.1"
+    },
+    "mdurl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.2"
+    },
+    "mistune": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.2.0"
+    },
+    "mpmath": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.0"
+    },
+    "msgpack": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.2"
+    },
+    "multidict": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.7.0"
+    },
+    "murmurhash": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.15"
+    },
+    "narwhals": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.15.0"
+    },
+    "nbclient": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.10.4"
+    },
+    "nbconvert": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.16.6"
+    },
+    "nbformat": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.10.4"
+    },
+    "nest-asyncio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "networkx": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.6.1"
+    },
+    "nltk": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.9.1"
+    },
+    "numba": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.61.2"
+    },
+    "numpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.26.4"
+    },
+    "opencv-python": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.11.0.86"
+    },
+    "openpyxl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.5"
+    },
+    "orjson": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.10.18"
+    },
+    "overrides": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.7.0"
+    },
+    "packaging": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.0"
+    },
+    "pandas": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.2.3"
+    },
+    "pandocfilters": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.1"
+    },
+    "parso": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.8.5"
+    },
+    "pexpect": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.9.0"
+    },
+    "pillow": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "11.3.0"
+    },
+    "pip": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "23.0.1"
+    },
+    "platformdirs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.5.1"
+    },
+    "plotly": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.1"
+    },
+    "pluggy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "pooch": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.2"
+    },
+    "preshed": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.12"
+    },
+    "prometheus-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.24.1"
+    },
+    "prompt-toolkit": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.52"
+    },
+    "propcache": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.1"
+    },
+    "psutil": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.2.1"
+    },
+    "ptyprocess": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.0"
+    },
+    "pure-eval": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.3"
+    },
+    "pyasn1": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.6.4"
+    },
+    "pyasn1-modules": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.4.2"
+    },
+    "pycparser": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "3.0"
+    },
+    "pydantic": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.13.5"
+    },
+    "pydantic-core": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.46.5"
+    },
+    "pygments": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.19.2"
+    },
+    "pyparsing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.3.1"
+    },
+    "pytest": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.5"
+    },
+    "python-dateutil": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.9.0.post0"
+    },
+    "python-docx": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.2"
+    },
+    "python-json-logger": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.0.0"
+    },
+    "pytz": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.2"
+    },
+    "pyyaml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.3"
+    },
+    "pyzmq": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "27.1.0"
+    },
+    "referencing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.37.0"
+    },
+    "regex": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.15"
+    },
+    "requests": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.34.2"
+    },
+    "rfc3339-validator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.4"
+    },
+    "rfc3986-validator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.1"
+    },
+    "rfc3987-syntax": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.0"
+    },
+    "rich": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "14.2.0"
+    },
+    "rpds-py": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.30.0"
+    },
+    "scenedetect": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.7.1"
+    },
+    "scikit-image": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.25.2"
+    },
+    "scikit-learn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.1"
+    },
+    "scipy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.13.1"
+    },
+    "seaborn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.13.2"
+    },
+    "send2trash": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.1.0"
+    },
+    "setuptools": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "66.1.1"
+    },
+    "shellingham": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.4"
+    },
+    "simplejson": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.20.2"
+    },
+    "six": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.17.0"
+    },
+    "smart-open": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.5.0"
+    },
+    "sniffio": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "1.3.1"
+    },
+    "soundfile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.13.1"
+    },
+    "soupsieve": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.8.2"
+    },
+    "soxr": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.0"
+    },
+    "spacy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.8.2"
+    },
+    "spacy-legacy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.12"
+    },
+    "spacy-loggers": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.5"
+    },
+    "srsly": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.5.2"
+    },
+    "stack-data": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.6.3"
+    },
+    "sympy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.14.0"
+    },
+    "tenacity": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "9.1.4"
+    },
+    "terminado": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.18.1"
+    },
+    "textblob": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.19.0"
+    },
+    "thinc": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.10"
+    },
+    "threadpoolctl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.6.0"
+    },
+    "tifffile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.14"
+    },
+    "tinycss2": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "tornado": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.5.1"
+    },
+    "tqdm": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.67.1"
+    },
+    "traitlets": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.14.3"
+    },
+    "typer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.21.1"
+    },
+    "typer-slim": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.21.1"
+    },
+    "typing-extensions": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "4.16.0"
+    },
+    "typing-inspection": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.4.4"
+    },
+    "tzdata": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.3"
+    },
+    "uri-template": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.0"
+    },
+    "urllib3": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.7.0"
+    },
+    "wasabi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.3"
+    },
+    "wcwidth": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.14"
+    },
+    "weasel": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.3"
+    },
+    "webcolors": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.10.0"
+    },
+    "webencodings": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.5.1"
+    },
+    "websocket-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.9.0"
+    },
+    "websockets": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "16.1.1"
+    },
+    "wrapt": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "xarray": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.4.0"
+    },
+    "xlrd": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "xyzservices": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.11.0"
+    },
+    "yarl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.22.0"
+    }
+   },
+   "path": [
+    "/usr/lib/python311.zip",
+    "/usr/lib/python3.11",
+    "/usr/lib/python3.11/lib-dynload",
+    "/opt/auto-story/venv/lib/python3.11/site-packages",
+    "/opt/venv/lib/python3.11/site-packages"
+   ],
+   "pipFreeze": [
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.3",
+    "PyYAML==6.0.3",
+    "Pygments==2.19.2",
+    "Send2Trash==2.1.0",
+    "aiohappyeyeballs==2.6.1",
+    "aiohttp==3.12.14",
+    "aiosignal==1.4.0",
+    "annotated-types==0.8.0",
+    "anyio==4.15.1",
+    "argon2-cffi-bindings==25.1.0",
+    "argon2-cffi==25.1.0",
+    "arrow==1.4.0",
+    "asttokens==3.0.1",
+    "attrs==25.4.0",
+    "audioread==3.1.0",
+    "beautifulsoup4==4.13.4",
+    "bleach==6.3.0",
+    "blis==1.3.3",
+    "bokeh==3.7.3",
+    "catalogue==2.0.10",
+    "certifi==2026.7.22",
+    "cffi==2.1.1",
+    "charset-normalizer==3.5.1",
+    "choreographer==1.2.1",
+    "click==8.3.1",
+    "cloudpathlib==0.23.0",
+    "comm==0.2.3",
+    "confection==0.1.5",
+    "contourpy==1.3.3",
+    "cryptography==50.0.1",
+    "cycler==0.12.1",
+    "cymem==2.0.13",
+    "debugpy==1.8.19",
+    "decorator==5.2.1",
+    "defusedxml==0.7.1",
+    "distro==1.9.0",
+    "e2b-charts==0.0.4",
+    "et_xmlfile==2.0.0",
+    "executing==2.2.1",
+    "fastjsonschema==2.21.2",
+    "fonttools==4.61.1",
+    "fqdn==1.5.1",
+    "frozenlist==1.8.0",
+    "gensim==4.3.3",
+    "google-auth==2.58.0",
+    "google-genai==2.22.0",
+    "h11==0.16.0",
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "idna==3.19",
+    "imageio==2.37.0",
+    "iniconfig==2.3.0",
+    "ipykernel==6.29.5",
+    "ipython==9.2.0",
+    "ipython_pygments_lexers==1.1.1",
+    "isoduration==20.11.0",
+    "jedi==0.19.2",
+    "joblib==1.5.0",
+    "jsonpointer==3.0.0",
+    "jsonschema-specifications==2025.9.1",
+    "jsonschema==4.26.0",
+    "jupyter-events==0.12.0",
+    "jupyter_client==8.8.0",
+    "jupyter_core==5.9.1",
+    "jupyter_server==2.16.0",
+    "jupyter_server_terminals==0.5.4",
+    "jupyterlab_pygments==0.3.0",
+    "kaleido==1.0.0",
+    "kiwisolver==1.4.9",
+    "langcodes==3.5.1",
+    "lark==1.3.1",
+    "lazy_loader==0.4",
+    "librosa==0.11.0",
+    "llvmlite==0.44.0",
+    "logistro==2.0.1",
+    "lxml==6.0.2",
+    "markdown-it-py==4.0.0",
+    "matplotlib-inline==0.2.1",
+    "matplotlib==3.10.3",
+    "mdurl==0.1.2",
+    "mistune==3.2.0",
+    "mpmath==1.3.0",
+    "msgpack==1.1.2",
+    "multidict==6.7.0",
+    "murmurhash==1.0.15",
+    "narwhals==2.15.0",
+    "nbclient==0.10.4",
+    "nbconvert==7.16.6",
+    "nbformat==5.10.4",
+    "nest-asyncio==1.6.0",
+    "networkx==3.6.1",
+    "nltk==3.9.1",
+    "numba==0.61.2",
+    "numpy==1.26.4",
+    "opencv-python==4.11.0.86",
+    "openpyxl==3.1.5",
+    "orjson==3.10.18",
+    "overrides==7.7.0",
+    "packaging==25.0",
+    "pandas==2.2.3",
+    "pandocfilters==1.5.1",
+    "parso==0.8.5",
+    "pexpect==4.9.0",
+    "pillow==11.3.0",
+    "pip==23.0.1",
+    "platformdirs==4.5.1",
+    "plotly==6.0.1",
+    "pluggy==1.6.0",
+    "pooch==1.8.2",
+    "preshed==3.0.12",
+    "prometheus_client==0.24.1",
+    "prompt_toolkit==3.0.52",
+    "propcache==0.4.1",
+    "psutil==7.2.1",
+    "ptyprocess==0.7.0",
+    "pure_eval==0.2.3",
+    "pyasn1==0.6.4",
+    "pyasn1_modules==0.4.2",
+    "pycparser==3.0",
+    "pydantic==2.13.5",
+    "pydantic_core==2.46.5",
+    "pyparsing==3.3.1",
+    "pytest==8.3.5",
+    "python-dateutil==2.9.0.post0",
+    "python-docx==1.1.2",
+    "python-json-logger==4.0.0",
+    "pytz==2025.2",
+    "pyzmq==27.1.0",
+    "referencing==0.37.0",
+    "regex==2026.1.15",
+    "requests==2.34.2",
+    "rfc3339-validator==0.1.4",
+    "rfc3986-validator==0.1.1",
+    "rfc3987-syntax==1.1.0",
+    "rich==14.2.0",
+    "rpds-py==0.30.0",
+    "scenedetect==0.7.1",
+    "scikit-image==0.25.2",
+    "scikit-learn==1.6.1",
+    "scipy==1.13.1",
+    "seaborn==0.13.2",
+    "setuptools==66.1.1",
+    "shellingham==1.5.4",
+    "simplejson==3.20.2",
+    "six==1.17.0",
+    "smart_open==7.5.0",
+    "sniffio==1.3.1",
+    "soundfile==0.13.1",
+    "soupsieve==2.8.2",
+    "soxr==1.0.0",
+    "spacy-legacy==3.0.12",
+    "spacy-loggers==1.0.5",
+    "spacy==3.8.2",
+    "srsly==2.5.2",
+    "stack-data==0.6.3",
+    "sympy==1.14.0",
+    "tenacity==9.1.4",
+    "terminado==0.18.1",
+    "textblob==0.19.0",
+    "thinc==8.3.10",
+    "threadpoolctl==3.6.0",
+    "tifffile==2026.1.14",
+    "tinycss2==1.4.0",
+    "tornado==6.5.1",
+    "tqdm==4.67.1",
+    "traitlets==5.14.3",
+    "typer-slim==0.21.1",
+    "typer==0.21.1",
+    "typing-inspection==0.4.4",
+    "typing_extensions==4.16.0",
+    "tzdata==2025.3",
+    "uri-template==1.3.0",
+    "urllib3==2.7.0",
+    "wasabi==1.1.3",
+    "wcwidth==0.2.14",
+    "weasel==0.4.3",
+    "webcolors==25.10.0",
+    "webencodings==0.5.1",
+    "websocket-client==1.9.0",
+    "websockets==16.1.1",
+    "wrapt==2.0.1",
+    "xarray==2025.4.0",
+    "xlrd==2.0.1",
+    "xyzservices==2025.11.0",
+    "yarl==1.22.0"
+   ],
+   "prefix": "/opt/auto-story/venv",
+   "realpath": "/usr/bin/python3.11",
+   "version": "3.11.2"
+  },
+  "/opt/auto-story/whisper-venv/bin/python3": {
+   "executable": "/opt/auto-story/whisper-venv/bin/python3",
+   "packages": {
+    "anyio": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "4.15.1"
+    },
+    "av": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "18.1.0"
+    },
+    "certifi": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "2026.7.22"
+    },
+    "click": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "8.5.0"
+    },
+    "ctranslate2": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "4.8.2"
+    },
+    "faster-whisper": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "1.2.1"
+    },
+    "filelock": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "3.32.7"
+    },
+    "flatbuffers": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "25.12.19"
+    },
+    "fsspec": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "2026.7.0"
+    },
+    "h11": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "0.16.0"
+    },
+    "hf-xet": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "httpcore": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "1.0.9"
+    },
+    "httpx": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "0.28.1"
+    },
+    "huggingface-hub": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "1.31.0"
+    },
+    "idna": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "3.19"
+    },
+    "numpy": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "1.26.4"
+    },
+    "onnxruntime": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "1.30.0"
+    },
+    "packaging": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "26.3"
+    },
+    "pip": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "23.0.1"
+    },
+    "protobuf": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "7.36.1"
+    },
+    "pyyaml": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "6.0.3"
+    },
+    "setuptools": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "66.1.1"
+    },
+    "tokenizers": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "0.23.2"
+    },
+    "tqdm": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "4.70.1"
+    },
+    "typing-extensions": {
+     "location": "/opt/auto-story/whisper-venv/lib/python3.11/site-packages",
+     "version": "4.16.0"
+    }
+   },
+   "path": [
+    "/usr/lib/python311.zip",
+    "/usr/lib/python3.11",
+    "/usr/lib/python3.11/lib-dynload",
+    "/opt/auto-story/whisper-venv/lib/python3.11/site-packages"
+   ],
+   "pipFreeze": [
+    "PyYAML==6.0.3",
+    "anyio==4.15.1",
+    "av==18.1.0",
+    "certifi==2026.7.22",
+    "click==8.5.0",
+    "ctranslate2==4.8.2",
+    "faster-whisper==1.2.1",
+    "filelock==3.32.7",
+    "flatbuffers==25.12.19",
+    "fsspec==2026.7.0",
+    "h11==0.16.0",
+    "hf-xet==1.6.0",
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "huggingface_hub==1.31.0",
+    "idna==3.19",
+    "numpy==1.26.4",
+    "onnxruntime==1.30.0",
+    "packaging==26.3",
+    "pip==23.0.1",
+    "protobuf==7.36.1",
+    "setuptools==66.1.1",
+    "tokenizers==0.23.2",
+    "tqdm==4.70.1",
+    "typing_extensions==4.16.0"
+   ],
+   "prefix": "/opt/auto-story/whisper-venv",
+   "realpath": "/usr/bin/python3.11",
+   "version": "3.11.2"
+  },
+  "/opt/venv/bin/python3": {
+   "executable": "/opt/venv/bin/python3",
+   "packages": {
+    "aiohappyeyeballs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.6.1"
+    },
+    "aiohttp": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.12.14"
+    },
+    "aiosignal": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "annotated-types": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.0"
+    },
+    "anyio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.12.1"
+    },
+    "argon2-cffi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.1.0"
+    },
+    "argon2-cffi-bindings": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.1.0"
+    },
+    "arrow": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "asttokens": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.1"
+    },
+    "attrs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.4.0"
+    },
+    "audioread": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.0"
+    },
+    "beautifulsoup4": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.13.4"
+    },
+    "bleach": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.3.0"
+    },
+    "blis": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.3"
+    },
+    "bokeh": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.7.3"
+    },
+    "catalogue": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.10"
+    },
+    "certifi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.4"
+    },
+    "cffi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.0"
+    },
+    "charset-normalizer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.4.4"
+    },
+    "choreographer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.2.1"
+    },
+    "click": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.1"
+    },
+    "cloudpathlib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.23.0"
+    },
+    "comm": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.3"
+    },
+    "confection": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.5"
+    },
+    "contourpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.3"
+    },
+    "cycler": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.12.1"
+    },
+    "cymem": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.13"
+    },
+    "debugpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.19"
+    },
+    "decorator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.2.1"
+    },
+    "defusedxml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.1"
+    },
+    "e2b-charts": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.0.4"
+    },
+    "et-xmlfile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.0"
+    },
+    "executing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.2.1"
+    },
+    "fastjsonschema": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.21.2"
+    },
+    "fonttools": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.61.1"
+    },
+    "fqdn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.1"
+    },
+    "frozenlist": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.0"
+    },
+    "gensim": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.3.3"
+    },
+    "idna": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.11"
+    },
+    "imageio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.37.0"
+    },
+    "iniconfig": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.3.0"
+    },
+    "ipykernel": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.29.5"
+    },
+    "ipython": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "9.2.0"
+    },
+    "ipython-pygments-lexers": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.1"
+    },
+    "isoduration": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "20.11.0"
+    },
+    "jedi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.19.2"
+    },
+    "jinja2": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.6"
+    },
+    "joblib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.0"
+    },
+    "jsonpointer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.0"
+    },
+    "jsonschema": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.26.0"
+    },
+    "jsonschema-specifications": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.9.1"
+    },
+    "jupyter-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.8.0"
+    },
+    "jupyter-core": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.9.1"
+    },
+    "jupyter-events": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.12.0"
+    },
+    "jupyter-server": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.16.0"
+    },
+    "jupyter-server-terminals": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.5.4"
+    },
+    "jupyterlab-pygments": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.3.0"
+    },
+    "kaleido": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.0"
+    },
+    "kiwisolver": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.9"
+    },
+    "langcodes": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.5.1"
+    },
+    "lark": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.1"
+    },
+    "lazy-loader": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4"
+    },
+    "librosa": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.11.0"
+    },
+    "llvmlite": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.44.0"
+    },
+    "logistro": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "lxml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.2"
+    },
+    "markdown-it-py": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.0.0"
+    },
+    "markupsafe": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.3"
+    },
+    "matplotlib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.10.3"
+    },
+    "matplotlib-inline": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.1"
+    },
+    "mdurl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.2"
+    },
+    "mistune": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.2.0"
+    },
+    "mpmath": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.0"
+    },
+    "msgpack": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.2"
+    },
+    "multidict": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.7.0"
+    },
+    "murmurhash": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.15"
+    },
+    "narwhals": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.15.0"
+    },
+    "nbclient": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.10.4"
+    },
+    "nbconvert": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.16.6"
+    },
+    "nbformat": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.10.4"
+    },
+    "nest-asyncio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "networkx": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.6.1"
+    },
+    "nltk": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.9.1"
+    },
+    "numba": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.61.2"
+    },
+    "numpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.26.4"
+    },
+    "opencv-python": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.11.0.86"
+    },
+    "openpyxl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.5"
+    },
+    "orjson": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.10.18"
+    },
+    "overrides": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.7.0"
+    },
+    "packaging": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.0"
+    },
+    "pandas": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.2.3"
+    },
+    "pandocfilters": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.1"
+    },
+    "parso": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.8.5"
+    },
+    "pexpect": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.9.0"
+    },
+    "pillow": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "11.3.0"
+    },
+    "pip": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "23.0.1"
+    },
+    "platformdirs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.5.1"
+    },
+    "plotly": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.1"
+    },
+    "pluggy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "pooch": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.2"
+    },
+    "preshed": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.12"
+    },
+    "prometheus-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.24.1"
+    },
+    "prompt-toolkit": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.52"
+    },
+    "propcache": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.1"
+    },
+    "psutil": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.2.1"
+    },
+    "ptyprocess": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.0"
+    },
+    "pure-eval": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.3"
+    },
+    "pycparser": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.23"
+    },
+    "pydantic": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.12.5"
+    },
+    "pydantic-core": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.41.5"
+    },
+    "pygments": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.19.2"
+    },
+    "pyparsing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.3.1"
+    },
+    "pytest": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.5"
+    },
+    "python-dateutil": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.9.0.post0"
+    },
+    "python-docx": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.2"
+    },
+    "python-json-logger": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.0.0"
+    },
+    "pytz": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.2"
+    },
+    "pyyaml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.3"
+    },
+    "pyzmq": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "27.1.0"
+    },
+    "referencing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.37.0"
+    },
+    "regex": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.15"
+    },
+    "requests": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.32.4"
+    },
+    "rfc3339-validator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.4"
+    },
+    "rfc3986-validator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.1"
+    },
+    "rfc3987-syntax": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.0"
+    },
+    "rich": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "14.2.0"
+    },
+    "rpds-py": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.30.0"
+    },
+    "scikit-image": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.25.2"
+    },
+    "scikit-learn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.1"
+    },
+    "scipy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.13.1"
+    },
+    "seaborn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.13.2"
+    },
+    "send2trash": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.1.0"
+    },
+    "setuptools": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "66.1.1"
+    },
+    "shellingham": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.4"
+    },
+    "simplejson": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.20.2"
+    },
+    "six": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.17.0"
+    },
+    "smart-open": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.5.0"
+    },
+    "soundfile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.13.1"
+    },
+    "soupsieve": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.8.2"
+    },
+    "soxr": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.0"
+    },
+    "spacy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.8.2"
+    },
+    "spacy-legacy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.12"
+    },
+    "spacy-loggers": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.5"
+    },
+    "srsly": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.5.2"
+    },
+    "stack-data": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.6.3"
+    },
+    "sympy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.14.0"
+    },
+    "terminado": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.18.1"
+    },
+    "textblob": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.19.0"
+    },
+    "thinc": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.10"
+    },
+    "threadpoolctl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.6.0"
+    },
+    "tifffile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.14"
+    },
+    "tinycss2": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "tornado": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.5.1"
+    },
+    "tqdm": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.67.1"
+    },
+    "traitlets": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.14.3"
+    },
+    "typer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.21.1"
+    },
+    "typer-slim": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.21.1"
+    },
+    "typing-extensions": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.15.0"
+    },
+    "typing-inspection": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.2"
+    },
+    "tzdata": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.3"
+    },
+    "uri-template": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.0"
+    },
+    "urllib3": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.5.0"
+    },
+    "wasabi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.3"
+    },
+    "wcwidth": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.14"
+    },
+    "weasel": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.3"
+    },
+    "webcolors": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.10.0"
+    },
+    "webencodings": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.5.1"
+    },
+    "websocket-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.9.0"
+    },
+    "wrapt": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "xarray": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.4.0"
+    },
+    "xlrd": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "xyzservices": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.11.0"
+    },
+    "yarl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.22.0"
+    }
+   },
+   "path": [
+    "/usr/lib/python311.zip",
+    "/usr/lib/python3.11",
+    "/usr/lib/python3.11/lib-dynload",
+    "/opt/venv/lib/python3.11/site-packages"
+   ],
+   "pipFreeze": [
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.3",
+    "PyYAML==6.0.3",
+    "Pygments==2.19.2",
+    "Send2Trash==2.1.0",
+    "aiohappyeyeballs==2.6.1",
+    "aiohttp==3.12.14",
+    "aiosignal==1.4.0",
+    "annotated-types==0.7.0",
+    "anyio==4.12.1",
+    "argon2-cffi-bindings==25.1.0",
+    "argon2-cffi==25.1.0",
+    "arrow==1.4.0",
+    "asttokens==3.0.1",
+    "attrs==25.4.0",
+    "audioread==3.1.0",
+    "beautifulsoup4==4.13.4",
+    "bleach==6.3.0",
+    "blis==1.3.3",
+    "bokeh==3.7.3",
+    "catalogue==2.0.10",
+    "certifi==2026.1.4",
+    "cffi==2.0.0",
+    "charset-normalizer==3.4.4",
+    "choreographer==1.2.1",
+    "click==8.3.1",
+    "cloudpathlib==0.23.0",
+    "comm==0.2.3",
+    "confection==0.1.5",
+    "contourpy==1.3.3",
+    "cycler==0.12.1",
+    "cymem==2.0.13",
+    "debugpy==1.8.19",
+    "decorator==5.2.1",
+    "defusedxml==0.7.1",
+    "e2b-charts==0.0.4",
+    "et_xmlfile==2.0.0",
+    "executing==2.2.1",
+    "fastjsonschema==2.21.2",
+    "fonttools==4.61.1",
+    "fqdn==1.5.1",
+    "frozenlist==1.8.0",
+    "gensim==4.3.3",
+    "idna==3.11",
+    "imageio==2.37.0",
+    "iniconfig==2.3.0",
+    "ipykernel==6.29.5",
+    "ipython==9.2.0",
+    "ipython_pygments_lexers==1.1.1",
+    "isoduration==20.11.0",
+    "jedi==0.19.2",
+    "joblib==1.5.0",
+    "jsonpointer==3.0.0",
+    "jsonschema-specifications==2025.9.1",
+    "jsonschema==4.26.0",
+    "jupyter-events==0.12.0",
+    "jupyter_client==8.8.0",
+    "jupyter_core==5.9.1",
+    "jupyter_server==2.16.0",
+    "jupyter_server_terminals==0.5.4",
+    "jupyterlab_pygments==0.3.0",
+    "kaleido==1.0.0",
+    "kiwisolver==1.4.9",
+    "langcodes==3.5.1",
+    "lark==1.3.1",
+    "lazy_loader==0.4",
+    "librosa==0.11.0",
+    "llvmlite==0.44.0",
+    "logistro==2.0.1",
+    "lxml==6.0.2",
+    "markdown-it-py==4.0.0",
+    "matplotlib-inline==0.2.1",
+    "matplotlib==3.10.3",
+    "mdurl==0.1.2",
+    "mistune==3.2.0",
+    "mpmath==1.3.0",
+    "msgpack==1.1.2",
+    "multidict==6.7.0",
+    "murmurhash==1.0.15",
+    "narwhals==2.15.0",
+    "nbclient==0.10.4",
+    "nbconvert==7.16.6",
+    "nbformat==5.10.4",
+    "nest-asyncio==1.6.0",
+    "networkx==3.6.1",
+    "nltk==3.9.1",
+    "numba==0.61.2",
+    "numpy==1.26.4",
+    "opencv-python==4.11.0.86",
+    "openpyxl==3.1.5",
+    "orjson==3.10.18",
+    "overrides==7.7.0",
+    "packaging==25.0",
+    "pandas==2.2.3",
+    "pandocfilters==1.5.1",
+    "parso==0.8.5",
+    "pexpect==4.9.0",
+    "pillow==11.3.0",
+    "pip==23.0.1",
+    "platformdirs==4.5.1",
+    "plotly==6.0.1",
+    "pluggy==1.6.0",
+    "pooch==1.8.2",
+    "preshed==3.0.12",
+    "prometheus_client==0.24.1",
+    "prompt_toolkit==3.0.52",
+    "propcache==0.4.1",
+    "psutil==7.2.1",
+    "ptyprocess==0.7.0",
+    "pure_eval==0.2.3",
+    "pycparser==2.23",
+    "pydantic==2.12.5",
+    "pydantic_core==2.41.5",
+    "pyparsing==3.3.1",
+    "pytest==8.3.5",
+    "python-dateutil==2.9.0.post0",
+    "python-docx==1.1.2",
+    "python-json-logger==4.0.0",
+    "pytz==2025.2",
+    "pyzmq==27.1.0",
+    "referencing==0.37.0",
+    "regex==2026.1.15",
+    "requests==2.32.4",
+    "rfc3339-validator==0.1.4",
+    "rfc3986-validator==0.1.1",
+    "rfc3987-syntax==1.1.0",
+    "rich==14.2.0",
+    "rpds-py==0.30.0",
+    "scikit-image==0.25.2",
+    "scikit-learn==1.6.1",
+    "scipy==1.13.1",
+    "seaborn==0.13.2",
+    "setuptools==66.1.1",
+    "shellingham==1.5.4",
+    "simplejson==3.20.2",
+    "six==1.17.0",
+    "smart_open==7.5.0",
+    "soundfile==0.13.1",
+    "soupsieve==2.8.2",
+    "soxr==1.0.0",
+    "spacy-legacy==3.0.12",
+    "spacy-loggers==1.0.5",
+    "spacy==3.8.2",
+    "srsly==2.5.2",
+    "stack-data==0.6.3",
+    "sympy==1.14.0",
+    "terminado==0.18.1",
+    "textblob==0.19.0",
+    "thinc==8.3.10",
+    "threadpoolctl==3.6.0",
+    "tifffile==2026.1.14",
+    "tinycss2==1.4.0",
+    "tornado==6.5.1",
+    "tqdm==4.67.1",
+    "traitlets==5.14.3",
+    "typer-slim==0.21.1",
+    "typer==0.21.1",
+    "typing-inspection==0.4.2",
+    "typing_extensions==4.15.0",
+    "tzdata==2025.3",
+    "uri-template==1.3.0",
+    "urllib3==2.5.0",
+    "wasabi==1.1.3",
+    "wcwidth==0.2.14",
+    "weasel==0.4.3",
+    "webcolors==25.10.0",
+    "webencodings==0.5.1",
+    "websocket-client==1.9.0",
+    "wrapt==2.0.1",
+    "xarray==2025.4.0",
+    "xlrd==2.0.1",
+    "xyzservices==2025.11.0",
+    "yarl==1.22.0"
+   ],
+   "prefix": "/opt/venv",
+   "realpath": "/usr/bin/python3.11",
+   "version": "3.11.2"
+  },
+  "/usr/bin/python3": {
+   "executable": "/usr/bin/python3",
+   "packages": {
+    "pip": {
+     "location": "/usr/lib/python3/dist-packages",
+     "version": "23.0.1"
+    },
+    "setuptools": {
+     "location": "/usr/lib/python3/dist-packages",
+     "version": "66.1.1"
+    },
+    "wheel": {
+     "location": "/usr/lib/python3/dist-packages",
+     "version": "0.38.4"
+    }
+   },
+   "path": [
+    "/usr/lib/python311.zip",
+    "/usr/lib/python3.11",
+    "/usr/lib/python3.11/lib-dynload",
+    "/usr/local/lib/python3.11/dist-packages",
+    "/usr/lib/python3/dist-packages"
+   ],
+   "pipFreeze": [
+    "pip==23.0.1",
+    "setuptools==66.1.1",
+    "wheel==0.38.4"
+   ],
+   "prefix": "/usr",
+   "realpath": "/usr/bin/python3.11",
+   "version": "3.11.2"
+  },
+  "/usr/local/bin/python3": {
+   "executable": "/opt/auto-story/venv/bin/python3",
+   "packages": {
+    "aiohappyeyeballs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.6.1"
+    },
+    "aiohttp": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.12.14"
+    },
+    "aiosignal": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "annotated-types": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.8.0"
+    },
+    "anyio": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "4.15.1"
+    },
+    "argon2-cffi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.1.0"
+    },
+    "argon2-cffi-bindings": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.1.0"
+    },
+    "arrow": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "asttokens": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.1"
+    },
+    "attrs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.4.0"
+    },
+    "audioread": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.0"
+    },
+    "beautifulsoup4": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.13.4"
+    },
+    "bleach": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.3.0"
+    },
+    "blis": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.3"
+    },
+    "bokeh": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.7.3"
+    },
+    "catalogue": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.10"
+    },
+    "certifi": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2026.7.22"
+    },
+    "cffi": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.1.1"
+    },
+    "charset-normalizer": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "3.5.1"
+    },
+    "choreographer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.2.1"
+    },
+    "click": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.1"
+    },
+    "cloudpathlib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.23.0"
+    },
+    "comm": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.3"
+    },
+    "confection": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.5"
+    },
+    "contourpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.3"
+    },
+    "cryptography": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "50.0.1"
+    },
+    "cycler": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.12.1"
+    },
+    "cymem": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.13"
+    },
+    "debugpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.19"
+    },
+    "decorator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.2.1"
+    },
+    "defusedxml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.1"
+    },
+    "distro": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "1.9.0"
+    },
+    "e2b-charts": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.0.4"
+    },
+    "et-xmlfile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.0"
+    },
+    "executing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.2.1"
+    },
+    "fastjsonschema": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.21.2"
+    },
+    "fonttools": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.61.1"
+    },
+    "fqdn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.1"
+    },
+    "frozenlist": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.0"
+    },
+    "gensim": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.3.3"
+    },
+    "google-auth": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.58.0"
+    },
+    "google-genai": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.22.0"
+    },
+    "h11": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.16.0"
+    },
+    "httpcore": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "1.0.9"
+    },
+    "httpx": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.28.1"
+    },
+    "idna": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "3.19"
+    },
+    "imageio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.37.0"
+    },
+    "iniconfig": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.3.0"
+    },
+    "ipykernel": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.29.5"
+    },
+    "ipython": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "9.2.0"
+    },
+    "ipython-pygments-lexers": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.1"
+    },
+    "isoduration": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "20.11.0"
+    },
+    "jedi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.19.2"
+    },
+    "jinja2": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.6"
+    },
+    "joblib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.0"
+    },
+    "jsonpointer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.0"
+    },
+    "jsonschema": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.26.0"
+    },
+    "jsonschema-specifications": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.9.1"
+    },
+    "jupyter-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.8.0"
+    },
+    "jupyter-core": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.9.1"
+    },
+    "jupyter-events": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.12.0"
+    },
+    "jupyter-server": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.16.0"
+    },
+    "jupyter-server-terminals": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.5.4"
+    },
+    "jupyterlab-pygments": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.3.0"
+    },
+    "kaleido": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.0"
+    },
+    "kiwisolver": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.9"
+    },
+    "langcodes": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.5.1"
+    },
+    "lark": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.1"
+    },
+    "lazy-loader": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4"
+    },
+    "librosa": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.11.0"
+    },
+    "llvmlite": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.44.0"
+    },
+    "logistro": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "lxml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.2"
+    },
+    "markdown-it-py": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.0.0"
+    },
+    "markupsafe": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.3"
+    },
+    "matplotlib": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.10.3"
+    },
+    "matplotlib-inline": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.1"
+    },
+    "mdurl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.2"
+    },
+    "mistune": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.2.0"
+    },
+    "mpmath": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.0"
+    },
+    "msgpack": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.2"
+    },
+    "multidict": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.7.0"
+    },
+    "murmurhash": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.15"
+    },
+    "narwhals": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.15.0"
+    },
+    "nbclient": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.10.4"
+    },
+    "nbconvert": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.16.6"
+    },
+    "nbformat": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.10.4"
+    },
+    "nest-asyncio": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "networkx": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.6.1"
+    },
+    "nltk": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.9.1"
+    },
+    "numba": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.61.2"
+    },
+    "numpy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.26.4"
+    },
+    "opencv-python": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.11.0.86"
+    },
+    "openpyxl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.1.5"
+    },
+    "orjson": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.10.18"
+    },
+    "overrides": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.7.0"
+    },
+    "packaging": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.0"
+    },
+    "pandas": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.2.3"
+    },
+    "pandocfilters": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.1"
+    },
+    "parso": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.8.5"
+    },
+    "pexpect": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.9.0"
+    },
+    "pillow": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "11.3.0"
+    },
+    "pip": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "23.0.1"
+    },
+    "platformdirs": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.5.1"
+    },
+    "plotly": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.1"
+    },
+    "pluggy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.0"
+    },
+    "pooch": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.8.2"
+    },
+    "preshed": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.12"
+    },
+    "prometheus-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.24.1"
+    },
+    "prompt-toolkit": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.52"
+    },
+    "propcache": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.1"
+    },
+    "psutil": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.2.1"
+    },
+    "ptyprocess": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.7.0"
+    },
+    "pure-eval": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.3"
+    },
+    "pyasn1": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.6.4"
+    },
+    "pyasn1-modules": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.4.2"
+    },
+    "pycparser": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "3.0"
+    },
+    "pydantic": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.13.5"
+    },
+    "pydantic-core": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.46.5"
+    },
+    "pygments": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.19.2"
+    },
+    "pyparsing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.3.1"
+    },
+    "pytest": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.5"
+    },
+    "python-dateutil": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.9.0.post0"
+    },
+    "python-docx": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.2"
+    },
+    "python-json-logger": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.0.0"
+    },
+    "pytz": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.2"
+    },
+    "pyyaml": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.0.3"
+    },
+    "pyzmq": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "27.1.0"
+    },
+    "referencing": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.37.0"
+    },
+    "regex": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.15"
+    },
+    "requests": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.34.2"
+    },
+    "rfc3339-validator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.4"
+    },
+    "rfc3986-validator": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.1.1"
+    },
+    "rfc3987-syntax": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.0"
+    },
+    "rich": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "14.2.0"
+    },
+    "rpds-py": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.30.0"
+    },
+    "scenedetect": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.7.1"
+    },
+    "scikit-image": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.25.2"
+    },
+    "scikit-learn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.6.1"
+    },
+    "scipy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.13.1"
+    },
+    "seaborn": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.13.2"
+    },
+    "send2trash": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.1.0"
+    },
+    "setuptools": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "66.1.1"
+    },
+    "shellingham": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.5.4"
+    },
+    "simplejson": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.20.2"
+    },
+    "six": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.17.0"
+    },
+    "smart-open": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "7.5.0"
+    },
+    "sniffio": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "1.3.1"
+    },
+    "soundfile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.13.1"
+    },
+    "soupsieve": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.8.2"
+    },
+    "soxr": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.0"
+    },
+    "spacy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.8.2"
+    },
+    "spacy-legacy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.0.12"
+    },
+    "spacy-loggers": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.0.5"
+    },
+    "srsly": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.5.2"
+    },
+    "stack-data": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.6.3"
+    },
+    "sympy": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.14.0"
+    },
+    "tenacity": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "9.1.4"
+    },
+    "terminado": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.18.1"
+    },
+    "textblob": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.19.0"
+    },
+    "thinc": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "8.3.10"
+    },
+    "threadpoolctl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "3.6.0"
+    },
+    "tifffile": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2026.1.14"
+    },
+    "tinycss2": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.4.0"
+    },
+    "tornado": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "6.5.1"
+    },
+    "tqdm": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "4.67.1"
+    },
+    "traitlets": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "5.14.3"
+    },
+    "typer": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.21.1"
+    },
+    "typer-slim": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.21.1"
+    },
+    "typing-extensions": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "4.16.0"
+    },
+    "typing-inspection": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "0.4.4"
+    },
+    "tzdata": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.3"
+    },
+    "uri-template": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.3.0"
+    },
+    "urllib3": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "2.7.0"
+    },
+    "wasabi": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.1.3"
+    },
+    "wcwidth": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.2.14"
+    },
+    "weasel": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.4.3"
+    },
+    "webcolors": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "25.10.0"
+    },
+    "webencodings": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "0.5.1"
+    },
+    "websocket-client": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.9.0"
+    },
+    "websockets": {
+     "location": "/opt/auto-story/venv/lib/python3.11/site-packages",
+     "version": "16.1.1"
+    },
+    "wrapt": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "xarray": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.4.0"
+    },
+    "xlrd": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2.0.1"
+    },
+    "xyzservices": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "2025.11.0"
+    },
+    "yarl": {
+     "location": "/opt/venv/lib/python3.11/site-packages",
+     "version": "1.22.0"
+    }
+   },
+   "path": [
+    "/usr/lib/python311.zip",
+    "/usr/lib/python3.11",
+    "/usr/lib/python3.11/lib-dynload",
+    "/opt/auto-story/venv/lib/python3.11/site-packages",
+    "/opt/venv/lib/python3.11/site-packages"
+   ],
+   "pipFreeze": [
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.3",
+    "PyYAML==6.0.3",
+    "Pygments==2.19.2",
+    "Send2Trash==2.1.0",
+    "aiohappyeyeballs==2.6.1",
+    "aiohttp==3.12.14",
+    "aiosignal==1.4.0",
+    "annotated-types==0.8.0",
+    "anyio==4.15.1",
+    "argon2-cffi-bindings==25.1.0",
+    "argon2-cffi==25.1.0",
+    "arrow==1.4.0",
+    "asttokens==3.0.1",
+    "attrs==25.4.0",
+    "audioread==3.1.0",
+    "beautifulsoup4==4.13.4",
+    "bleach==6.3.0",
+    "blis==1.3.3",
+    "bokeh==3.7.3",
+    "catalogue==2.0.10",
+    "certifi==2026.7.22",
+    "cffi==2.1.1",
+    "charset-normalizer==3.5.1",
+    "choreographer==1.2.1",
+    "click==8.3.1",
+    "cloudpathlib==0.23.0",
+    "comm==0.2.3",
+    "confection==0.1.5",
+    "contourpy==1.3.3",
+    "cryptography==50.0.1",
+    "cycler==0.12.1",
+    "cymem==2.0.13",
+    "debugpy==1.8.19",
+    "decorator==5.2.1",
+    "defusedxml==0.7.1",
+    "distro==1.9.0",
+    "e2b-charts==0.0.4",
+    "et_xmlfile==2.0.0",
+    "executing==2.2.1",
+    "fastjsonschema==2.21.2",
+    "fonttools==4.61.1",
+    "fqdn==1.5.1",
+    "frozenlist==1.8.0",
+    "gensim==4.3.3",
+    "google-auth==2.58.0",
+    "google-genai==2.22.0",
+    "h11==0.16.0",
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "idna==3.19",
+    "imageio==2.37.0",
+    "iniconfig==2.3.0",
+    "ipykernel==6.29.5",
+    "ipython==9.2.0",
+    "ipython_pygments_lexers==1.1.1",
+    "isoduration==20.11.0",
+    "jedi==0.19.2",
+    "joblib==1.5.0",
+    "jsonpointer==3.0.0",
+    "jsonschema-specifications==2025.9.1",
+    "jsonschema==4.26.0",
+    "jupyter-events==0.12.0",
+    "jupyter_client==8.8.0",
+    "jupyter_core==5.9.1",
+    "jupyter_server==2.16.0",
+    "jupyter_server_terminals==0.5.4",
+    "jupyterlab_pygments==0.3.0",
+    "kaleido==1.0.0",
+    "kiwisolver==1.4.9",
+    "langcodes==3.5.1",
+    "lark==1.3.1",
+    "lazy_loader==0.4",
+    "librosa==0.11.0",
+    "llvmlite==0.44.0",
+    "logistro==2.0.1",
+    "lxml==6.0.2",
+    "markdown-it-py==4.0.0",
+    "matplotlib-inline==0.2.1",
+    "matplotlib==3.10.3",
+    "mdurl==0.1.2",
+    "mistune==3.2.0",
+    "mpmath==1.3.0",
+    "msgpack==1.1.2",
+    "multidict==6.7.0",
+    "murmurhash==1.0.15",
+    "narwhals==2.15.0",
+    "nbclient==0.10.4",
+    "nbconvert==7.16.6",
+    "nbformat==5.10.4",
+    "nest-asyncio==1.6.0",
+    "networkx==3.6.1",
+    "nltk==3.9.1",
+    "numba==0.61.2",
+    "numpy==1.26.4",
+    "opencv-python==4.11.0.86",
+    "openpyxl==3.1.5",
+    "orjson==3.10.18",
+    "overrides==7.7.0",
+    "packaging==25.0",
+    "pandas==2.2.3",
+    "pandocfilters==1.5.1",
+    "parso==0.8.5",
+    "pexpect==4.9.0",
+    "pillow==11.3.0",
+    "pip==23.0.1",
+    "platformdirs==4.5.1",
+    "plotly==6.0.1",
+    "pluggy==1.6.0",
+    "pooch==1.8.2",
+    "preshed==3.0.12",
+    "prometheus_client==0.24.1",
+    "prompt_toolkit==3.0.52",
+    "propcache==0.4.1",
+    "psutil==7.2.1",
+    "ptyprocess==0.7.0",
+    "pure_eval==0.2.3",
+    "pyasn1==0.6.4",
+    "pyasn1_modules==0.4.2",
+    "pycparser==3.0",
+    "pydantic==2.13.5",
+    "pydantic_core==2.46.5",
+    "pyparsing==3.3.1",
+    "pytest==8.3.5",
+    "python-dateutil==2.9.0.post0",
+    "python-docx==1.1.2",
+    "python-json-logger==4.0.0",
+    "pytz==2025.2",
+    "pyzmq==27.1.0",
+    "referencing==0.37.0",
+    "regex==2026.1.15",
+    "requests==2.34.2",
+    "rfc3339-validator==0.1.4",
+    "rfc3986-validator==0.1.1",
+    "rfc3987-syntax==1.1.0",
+    "rich==14.2.0",
+    "rpds-py==0.30.0",
+    "scenedetect==0.7.1",
+    "scikit-image==0.25.2",
+    "scikit-learn==1.6.1",
+    "scipy==1.13.1",
+    "seaborn==0.13.2",
+    "setuptools==66.1.1",
+    "shellingham==1.5.4",
+    "simplejson==3.20.2",
+    "six==1.17.0",
+    "smart_open==7.5.0",
+    "sniffio==1.3.1",
+    "soundfile==0.13.1",
+    "soupsieve==2.8.2",
+    "soxr==1.0.0",
+    "spacy-legacy==3.0.12",
+    "spacy-loggers==1.0.5",
+    "spacy==3.8.2",
+    "srsly==2.5.2",
+    "stack-data==0.6.3",
+    "sympy==1.14.0",
+    "tenacity==9.1.4",
+    "terminado==0.18.1",
+    "textblob==0.19.0",
+    "thinc==8.3.10",
+    "threadpoolctl==3.6.0",
+    "tifffile==2026.1.14",
+    "tinycss2==1.4.0",
+    "tornado==6.5.1",
+    "tqdm==4.67.1",
+    "traitlets==5.14.3",
+    "typer-slim==0.21.1",
+    "typer==0.21.1",
+    "typing-inspection==0.4.4",
+    "typing_extensions==4.16.0",
+    "tzdata==2025.3",
+    "uri-template==1.3.0",
+    "urllib3==2.7.0",
+    "wasabi==1.1.3",
+    "wcwidth==0.2.14",
+    "weasel==0.4.3",
+    "webcolors==25.10.0",
+    "webencodings==0.5.1",
+    "websocket-client==1.9.0",
+    "websockets==16.1.1",
+    "wrapt==2.0.1",
+    "xarray==2025.4.0",
+    "xlrd==2.0.1",
+    "xyzservices==2025.11.0",
+    "yarl==1.22.0"
+   ],
+   "prefix": "/opt/auto-story/venv",
+   "realpath": "/usr/local/bin/python3",
+   "version": "3.11.2",
+   "wrapper": "#!/bin/sh\nexec /opt/auto-story/venv/bin/python3 \"$@\"\n"
+  }
+ },
+ "schema": 1,
+ "users": {
+  "id": "uid=1000(user) gid=1000(user) groups=1000(user)",
+  "passwd": "user:x:1000:1000::/home/user:/bin/sh"
+ }
+}
