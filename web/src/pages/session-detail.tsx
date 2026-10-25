@@ -12,6 +12,7 @@ import { SessionShareDialog } from "@/components/session-share-dialog";
 import { MessageInput } from "@/components/message-input";
 import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
+import { SubagentSessions } from "@/components/subagent-sessions";
 import type { DelegationExecution } from "@/lib/delegations";
 import { useThinkingOptions } from "@/lib/hooks/use-thinking-options";
 import { useAgent } from "@/lib/hooks/use-agents";
@@ -169,6 +170,7 @@ function SessionConversation({ id, session, stream, openWorkspaceFile }: {
       <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
         <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
         <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Trajectry{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
+        <TabButton active={activeTab === "subagents"} onClick={() => setActiveTab("subagents")}>SubAgent</TabButton>
         {childTabs.map(({ execution, label }) => <div key={execution.childId} className="flex shrink-0 items-center" title={execution.prompt}>
           <TabButton active={activeTab === execution.childId} onClick={() => setActiveTab(execution.childId)}>{label}</TabButton>
           <button aria-label={`Close ${label}`} className="mr-2 rounded p-1 text-[var(--color-fg-subtle)] hover:bg-[var(--color-bg-muted)]" onClick={() => closeChildSession(execution.childId)}><X className="h-3 w-3" /></button>
@@ -205,6 +207,9 @@ function SessionConversation({ id, session, stream, openWorkspaceFile }: {
       {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
         <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />
       </div>)}
+      {activeTab === "subagents" && <div className="min-h-0 flex-1 overflow-hidden">
+        <SubagentSessions sessionId={id} onOpenExecution={openExecution} />
+      </div>}
     </>
   );
 }
