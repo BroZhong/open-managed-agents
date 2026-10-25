@@ -15,6 +15,9 @@ importers:
 
   packages/api:
     dependencies:
+      '@alicloud/openapi-core':
+        specifier: 1.0.7
+        version: 1.0.7
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.23)
@@ -325,9 +328,6 @@ packages:
 
   '@alicloud/tea-util@1.4.11':
     resolution: {integrity: sha512-HyPEEQ8F0WoZegiCp7sVdrdm6eBOB+GCvGl4182u69LDFktxfirGLcAx3WExUr1zFWkq2OSmBroTwKQ4w/+Yww==}
-
-  '@alicloud/tea-util@1.4.9':
-    resolution: {integrity: sha512-S0wz76rGtoPKskQtRTGqeuqBHFj8BqUn0Vh+glXKun2/9UpaaaWmuJwcmtImk6bJZfLYEShDF/kxDmDJoNYiTw==}
 
   '@anthropic-ai/sdk@0.91.1':
     resolution: {integrity: sha512-LAmu761tSN9r66ixvmciswUj/ZC+1Q4iAfpedTfSVLeswRwnY3n2Nb6Tsk+cLPP28aLOPWeMgIuTuCcMC6W/iw==}
@@ -2651,11 +2651,13 @@ snapshots:
   '@alicloud/openapi-util@0.3.3':
     dependencies:
       '@alicloud/tea-typescript': 1.8.0
-      '@alicloud/tea-util': 1.4.9
+      '@alicloud/tea-util': 1.4.11
       kitx: 2.2.0
       sm3: 1.0.3
     transitivePeerDependencies:
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@alicloud/rdsai20250507@1.5.0':
     dependencies:
@@ -2682,13 +2684,6 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
-
-  '@alicloud/tea-util@1.4.9':
-    dependencies:
-      '@alicloud/tea-typescript': 1.8.0
-      kitx: 2.2.0
-    transitivePeerDependencies:
-      - supports-color
 
   '@anthropic-ai/sdk@0.91.1(zod@4.4.3)':
     dependencies:

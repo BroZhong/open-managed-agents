@@ -1,6 +1,7 @@
 import type { EnvironmentBaseImage, OSSArtifactStoreOptions } from "@oma-server/store";
 import { isDigestPinnedImage, PLATFORM_DEFAULT_ENV, type SandboxEnvironment } from "@oma-server/sandbox";
 import { sandboxEnvironmentFromEnv, workspaceStorageConfigFromEnv } from "../lib/workspace-config.js";
+import type { AcsImageCacheConfig } from "./acs-image-cache.js";
 
 type HostEnv = Readonly<Record<string, string | undefined>>;
 
@@ -27,6 +28,17 @@ export interface ImageBuilderConfig {
   sandbox: { domain: string; apiKey: string; pool: string };
   /** The Host Bucket that keeps build logs (`WORKSPACE_OSS_*`). */
   oss: OSSArtifactStoreOptions;
+  /** `BUILTIN_ENVIRONMENTS_DIR`: the repository's `sandbox/environments`, shipped in the image. */
+  builtInEnvironmentsDir: string;
+  /**
+   * Keeping the Warm Pool (the SandboxSet `SANDBOX_TEMPLATE` in
+   * `WARM_POOL_NAMESPACE`) on the image of `WARM_POOL_ENVIRONMENT`; null when
+   * that is empty. `WARM_POOL_IMAGE_CACHE` says how: `acs` creates an ACS
+   * ImageCache and points the pool only once it is ready (`imageCache`);
+   * `none` points it at once (`imageCache` null), every refill pulling the
+   * whole image.
+   */
+  warmPool: { environmentId: string; namespace: string; name: string; imageCache: AcsImageCacheConfig | null } | null;
 }
 
 function required(env: HostEnv, name: string): string {
@@ -57,8 +69,9 @@ export function imageBuilderConfigFromEnv(env: HostEnv): ImageBuilderConfig {
   const noProxy = env.BUILD_NO_PROXY?.trim();
   if (!proxyUrl !== !noProxy) throw new Error("BUILD_PROXY_URL and BUILD_NO_PROXY are set together: without an explicit NO_PROXY the Aliyun mirrors would go through the proxy");
   if (proxyUrl && !/^https?:\/\/[^\s/@]+(?::\d+)?\/?$/.test(proxyUrl)) throw new Error("BUILD_PROXY_URL must be an http(s) URL without credentials");
+  const environment = sandboxEnvironmentFromEnv(env);
   return {
-    environment: sandboxEnvironmentFromEnv(env),
+    environment,
     namespace: names.BUILD_NAMESPACE!,
     repository,
     baseImages: { "oma-base": pinned(env, "BASE_IMAGE_OMA_BASE"), "oma-media": pinned(env, "BASE_IMAGE_OMA_MEDIA") },
@@ -69,5 +82,35 @@ export function imageBuilderConfigFromEnv(env: HostEnv): ImageBuilderConfig {
     platformDefaults: PLATFORM_DEFAULT_ENV,
     sandbox: { domain: required(env, "E2B_DOMAIN"), apiKey: required(env, "E2B_API_KEY"), pool: required(env, "SANDBOX_TEMPLATE") },
     oss: workspaceStorageConfigFromEnv(env),
+    builtInEnvironmentsDir: required(env, "BUILTIN_ENVIRONMENTS_DIR"),
+    warmPool: warmPoolFromEnv(env, environment),
+  };
+}
+
+function warmPoolFromEnv(env: HostEnv, environment: SandboxEnvironment): ImageBuilderConfig["warmPool"] {
+  const environmentId = env.WARM_POOL_ENVIRONMENT?.trim();
+  if (!environmentId) return null;
+  if (!/^env_[a-z0-9_]+$/.test(environmentId)) throw new Error("WARM_POOL_ENVIRONMENT must be a Built-in Environment's id");
+  const namespace = required(env, "WARM_POOL_NAMESPACE");
+  if (!KUBERNETES_NAME.test(namespace)) throw new Error("WARM_POOL_NAMESPACE must be a Kubernetes name");
+  const mode = env.WARM_POOL_IMAGE_CACHE?.trim();
+  if (mode !== "acs" && mode !== "none") {
+    throw new Error("WARM_POOL_IMAGE_CACHE must be acs (cache the image, then update the pool) or none (update the pool at once; every refill pulls the whole image)");
+  }
+  const pool = { environmentId, namespace, name: required(env, "SANDBOX_TEMPLATE") };
+  if (mode === "none") return { ...pool, imageCache: null };
+  const vSwitchIds = required(env, "IMAGE_CACHE_VSWITCH_IDS").split(",").map((id) => id.trim()).filter(Boolean);
+  if (vSwitchIds.some((id) => !/^vsw-[a-z0-9]+$/.test(id))) throw new Error("IMAGE_CACHE_VSWITCH_IDS must be vSwitch ids (vsw-…), comma-separated");
+  const securityGroupId = required(env, "IMAGE_CACHE_SECURITY_GROUP_ID");
+  if (!/^sg-[a-z0-9]+$/.test(securityGroupId)) throw new Error("IMAGE_CACHE_SECURITY_GROUP_ID must be a security group id (sg-…)");
+  const regionId = required(env, "ALIYUN_REGION");
+  if (!/^[a-z]+-[a-z0-9-]+$/.test(regionId)) throw new Error("ALIYUN_REGION must be a region id such as cn-shanghai");
+  return {
+    ...pool,
+    imageCache: {
+      regionId, securityGroupId, vSwitchIds, environment,
+      accessKeyId: required(env, "IMAGE_CACHE_ACCESS_KEY_ID"),
+      accessKeySecret: required(env, "IMAGE_CACHE_ACCESS_KEY_SECRET"),
+    },
   };
 }

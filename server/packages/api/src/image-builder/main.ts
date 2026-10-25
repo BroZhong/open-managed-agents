@@ -5,6 +5,9 @@ import { Hono } from "hono";
 import { createPgPool, OSSEnvironmentBuildLogStore, PgEnvironmentStore, pgConfigFromEnv } from "@oma-server/store";
 import { E2BSandboxClient } from "@oma-server/sandbox";
 import { EnvironmentBuilder } from "./builder.js";
+import { loadBuiltInEnvironments, rebuildOnNewBaseImages, syncBuiltInEnvironments } from "./builtin-environments.js";
+import { AcsImageCaches } from "./acs-image-cache.js";
+import { KubernetesWarmPool, WarmPoolUpdater } from "./warm-pool.js";
 import { imageBuilderConfigFromEnv } from "./config.js";
 import { inClusterKubernetesApi } from "./kubernetes-api.js";
 import { BUILD_POD_DEFAULTS, KubernetesBuildRunner } from "./pod-runner.js";
@@ -27,7 +30,17 @@ export async function startImageBuilder(env: NodeJS.ProcessEnv = process.env): P
   await pool.query("SELECT 1");
   const store = new PgEnvironmentStore(pool);
   const logs = new OSSEnvironmentBuildLogStore(config.oss);
-  const runner = new KubernetesBuildRunner(await inClusterKubernetesApi(env), {
+  // Before claiming: the repository's built-ins, then every Environment a
+  // new Base Image digest must rebuild (ADR-0024).
+  await syncBuiltInEnvironments(store, await loadBuiltInEnvironments(config.builtInEnvironmentsDir));
+  await rebuildOnNewBaseImages(store, config.baseImages);
+  const kubernetes = await inClusterKubernetesApi(env);
+  const warmPool = config.warmPool && new WarmPoolUpdater({
+    store, environmentId: config.warmPool.environmentId, clock: systemClock,
+    pool: new KubernetesWarmPool(kubernetes, config.warmPool.namespace, config.warmPool.name),
+    caches: config.warmPool.imageCache && new AcsImageCaches(config.warmPool.imageCache),
+  });
+  const runner = new KubernetesBuildRunner(kubernetes, {
     namespace: config.namespace, deployment: config.environment, buildahImage: config.buildahImage,
     registryAuthSecret: config.registryAuthSecret, imagePullSecret: config.imagePullSecret, ...BUILD_POD_DEFAULTS,
   }, systemClock);
@@ -43,8 +56,12 @@ export async function startImageBuilder(env: NodeJS.ProcessEnv = process.env): P
       deployment: config.environment, repository: config.repository, baseImages: config.baseImages,
       platformDefaults: config.platformDefaults, proxy: config.proxy,
     },
+    onBuildEnd: (build, outcome) => {
+      if (outcome === "succeeded" && build.environmentId === config.warmPool?.environmentId) warmPool?.trigger();
+    },
   });
   await builder.start();
+  warmPool?.start();
 
   const app = new Hono();
   app.get("/health", (c) => c.json({ status: "ok" }));
@@ -60,7 +77,7 @@ export async function startImageBuilder(env: NodeJS.ProcessEnv = process.env): P
   let stopping: Promise<void> | undefined;
   const shutdown = (signal: string) => stopping ??= (async () => {
     console.log(`image-builder stopping on ${signal}`);
-    await Promise.race([builder.stop(), new Promise((resolve) => setTimeout(resolve, STOP_MS))]);
+    await Promise.race([Promise.all([builder.stop(), warmPool?.stop()]), new Promise((resolve) => setTimeout(resolve, STOP_MS))]);
     server.close();
     await pool.end();
   })();

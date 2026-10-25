@@ -33,7 +33,8 @@
     "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core",
     "@open-managed-agents/adapter-mock": "file:../../../adapter/packages/mock",
     "@open-managed-agents/adapter-pi-agent": "file:../../../adapter/packages/pi-agent",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@alicloud/openapi-core": "1.0.7"
   },
   "devDependencies": {
     "@redocly/cli": "^2.39.0",

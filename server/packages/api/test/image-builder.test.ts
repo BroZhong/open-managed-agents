@@ -431,6 +431,24 @@ describe("EnvironmentBuilder (ADR-0024 Building)", () => {
     for (const env of envs) expect((await store.get("t1", env.id))!.status).toBe("building");
   });
 
+  it("tells its observer how each build ended", async () => {
+    const ended: Array<[string, string]> = [];
+    const runner = new FakeRunner([pushed(1), failing({ outcome: "script_failed", message: "x" })]);
+    const { create, clock, store } = setup({ runner });
+    const env = await create();
+    const other = await create();
+    const builder = new EnvironmentBuilder({
+      queue: store, runner, verifier: new FakeVerifier(), logs: new InMemoryEnvironmentBuildLogStore(), clock,
+      config: { owner: "observed", deployment: "test", repository: REPO, baseImages: { "oma-base": BASE, "oma-media": MEDIA }, platformDefaults: {}, proxy: null },
+      logger: { info() {}, warn() {}, error() {} },
+      onBuildEnd: (build, outcome) => { ended.push([build.environmentId, outcome]); throw new Error("an observer never fails a build"); },
+    });
+    builders.push(builder);
+    while (await builder.poll()) while (builder.runningCount) await settle();
+    expect(ended).toHaveLength(2);
+    expect(ended).toEqual(expect.arrayContaining([[env.id, "succeeded"], [other.id, "failed"]]));
+  });
+
   it("starts claiming even when the startup sweep fails", async () => {
     const runner = new FakeRunner([pushed(1)]);
     runner.sweep = async () => { throw new Error("pods is forbidden"); };

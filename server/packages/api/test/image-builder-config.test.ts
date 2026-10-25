@@ -16,6 +16,15 @@ const env = {
   E2B_DOMAIN: "sandbox.example", E2B_API_KEY: "key", SANDBOX_TEMPLATE: "oma-test-sandbox",
   WORKSPACE_OSS_REGION: "oss-cn-shanghai", WORKSPACE_OSS_BUCKET: "agentry",
   WORKSPACE_OSS_ACCESS_KEY_ID: "id", WORKSPACE_OSS_ACCESS_KEY_SECRET: "secret",
+  BUILTIN_ENVIRONMENTS_DIR: "/app/sandbox/environments",
+  WARM_POOL_ENVIRONMENT: "env_video_production",
+  WARM_POOL_NAMESPACE: "sandbox-system",
+  WARM_POOL_IMAGE_CACHE: "none",
+};
+const acs = {
+  WARM_POOL_IMAGE_CACHE: "acs", ALIYUN_REGION: "cn-shanghai",
+  IMAGE_CACHE_SECURITY_GROUP_ID: "sg-uf6bikdzvy9di9y8wp89", IMAGE_CACHE_VSWITCH_IDS: "vsw-uf6kw2gmpn1psc4yqpgqa, vsw-uf6xsc4rp8k5cpjgcelmu",
+  IMAGE_CACHE_ACCESS_KEY_ID: "cache-id", IMAGE_CACHE_ACCESS_KEY_SECRET: "cache-secret",
 };
 
 describe("imageBuilderConfigFromEnv", () => {
@@ -31,6 +40,33 @@ describe("imageBuilderConfigFromEnv", () => {
       oss: { bucket: "agentry" },
     });
     expect(imageBuilderConfigFromEnv({ ...env, BUILD_PROXY_URL: "", BUILD_NO_PROXY: "" }).proxy).toBeNull();
+  });
+
+  it("keeps the Warm Pool on an Environment's image only when told how to cache it", () => {
+    expect(imageBuilderConfigFromEnv(env)).toMatchObject({
+      builtInEnvironmentsDir: "/app/sandbox/environments",
+      warmPool: { environmentId: "env_video_production", namespace: "sandbox-system", name: "oma-test-sandbox", imageCache: null },
+    });
+    expect(imageBuilderConfigFromEnv({ ...env, WARM_POOL_ENVIRONMENT: "" }).warmPool).toBeNull();
+    expect(imageBuilderConfigFromEnv({ ...env, ...acs }).warmPool).toEqual({
+      environmentId: "env_video_production", namespace: "sandbox-system", name: "oma-test-sandbox",
+      imageCache: {
+        regionId: "cn-shanghai", securityGroupId: "sg-uf6bikdzvy9di9y8wp89", vSwitchIds: ["vsw-uf6kw2gmpn1psc4yqpgqa", "vsw-uf6xsc4rp8k5cpjgcelmu"],
+        environment: "test", accessKeyId: "cache-id", accessKeySecret: "cache-secret",
+      },
+    });
+    for (const [change, message] of [
+      [{ WARM_POOL_IMAGE_CACHE: "" }, "WARM_POOL_IMAGE_CACHE must be acs"],
+      [{ WARM_POOL_IMAGE_CACHE: "auto" }, "WARM_POOL_IMAGE_CACHE must be acs"],
+      [{ WARM_POOL_NAMESPACE: "" }, "requires WARM_POOL_NAMESPACE"],
+      [{ WARM_POOL_ENVIRONMENT: "video-production" }, "Built-in Environment's id"],
+      [{ ...acs, IMAGE_CACHE_ACCESS_KEY_SECRET: "" }, "requires IMAGE_CACHE_ACCESS_KEY_SECRET"],
+      [{ ...acs, IMAGE_CACHE_VSWITCH_IDS: "subnet-1" }, "vSwitch ids"],
+      [{ ...acs, IMAGE_CACHE_SECURITY_GROUP_ID: "x" }, "security group id"],
+      [{ BUILTIN_ENVIRONMENTS_DIR: "" }, "requires BUILTIN_ENVIRONMENTS_DIR"],
+    ] as const) {
+      expect(() => imageBuilderConfigFromEnv({ ...env, ...change }), message).toThrow(message);
+    }
   });
 
   it.each([

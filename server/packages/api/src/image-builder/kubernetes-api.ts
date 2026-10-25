@@ -4,8 +4,12 @@ import { Agent, fetch } from "undici";
 
 /** The Kubernetes REST calls the image builder makes (in-cluster, its own ServiceAccount). */
 export interface KubernetesApi {
-  /** A JSON request; rejects with {@link KubernetesApiError} on a non-2xx answer. */
-  request<T = unknown>(method: "GET" | "POST" | "DELETE", path: string, options?: { body?: unknown; signal?: AbortSignal }): Promise<T>;
+  /**
+   * A JSON request (`contentType` for a PATCH, such as
+   * `application/json-patch+json`); rejects with {@link KubernetesApiError}
+   * on a non-2xx answer.
+   */
+  request<T = unknown>(method: KubernetesMethod, path: string, options?: { body?: unknown; contentType?: string; signal?: AbortSignal }): Promise<T>;
   /** A streamed GET (pod logs with `follow=true`); the body as it arrives. */
   stream(path: string, signal: AbortSignal): Promise<AsyncIterable<Uint8Array>>;
 }
@@ -20,6 +24,8 @@ export class KubernetesApiError extends Error {
     this.name = "KubernetesApiError";
   }
 }
+
+export type KubernetesMethod = "GET" | "POST" | "DELETE" | "PATCH";
 
 export const isNotFound = (error: unknown) => error instanceof KubernetesApiError && error.status === 404;
 export const isConflict = (error: unknown) => error instanceof KubernetesApiError && error.status === 409;
@@ -48,13 +54,13 @@ export async function inClusterKubernetesApi(env: HostEnv = process.env): Promis
     return value;
   };
 
-  const send = async (method: string, path: string, body: unknown, signal: AbortSignal) => {
+  const send = async (method: string, path: string, body: unknown, signal: AbortSignal, contentType = "application/json") => {
     const response = await fetch(`${origin}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${await token()}`,
         Accept: "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(body === undefined ? {} : { "Content-Type": contentType }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       dispatcher,
@@ -68,9 +74,9 @@ export async function inClusterKubernetesApi(env: HostEnv = process.env): Promis
   };
 
   return {
-    async request<T>(method: "GET" | "POST" | "DELETE", path: string, options: { body?: unknown; signal?: AbortSignal } = {}) {
+    async request<T>(method: KubernetesMethod, path: string, options: { body?: unknown; contentType?: string; signal?: AbortSignal } = {}) {
       const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(REQUEST_MS)]) : AbortSignal.timeout(REQUEST_MS);
-      const response = await send(method, path, options.body, signal);
+      const response = await send(method, path, options.body, signal, options.contentType);
       return await response.json() as T;
     },
     async stream(path, signal) {

@@ -64,6 +64,8 @@ export interface EnvironmentBuilderDeps {
   logger?: Pick<Console, "info" | "warn" | "error">;
   /** Per-attempt marker tokens; tests inject fixed ones. */
   nonce?: () => string;
+  /** Told how each claimed build left this builder (e.g. to update the Warm Pool after a success). */
+  onBuildEnd?: (build: { id: string; environmentId: string }, outcome: BuildOutcome) => void;
 }
 
 /** Why a running build stopped before it reached an outcome of its own. */
@@ -163,6 +165,7 @@ export class EnvironmentBuilder {
         return "lost";
       }).then((outcome) => {
         this.logger.info(`environment_build_end build=${claimed.build.id} environment=${claimed.build.environmentId} attempt=${claimed.lease.attempt} outcome=${outcome}`);
+        try { this.deps.onBuildEnd?.(claimed.build, outcome); } catch { /* an observer never fails a build */ }
         return outcome;
       }).finally(() => this.running.delete(key));
       this.running.set(key, run);
