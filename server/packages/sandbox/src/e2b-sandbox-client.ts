@@ -105,12 +105,14 @@ export type CreateSandboxFn = (
 ) => Promise<E2BSandbox>;
 
 /**
- * Read inside a just-claimed Sandbox: the kernel's uptime, PID 1's (the main
- * container's) start in clock ticks since boot, and the tick rate. The
- * gateway reports nothing about an in-place swap, so the Host observes it
- * (see {@link claimSwapped}).
+ * Read inside a just-claimed Sandbox: the container's uptime and PID 1's
+ * start in clock ticks since its boot, the tick rate, the Sandbox's clock and
+ * when the Pod's `/etc/hostname` was written (the Pod's start: the kubelet
+ * writes it once per Pod, and a container restart keeps it). The gateway
+ * reports nothing about an in-place swap, so the Host observes it (see
+ * {@link claimSwapped}).
  */
-export const CLAIM_PROBE = "cat /proc/uptime /proc/1/stat && getconf CLK_TCK";
+export const CLAIM_PROBE = "cat /proc/uptime /proc/1/stat && getconf CLK_TCK && date +%s.%N && stat -c %Z /etc/hostname";
 
 /** Client timeouts of the control-plane calls other than create; each is one short gateway step. */
 const CONTROL_REQUEST_MS = {
@@ -551,24 +553,27 @@ export class E2BSandboxClient implements SandboxClient {
 /**
  * Whether a claim swapped the image in place, from the {@link CLAIM_PROBE}
  * output read `elapsedMs` after the create began; undefined when unreadable.
- * The gateway restarts the main container to swap (PID 1 starts anew); the
- * Pod keeps running, so the kernel's uptime spans the claim:
+ * The gateway swaps by restarting the main container in the claimed Pod:
  * - PID 1 older than the claim: the warm container was kept (a plain claim);
- * - PID 1 and the kernel both younger: the Pod was created for the claim,
- *   with the image (a cold start when the pool had no stock);
- * - otherwise the container was replaced inside a Pod that predates the claim.
+ * - PID 1 younger, in a Pod older than the claim: the container was replaced
+ *   in place (a swap);
+ * - both younger: the Pod was created for the claim with the image (a cold
+ *   start when the pool had no stock).
+ * ACS gives each container its own uptime (PID 1 starts at 0), so the Pod's
+ * age comes from `/etc/hostname` on the Sandbox's own clock, to the second.
  */
 export function claimSwapped(probe: string, elapsedMs: number): boolean | undefined {
-  const [uptimeLine, statLine, ticksLine] = probe.trim().split("\n");
+  const [uptimeLine, statLine, ticksLine, nowLine, podStartLine] = probe.trim().split("\n");
   const uptime = Number.parseFloat(uptimeLine ?? "");
   // Fields after the parenthesised command name start at field 3 (state); starttime is field 22.
   const startTicks = Number.parseInt(statLine?.slice(statLine.lastIndexOf(")") + 2).split(" ")[19] ?? "", 10);
   const ticks = Number.parseInt(ticksLine ?? "", 10);
-  if (!Number.isFinite(uptime) || !Number.isFinite(startTicks) || !(ticks > 0) || !statLine?.includes(")")) return undefined;
+  const podAge = Number.parseFloat(nowLine ?? "") - Number.parseInt(podStartLine ?? "", 10);
+  if (!statLine?.includes(")") || !(ticks > 0) || ![uptime, startTicks, podAge].every(Number.isFinite)) return undefined;
   const elapsed = elapsedMs / 1000;
-  const pid1Age = uptime - startTicks / ticks;
-  if (pid1Age >= elapsed) return false;
-  return uptime >= elapsed;
+  if (uptime - startTicks / ticks >= elapsed) return false;
+  // The Pod's start is known to the second.
+  return podAge > elapsed + 1;
 }
 
 /**

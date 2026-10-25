@@ -23,13 +23,19 @@ const IMAGE = "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:
 const claim = { image: IMAGE };
 
 /**
- * The claim probe's answer (`cat /proc/uptime /proc/1/stat; getconf CLK_TCK`):
- * the kernel up `uptime` seconds, PID 1 started `pid1Age` seconds ago.
+ * The claim probe's answer (`cat /proc/uptime /proc/1/stat; getconf
+ * CLK_TCK; date +%s.%N; stat -c %Z /etc/hostname`): PID 1 started
+ * `pid1Age` seconds ago and the Pod `podAge` seconds ago. ACS virtualizes
+ * the container's uptime: it starts with PID 1 (starttime 0), as measured on
+ * oma-test on 2026-10-26; `virtualUptime: false` emulates a kernel whose
+ * uptime predates the container.
  */
-function probeOutput(uptime: number, pid1Age: number, ticks = 100): string {
+function probeOutput(pid1Age: number, podAge: number, { virtualUptime = true, ticks = 100, now = 1_792_952_959.25 } = {}): string {
+  const uptime = virtualUptime ? pid1Age : podAge + 3;
   const start = Math.round((uptime - pid1Age) * ticks);
   const fields = ["S", "0", "1", "1", "0", "-1", "4194560", "1", "0", "0", "0", "3", "1", "0", "0", "20", "0", "1", "0", String(start), "4096"];
-  return `${uptime.toFixed(2)} ${(uptime * 3).toFixed(2)}\n1 (tini) ${fields.join(" ")}\n${ticks}\n`;
+  return [`${uptime.toFixed(2)} ${(uptime * 3).toFixed(2)}`, `1 (tini) ${fields.join(" ")}`, String(ticks),
+    now.toFixed(9), String(Math.floor(now - podAge))].join("\n") + "\n";
 }
 
 /** A recorded `commands.run` call. */
@@ -60,7 +66,7 @@ class FakeSandbox implements E2BSandbox {
   /** The claim probe create runs, kept apart from the commands under test. */
   readonly claimProbes: RunCall[] = [];
   /** How the claim probe answers: a plain claim of a warm Sandbox by default. */
-  claimProbe: () => E2BCommandResult = () => ({ exitCode: 0, stdout: probeOutput(600, 300), stderr: "" });
+  claimProbe: () => E2BCommandResult = () => ({ exitCode: 0, stdout: probeOutput(300, 300), stderr: "" });
   readonly writes: Array<{ path: string; data: string | ArrayBuffer }> = [];
   readonly removes: string[] = [];
   readonly reads = new Map<string, string | Uint8Array>();
@@ -415,7 +421,7 @@ describe("E2BSandboxClient", () => {
       let now = 0;
       const { client, sandboxes } = makeClient(undefined, {
         clock: () => now,
-        claimProbe: () => ({ exitCode: 0, stdout: probeOutput(900, 300), stderr: "" }),
+        claimProbe: () => ({ exitCode: 0, stdout: probeOutput(300, 340), stderr: "" }),
       });
       const created = client.create(claim);
       now = 210;
@@ -425,23 +431,23 @@ describe("E2BSandboxClient", () => {
       expect(sandboxes[0].runCalls).toEqual([]);
     });
 
-    it("a claim whose container started after the request, in a Pod that ran before it, swapped the image in place", async () => {
+    it.each([[true], [false]])("a claim whose container started after the request, in a Pod older than it, swapped the image in place (virtual uptime %s)", async (virtualUptime) => {
       let now = 0;
       const { client } = makeClient(undefined, {
         clock: () => now,
         onCreate: () => { now = 4_100; },
-        claimProbe: () => { now = 4_150; return { exitCode: 0, stdout: probeOutput(300, 2.5), stderr: "" }; },
+        claimProbe: () => { now = 4_150; return { exitCode: 0, stdout: probeOutput(2.5, 70, { virtualUptime }), stderr: "" }; },
       });
       const handle = await client.create(claim);
       expect(handle.claim).toEqual({ image: IMAGE, swapped: true, claimMs: 4_100 });
     });
 
-    it("a Pod booted during the claim (no warm stock) is a cold start, not a swap", async () => {
+    it("a Pod created during the claim (no warm stock) is a cold start, not a swap", async () => {
       let now = 0;
       const { client } = makeClient(undefined, {
         clock: () => now,
         onCreate: () => { now = 26_000; },
-        claimProbe: () => ({ exitCode: 0, stdout: probeOutput(20, 15), stderr: "" }),
+        claimProbe: () => ({ exitCode: 0, stdout: probeOutput(15, 20), stderr: "" }),
       });
       const handle = await client.create(claim);
       expect(handle.claim).toEqual({ image: IMAGE, swapped: false, claimMs: 26_000 });
