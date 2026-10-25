@@ -6,7 +6,7 @@ import {
   SandboxUnavailable,
   type SandboxPrepareOutcome,
   type EnvSpec,
-  type SandboxEnvironmentBinding,
+  type SandboxBinding,
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS, SandboxCreateRejected } from "../src/sandbox-client.js";
@@ -91,7 +91,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.destroyed).toEqual([]);
     expect(store.completeReclamation).not.toHaveBeenCalled();
   });
-  it("installs renamed Skills after a new Host attaches to a shared environment", async () => {
+  it("installs renamed Skills after a new Host attaches to a shared Sandbox", async () => {
     const { client, bundles, manager } = makeManager();
     const binding = durableBinding();
     const old = await bundles.add("old-name", [text("SKILL.md", "old body")]);
@@ -159,11 +159,11 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.created).toHaveLength(1);
   });
 
-  it("checks resource users inside the environment lock before reclaiming a parent's binding", async () => {
+  it("checks resource users inside the binding lock before reclaiming a parent's binding", async () => {
     const { client, manager } = makeManager();
     const durable = durableBinding();
     let insideLock = false;
-    const binding: SandboxEnvironmentBinding = {
+    const binding: SandboxBinding = {
       id: durable.id,
       withLock: async (work) => {
         insideLock = true;
@@ -590,7 +590,7 @@ describe("a Turn's Skill Install runs beside the Turn (#268)", () => {
   });
 });
 
-describe("each preparation of the Turn's environment is observed (ADR-0023, #287)", () => {
+describe("each preparation of the Turn's Sandbox is observed (ADR-0023, #287)", () => {
   /** A recorder of the session's preparations, in order. */
   function prepares() {
     const seen: Array<"started" | SandboxPrepareOutcome> = [];
@@ -645,7 +645,7 @@ describe("each preparation of the Turn's environment is observed (ADR-0023, #287
     expect(seen).toEqual(["started", { outcome: "failed", error: failure }, "started", { outcome: "failed", error: expect.any(SandboxUnavailable) }]);
   });
 
-  it("ends a preparation the Turn stopped waiting for as aborted, which is no environment failure", async () => {
+  it("ends a preparation the Turn stopped waiting for as aborted, which is no Sandbox unavailability", async () => {
     const { manager } = makeManager();
     const clock = databaseClock();
     const binding = durableBinding("root", clock.now);
@@ -663,12 +663,12 @@ describe("each preparation of the Turn's environment is observed (ADR-0023, #287
   });
 });
 
-describe("the binding keeps the last environment failure for the Session API (ADR-0023, #290)", () => {
+describe("the binding keeps the last Sandbox unavailability for the Session API (ADR-0023, #290)", () => {
   /** A binding kept by the in-memory store, as a Runner's sessions share it. */
   function storeBinding(id = "root") {
     const { delegationStore: store } = createMemoryStores();
-    const binding: SandboxEnvironmentBinding = { id, withLock: (work) => store.withEnvironmentLock(id, work) };
-    return { store, binding, environment: () => store.environment(id) };
+    const binding: SandboxBinding = { id, withLock: (work) => store.withBindingLock(id, work) };
+    return { store, binding, sandbox: () => store.sandbox(id) };
   }
   const rejectCreates = (client: FakeSandboxClient) => {
     client.createFault = (step) => { if (step === "claim") throw new SandboxCreateRejected(403); };
@@ -676,62 +676,62 @@ describe("the binding keeps the last environment failure for the Session API (AD
 
   it("records a rejected create with its code, reason and time, and clears it once a later tool creates the Sandbox", async () => {
     const { client, manager } = makeManager();
-    const { binding, environment } = storeBinding();
+    const { binding, sandbox } = storeBinding();
     rejectCreates(client);
     const session = manager.open(specFor(), binding);
     await session.prepare();
     await expect(session.writeFile("a.txt", "x")).rejects.toMatchObject({ code: "sandbox_unavailable", reason: "rejected" });
     await settle();
-    const failed = await environment();
+    const failed = await sandbox();
     expect(failed).toEqual({ state: "unavailable", since: failed.lastError!.at,
       lastError: { code: "sandbox_unavailable", reason: "rejected", at: expect.any(Date) } });
 
     client.createFault = undefined;
     await session.writeFile("a.txt", "x");
-    const recovered = await environment();
+    const recovered = await sandbox();
     expect(recovered).toMatchObject({ state: "ready", lastError: null });
     expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(failed.lastError!.at.getTime());
   });
 
   it("records an unreachable Sandbox of a Ready binding, and the next Turn's connect clears it", async () => {
     const { client, manager } = makeManager();
-    const { binding, environment } = storeBinding();
+    const { binding, sandbox } = storeBinding();
     await manager.open(specFor(), binding).writeFile("saved.txt", "kept");
-    const ready = await environment();
+    const ready = await sandbox();
     expect(ready).toMatchObject({ state: "ready", lastError: null });
 
     const reconnect = vi.spyOn(client, "reconnect").mockRejectedValue(new Error("connect ECONNREFUSED"));
     const session = manager.open(specFor(), binding);
     await expect(session.prepare()).rejects.toMatchObject({ reason: "unreachable" });
     await settle();
-    expect(await environment()).toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "unreachable" } });
+    expect(await sandbox()).toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "unreachable" } });
     // A repeated failure: still unavailable since the first.
-    const first = await environment();
+    const first = await sandbox();
     await expect(session.readFile("saved.txt")).rejects.toMatchObject({ reason: "unreachable" });
     await settle();
-    expect(await environment()).toMatchObject({ state: "unavailable", since: first.since });
+    expect(await sandbox()).toMatchObject({ state: "unavailable", since: first.since });
 
     reconnect.mockRestore();
     await manager.open(specFor(), binding).prepare();
-    const recovered = await environment();
+    const recovered = await sandbox();
     expect(recovered).toMatchObject({ state: "ready", lastError: null });
     expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(first.lastError!.at.getTime());
   });
 
   it("records a failed mount of a Sandbox it just created against that Sandbox", async () => {
     const { client, manager } = makeManager();
-    const { binding, environment } = storeBinding();
+    const { binding, sandbox } = storeBinding();
     vi.spyOn(client, "verifyWorkspaceMount").mockRejectedValueOnce(new Error("mount missing"));
     await expect(manager.open(specFor(), binding).writeFile("a.txt", "x")).rejects.toMatchObject({ reason: "mount" });
     await settle();
-    expect(await environment()).toMatchObject({ state: "unavailable", lastError: { reason: "mount" } });
+    expect(await sandbox()).toMatchObject({ state: "unavailable", lastError: { reason: "mount" } });
     // The binding still records the Sandbox: the next tool retries its preparation, not its creation.
     expect(client.created).toHaveLength(1);
   });
 
   it("records no failure once another Runner moved the binding on: the failure is about a state that ended", async () => {
     const { client, manager } = makeManager();
-    const { store, binding, environment } = storeBinding();
+    const { store, binding, sandbox } = storeBinding();
     // The creator's mount check is slow; meanwhile another Runner finds its Sandbox gone and returns the binding to Cold.
     let failMount!: () => void;
     vi.spyOn(client, "verifyWorkspaceMount").mockImplementationOnce(() => new Promise((_resolve, reject) => {
@@ -739,21 +739,21 @@ describe("the binding keeps the last environment failure for the Session API (AD
     }));
     const writing = manager.open(specFor(), binding).writeFile("a.txt", "x");
     await vi.waitFor(() => expect(failMount).toBeDefined());
-    await store.withEnvironmentLock("root", async () => ({ next: "cold", value: undefined }));
-    const cold = await environment();
+    await store.withBindingLock("root", async () => ({ next: "cold", value: undefined }));
+    const cold = await sandbox();
     failMount();
     await expect(writing).rejects.toMatchObject({ reason: "mount" });
     await settle();
-    expect(await environment()).toEqual(cold);
+    expect(await sandbox()).toEqual(cold);
     expect(cold).toMatchObject({ state: "cold", lastError: null });
   });
 
   it("records nothing for a preparation the Turn stopped waiting for", async () => {
     const { manager } = makeManager();
-    const { store, binding, environment } = storeBinding();
+    const { store, binding, sandbox } = storeBinding();
     // Another Turn's create is in flight.
-    await store.withEnvironmentLock("root", async () => ({ next: "creating", value: undefined }));
-    const creating = await environment();
+    await store.withBindingLock("root", async () => ({ next: "creating", value: undefined }));
+    const creating = await sandbox();
     const turn = new AbortController();
     const session = manager.open(specFor(), binding);
     await session.prepare(undefined, { signal: turn.signal });
@@ -762,7 +762,7 @@ describe("the binding keeps the last environment failure for the Session API (AD
     turn.abort(new DOMException("Session interrupted", "AbortError"));
     await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
     await settle();
-    expect(await environment()).toEqual(creating);
+    expect(await sandbox()).toEqual(creating);
     expect(creating.state).toBe("creating");
   });
 });

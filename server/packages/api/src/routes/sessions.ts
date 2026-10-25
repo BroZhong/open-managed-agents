@@ -1,7 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import type { DelegationStore, EnvironmentStatus, SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
-import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor, environmentBindingId } from "@oma-server/store";
+import type { DelegationStore, SandboxStatus, SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
+import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor, sandboxBindingId } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession, sharedSession } from "../lib/public-projection.js";
@@ -27,12 +27,12 @@ export interface SessionRouteDeps {
   eventLogStore?: EventLogStore;
   sessionRouter?: SessionRouter;
   wakeSession?: (sessionId: string) => void;
-  /** The Sandbox bindings; without them a Session is returned without its environment. */
-  environments?: Pick<DelegationStore, "environment">;
+  /** The Sandbox bindings; without them a Session is returned without its Sandbox state. */
+  sandboxes?: Pick<DelegationStore, "sandbox">;
 }
 
-/** The documented SessionEnvironment shape. */
-const environmentToWire = ({ state, since, lastError }: EnvironmentStatus) => ({
+/** The documented SessionSandbox shape. */
+const sandboxToWire = ({ state, since, lastError }: SandboxStatus) => ({
   state, since, last_error: lastError && { code: lastError.code, reason: lastError.reason, at: lastError.at },
 });
 
@@ -237,8 +237,8 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     if (tenant.share) return c.json(sharedSession(session));
     // A plain read of the binding, never its lock: a Turn may be preparing or
     // the binding being reclaimed (ADR-0023). A Child Session reports its root's.
-    const environment = await deps.environments?.environment(environmentBindingId(session));
-    return c.json({ ...publicSession(session), ...(environment ? { environment: environmentToWire(environment) } : {}) });
+    const sandbox = await deps.sandboxes?.sandbox(sandboxBindingId(session));
+    return c.json({ ...publicSession(session), ...(sandbox ? { sandbox: sandboxToWire(sandbox) } : {}) });
   });
 
   registerContractRoute(router, getOpenApiRoute("updateSession"), async (c) => {

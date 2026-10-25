@@ -8,8 +8,8 @@ const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', workspaceMount: {
 } };
 function setup() {
   const client = new FakeSandboxClient();
-  // A Runner's handles of one binding hear its environment hints.
-  const manager = new DefaultSandboxManager({ sandboxClient: client, environment: 'test', environmentSignals: signalBus() });
+  // A Runner's handles of one binding hear its `sandbox` hints.
+  const manager = new DefaultSandboxManager({ sandboxClient: client, environment: 'test', sandboxSignals: signalBus() });
   return { client, manager, session: manager.open(spec, durableBinding()) };
 }
 describe('native lifecycle per Turn', () => {
@@ -64,7 +64,7 @@ describe('native lifecycle per Turn', () => {
       if (++commits === 2) throw new Error('commit response lost');
       return result;
     }) });
-    // An environment failure: the tool sees a stable message, its cause is kept.
+    // A Sandbox unavailability: the tool sees a stable message, its cause is kept.
     await expect(session.writeFile('effect', 'x')).rejects.toMatchObject({ name: 'SandboxUnavailable', code: 'sandbox_unavailable',
       reason: 'unreachable', cause: expect.objectContaining({ message: 'commit response lost' }) });
     expect(durable.row()).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });

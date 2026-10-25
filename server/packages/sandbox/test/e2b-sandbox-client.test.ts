@@ -926,7 +926,7 @@ describe('direct lifecycle control-plane operations', () => {
   });
 });
 
-describe('environmental stream failure', () => {
+describe('transport stream failure', () => {
   it('returns uncertainty without issuing a destructive cleanup RPC that can stall on Paused', async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create();

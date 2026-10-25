@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type SandboxBindingFacts, type SandboxReclamation } from "@oma-server/store";
+import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type SandboxBindingFacts, type SandboxReclamation } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { DefaultSandboxManager } from "../src/sandbox-manager.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
@@ -61,7 +61,7 @@ function fakeSweeperStores(): SweeperStores {
     const queues = new Map<string, Promise<unknown>>();
     return {
       bindings: {
-        withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+        withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
           const perform = async () => {
             if (!rows.has(bindingId)) rows.set(bindingId, { sandboxId: null, creatingSince: null, reclaiming: false });
             const read = { ...rows.get(bindingId)! };
@@ -69,7 +69,7 @@ function fakeSweeperStores(): SweeperStores {
             const { value, next } = await work({ sandboxId: read.sandboxId, creatingSince: read.creatingSince, now: clock.now() });
             const row = rows.get(bindingId)!;
             if (row.reclaiming) throw reclaimingError();
-            if (row.sandboxId !== read.sandboxId || row.creatingSince?.getTime() !== read.creatingSince?.getTime()) throw new EnvironmentBindingChanged(bindingId);
+            if (row.sandboxId !== read.sandboxId || row.creatingSince?.getTime() !== read.creatingSince?.getTime()) throw new SandboxBindingChanged(bindingId);
             if (next) Object.assign(row, next === "creating" ? { sandboxId: null, creatingSince: clock.now() }
               : { sandboxId: next === "cold" ? null : next.ready, creatingSince: null });
             return value;

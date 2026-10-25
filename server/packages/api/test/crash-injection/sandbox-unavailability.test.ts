@@ -6,41 +6,41 @@ import { bash, execute, expectResumed, sweep, text, usePiSettings, type Outcome,
 await usePiSettings();
 
 /**
- * Environment failures are tool errors (ADR-0023, #287): a session.error is
- * written only at a Turn's end, so a Runner lost after an environment
- * failure, at any write, leaves a Turn its takeover continues rather than
+ * Sandbox unavailability is a tool error (ADR-0023, #287): a session.error is
+ * written only at a Turn's end, so a Runner lost after a Sandbox
+ * unavailability, at any write, leaves a Turn its takeover continues rather than
  * ends. The failed call's native result carries `details.code`.
  */
 
 /**
- * The first call meets an environment failure; the model calls again, and
+ * The first call meets a Sandbox unavailability; the model calls again, and
  * that call runs. A Runner lost after the failed call's result and before
- * the retry's preparation leaves no sign the environment became ready again:
+ * the retry's preparation leaves no sign the Sandbox became ready again:
  * that Turn ends with sandbox_unavailable, as every Turn does whose tool
- * call met an environment failure that no ready preparation followed.
+ * call met a Sandbox unavailability that no ready preparation followed.
  */
 const recovered: Scenario = {
   inputs: ["list the files"],
   model: (request) => request.results.has("call_retry") ? { blocks: [text("listed")], stop: "end_turn" }
     : request.results.has("call_ls") ? { blocks: [bash("call_retry", "ls")], stop: "tool_use" }
     : { blocks: [bash("call_ls", "ls")], stop: "tool_use" },
-  environment: (call) => call.id === "call_ls" ? new SandboxUnavailable("unreachable") : undefined,
+  unavailability: (call) => call.id === "call_ls" ? new SandboxUnavailable("unreachable") : undefined,
   errors: ["sandbox_unavailable"],
 };
 
-/** Every call meets an environment failure; the model calls once more, then answers. */
+/** Every call meets a Sandbox unavailability; the model calls once more, then answers. */
 const unavailable: Scenario = {
   ...recovered,
   model: (request) => request.results.has("call_retry") ? { blocks: [text("the Sandbox is unavailable")], stop: "end_turn" }
     : request.results.has("call_ls") ? { blocks: [bash("call_retry", "ls")], stop: "tool_use" }
     : { blocks: [bash("call_ls", "ls")], stop: "tool_use" },
-  environment: () => new SandboxUnavailable("unreachable"),
+  unavailability: () => new SandboxUnavailable("unreachable"),
   errors: ["sandbox_unavailable"],
 };
 
 /**
  * Whether the Turn ends unavailable: a call's native result carries an
- * environment failure's code, and the Turn's last preparation that decided
+ * Sandbox unavailability's code, and the Turn's last preparation that decided
  * anything failed.
  */
 const leftUnavailable = (log: StoredEvent[]) => [...details(log).values()].some((result) => result.code === "sandbox_unavailable")
@@ -55,7 +55,7 @@ const details = (log: StoredEvent[]) => new Map(log.flatMap((event) => {
   return message?.role === "toolResult" ? [[message.toolCallId!, message.details ?? {}] as const] : [];
 }));
 
-describe("crash injection: a tool call that meets an environment failure, then one that runs", async () => {
+describe("crash injection: a tool call that meets a Sandbox unavailability, then one that runs", async () => {
   it("records no error and gives the failed call's result its code when no Runner is lost", async () => {
     const outcome = await execute(recovered);
     expectResumed(recovered, outcome);
@@ -65,7 +65,7 @@ describe("crash injection: a tool call that meets an environment failure, then o
   });
   await sweep(recovered, (outcome) => {
     // Recovered within the Turn: no error, whichever Runner ran the retry,
-    // unless the loss hid that the environment became ready again.
+    // unless the loss hid that the Sandbox became ready again.
     expect(outcome.toolCalls.map((call) => call.id).filter((id) => id !== "call_retry")).toEqual([]);
     expect(errors(outcome)).toEqual(leftUnavailable(outcome.log) ? ["sandbox_unavailable"] : []);
     // A call the lost Runner left dangling gets the takeover's result instead.
@@ -74,7 +74,7 @@ describe("crash injection: a tool call that meets an environment failure, then o
   });
 });
 
-describe("crash injection: tool calls whose environment never becomes available", async () => {
+describe("crash injection: tool calls whose Sandbox never becomes available", async () => {
   await sweep(unavailable, (outcome) => {
     expect(errors(outcome)).toEqual(["sandbox_unavailable"]);
     // Written once, at the Turn's end: after its answer, before its completion.

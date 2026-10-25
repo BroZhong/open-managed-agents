@@ -334,15 +334,15 @@ export const SessionSchema = z
   })
   .openapi("Session");
 
-export const SessionEnvironmentSchema = z
+export const SessionSandboxSchema = z
   .object({
     state: z.enum(["cold", "creating", "ready", "unavailable"]).openapi({
       description:
-        "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records an environment failure (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call.",
+        "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records a Sandbox unavailability (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call.",
     }),
     since: DateTimeSchema.nullable().openapi({
       description:
-        "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first environment failure since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
+        "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first Sandbox unavailability since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
     }),
     last_error: z
       .object({
@@ -353,18 +353,18 @@ export const SessionEnvironmentSchema = z
       .nullable()
       .openapi({
         description:
-          "The last environment failure observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves.",
+          "The last Sandbox unavailability observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves.",
       }),
   })
-  .openapi("SessionEnvironment", {
+  .openapi("SessionSandbox", {
     description:
-      "The state of the Session's Sandbox environment (ADR-0023). Read without waiting: a Turn's tool call may change it at any time.",
+      "The state of the Session's Sandbox (ADR-0023). Read without waiting: a Turn's tool call may change it at any time.",
   });
 
 export const SessionDetailSchema = SessionSchema.extend({
-  environment: SessionEnvironmentSchema.optional(),
+  sandbox: SessionSandboxSchema.optional(),
 }).openapi("SessionDetail", {
-  description: "A Session with its Sandbox environment, which every Host that keeps Sandbox bindings reports, as deployed Hosts do.",
+  description: "A Session with the state of its Sandbox, which every Host that keeps Sandbox bindings reports, as deployed Hosts do.",
 });
 
 export const SharedSessionSchema = z.object({

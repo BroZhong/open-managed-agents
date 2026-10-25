@@ -180,10 +180,10 @@ ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOO
 -- Runner reconciles it with the gateway. NULL when Ready or Cold.
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creating_since TIMESTAMPTZ;
 -- What the Session API reports of the binding (ADR-0023): when its state
--- began, by the database clock (its last move, its first environment failure
--- since, or its recovery; NULL before its first move), and the last
--- environment failure observed in that state: code, reason and time. A move
--- or a preparation that ends ready clears the failure.
+-- began, by the database clock (its last move, its first Sandbox
+-- unavailability since, or its recovery; NULL before its first move), and the
+-- last Sandbox unavailability observed in that state: code, reason and time.
+-- A move or a preparation that ends ready clears the failure.
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS state_since TIMESTAMPTZ;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_code TEXT;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_reason TEXT;

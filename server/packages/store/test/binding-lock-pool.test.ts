@@ -3,7 +3,7 @@ import { createPgPool, createPgStores, type Pool, type PgStores } from "../src/i
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
 // Real PostgreSQL is required: the regression is pooled-client exhaustion.
-describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded PostgreSQL pool", () => {
+describe.skipIf(!process.env.PG_TEST_URL)("Sandbox binding lock on a bounded PostgreSQL pool", () => {
   let harness: PgTestHarness;
   let pool: Pool;
   let stores: PgStores;
@@ -20,7 +20,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded
     const bindings = Array.from({ length: 6 }, (_, index) => `binding-${index}`);
     let inside = 0;
     let peak = 0;
-    const results = await Promise.all(bindings.map(binding => stores.delegationStore.withEnvironmentLock(binding, async () => {
+    const results = await Promise.all(bindings.map(binding => stores.delegationStore.withBindingLock(binding, async () => {
       peak = Math.max(peak, ++inside);
       await new Promise(resolve => setTimeout(resolve, 50));
       await pool.query("SELECT 1");
@@ -38,7 +38,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded
 
   it("serializes one binding in process and rejects a concurrent durable writer", async () => {
     const order: string[] = [];
-    await Promise.all([1, 2].map(n => stores.delegationStore.withEnvironmentLock("serial", async ({ sandboxId }) => {
+    await Promise.all([1, 2].map(n => stores.delegationStore.withBindingLock("serial", async ({ sandboxId }) => {
       order.push(`start-${n}:${sandboxId}`);
       await new Promise(resolve => setTimeout(resolve, 20));
       order.push(`end-${n}`);
@@ -47,17 +47,17 @@ describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded
     expect(order).toEqual(["start-1:null", "end-1", "start-2:sandbox-1", "end-2"]);
 
     const other = await createPgStores(pool, { ensureSchema: false });
-    await expect(stores.delegationStore.withEnvironmentLock("serial", async ({ sandboxId }) => {
+    await expect(stores.delegationStore.withBindingLock("serial", async ({ sandboxId }) => {
       // Another Runner commits a different binding while this callback runs.
-      await other.delegationStore.withEnvironmentLock("serial", async () => ({ next: { ready: "foreign" }, value: undefined }));
+      await other.delegationStore.withBindingLock("serial", async () => ({ next: { ready: "foreign" }, value: undefined }));
       return { next: { ready: `${sandboxId}-replaced` }, value: undefined };
     })).rejects.toThrow("changed concurrently");
-    expect(await stores.delegationStore.withEnvironmentLock("serial", async ({ sandboxId }) => ({ value: sandboxId }))).toBe("foreign");
+    expect(await stores.delegationStore.withBindingLock("serial", async ({ sandboxId }) => ({ value: sandboxId }))).toBe("foreign");
     // An intent another Runner committed meanwhile also fails a move.
-    await expect(stores.delegationStore.withEnvironmentLock("serial", async () => {
-      await other.delegationStore.withEnvironmentLock("serial", async () => ({ next: "creating", value: undefined }));
+    await expect(stores.delegationStore.withBindingLock("serial", async () => {
+      await other.delegationStore.withBindingLock("serial", async () => ({ next: "creating", value: undefined }));
       return { next: "cold", value: undefined };
     })).rejects.toThrow("changed concurrently");
-    expect(await stores.delegationStore.withEnvironmentLock("serial", async ({ creatingSince }) => ({ value: creatingSince }))).toBeInstanceOf(Date);
+    expect(await stores.delegationStore.withBindingLock("serial", async ({ creatingSince }) => ({ value: creatingSince }))).toBeInstanceOf(Date);
   });
 });

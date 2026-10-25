@@ -1,9 +1,9 @@
-import { EnvironmentBindingChanged, type DelegationStore, type SandboxSweepStore } from "@oma-server/store";
+import { SandboxBindingChanged, type DelegationStore, type SandboxSweepStore } from "@oma-server/store";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, SANDBOX_RUNNING_SECONDS, type ListedSandbox, type SandboxClient } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SWEEP_MAX_KILLS, SWEEP_MAX_UNSETTLED, selectSweep, type SandboxEnvironment, type SweepDecision, type SweepOptions } from "./sandbox-sweep.js";
 import { killSandboxes } from "./sandbox-kill.js";
-import { reconcileBinding, type SandboxEnvironmentBinding, type SandboxManager } from "./sandbox-manager.js";
-import { signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
+import { reconcileBinding, type SandboxBinding, type SandboxManager } from "./sandbox-manager.js";
+import { signallingBinding, type SandboxSignals } from "./sandbox-signals.js";
 
 /** How often each Runner sweeps (ADR-0023): every 10 minutes, give or take up to 2. */
 export const SWEEP_INTERVAL_MS = 10 * 60_000;
@@ -16,7 +16,7 @@ export interface SandboxSweeperDeps {
   /** The listed bindings' rows and Session facts, in one read, and the bindings no Turn settles. */
   facts: SandboxSweepStore;
   /** The Runner's own store: its binding operations queue behind this Runner's Turns'. */
-  bindings: Pick<DelegationStore, "withEnvironmentLock">;
+  bindings: Pick<DelegationStore, "withBindingLock">;
   /**
    * Reclaims a binding as termination does (ADR-0023, "Release and
    * reclamation"): a round kills the Sandbox a binding records only so, and
@@ -26,7 +26,7 @@ export interface SandboxSweeperDeps {
   /** The Runner's `OMA_ENVIRONMENT`: only Sandboxes of this environment are acted on. */
   environment: SandboxEnvironment;
   /** Tells a binding's waiters on every Runner that a reconciliation moved it out of Creating (a reclamation tells them through the Manager). */
-  environmentSignals?: EnvironmentSignals;
+  sandboxSignals?: SandboxSignals;
   logger?: Pick<Console, "info">;
   /** Uniform in [0, 1): spreads the rounds of Runners started together. */
   random?: () => number;
@@ -101,7 +101,7 @@ function stopped(round: Round): boolean {
  * settles whatever the gateway lists (`SandboxSweepStore.unsettled`). There
  * is no lock between Runners: before each action the binding is read again
  * and the action decided again, and only then taken, under the binding's
- * environment lock (whose snapshot and compare-and-set hold no database
+ * lock (whose snapshot and compare-and-set hold no database
  * client while the gateway is called) or its reclamation, which a Turn's
  * admission also respects. Every action is safe to repeat: two Runners
  * killing one Sandbox both find it missing, only one compare-and-set adopts,
@@ -210,8 +210,8 @@ export class SandboxSweeper {
   }
 
   /** The binding as the Manager reclaims it, through this Runner's binding operations. */
-  private binding(bindingId: string): SandboxEnvironmentBinding {
-    return { id: bindingId, withLock: (work) => this.deps.bindings.withEnvironmentLock(bindingId, work) };
+  private binding(bindingId: string): SandboxBinding {
+    return { id: bindingId, withLock: (work) => this.deps.bindings.withBindingLock(bindingId, work) };
   }
 
   /**
@@ -243,7 +243,7 @@ export class SandboxSweeper {
       // or reclaimed; a Turn adopts an unrecorded one only by reconciling an
       // intent written after this read, past its deadline, minutes after
       // this kill.
-      await this.deps.bindings.withEnvironmentLock<void>(bindingId, async (current) => {
+      await this.deps.bindings.withBindingLock<void>(bindingId, async (current) => {
         if (current.sandboxId !== row.sandboxId || current.creatingSince?.getTime() !== row.creatingSince?.getTime()) { line.skipped++; return { value: undefined }; }
         acted = true;
         if (planned.action === "kill") await this.kill(round, sandbox.sandboxId);
@@ -256,7 +256,7 @@ export class SandboxSweeper {
       });
     } catch (error) {
       // The row moved on after the action was taken: nothing is left to do.
-      if (!(error instanceof EnvironmentBindingChanged)) this.failed(line, { sandboxId: sandbox.sandboxId, action: planned.action }, error);
+      if (!(error instanceof SandboxBindingChanged)) this.failed(line, { sandboxId: sandbox.sandboxId, action: planned.action }, error);
       else if (!acted) line.skipped++;
     }
     if (shortened) await this.restoreIfUsed(round, bindingId, sandbox.sandboxId);
@@ -283,7 +283,7 @@ export class SandboxSweeper {
       if (await this.deps.manager.reclaim(this.binding(bindingId))) line.killed++;
       else line.skipped++;
     } catch (error) {
-      if (error instanceof EnvironmentBindingChanged) line.skipped++;
+      if (error instanceof SandboxBindingChanged) line.skipped++;
       else this.failed(line, { sandboxId, action: "kill" }, error);
     }
   }
@@ -345,12 +345,12 @@ export class SandboxSweeper {
   private async reconcile(round: Round, bindingId: string, creatingSince: Date, planned?: Adopt): Promise<void> {
     if (stopped(round)) return;
     const { line } = round;
-    const { client, environmentSignals } = this.deps;
+    const { client, sandboxSignals } = this.deps;
     let outcome: Awaited<ReturnType<typeof reconcileBinding>>;
     try {
-      outcome = await reconcileBinding(client, signallingBinding(this.binding(bindingId), environmentSignals), creatingSince);
+      outcome = await reconcileBinding(client, signallingBinding(this.binding(bindingId), sandboxSignals), creatingSince);
     } catch (error) {
-      if (error instanceof EnvironmentBindingChanged) line.skipped++;
+      if (error instanceof SandboxBindingChanged) line.skipped++;
       else this.failed(line, planned ? { sandboxId: planned.sandboxId, action: "adopt" } : { bindingId, action: "adopt" }, error);
       return;
     }

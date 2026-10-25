@@ -58,7 +58,7 @@
 //     Cold = neither or no row; binding id = root Session id (sessions.delegation->>'sandboxSessionId'
 //     for Children). Any further columns (#290's last error) are only read through to_jsonb.
 //  A2 The intent deadline is creating_since + 180 s (ADR: CLAIM_SECONDS + 30).
-//  A3 Environment tool errors are native toolResult entries (`agent.context_entry`, entry.message.role
+//  A3 Sandbox tool errors are native toolResult entries (`agent.context_entry`, entry.message.role
 //     'toolResult', isError true) with `entry.message.details.code` ∈ {sandbox_unavailable,
 //     sandbox_creating}; when details are absent, the code is matched in the result text.
 //  A4 Spans are events `span.sandbox_prepare_start` / `span.sandbox_prepare_end` whose data carries
@@ -68,7 +68,7 @@
 //     is a start after a failed end in the same Turn, or data.attempt > 1.
 //  A5 The Turn-end error is `session.error {turnId, error: {code: 'sandbox_unavailable'}}`, written once
 //     before session.turn_completed. Takeovers are `session.turn_resumed {reason, generation}`.
-//  A6 `GET /v1/sessions/{id}` returns `environment: {state, since, last_error}` (lastError accepted too),
+//  A6 `GET /v1/sessions/{id}` returns `sandbox: {state, since, last_error}` (lastError accepted too),
 //     state ∈ cold|creating|ready|unavailable; last_error carries a code.
 //  A7 pending_events.claim_owner is `host_<uuid>` (session-router.ts, SessionRouter default; execution.ts
 //     passes none), so it cannot name a Pod. The owning Runner Pod is the one whose recent logs carry
@@ -110,7 +110,7 @@ export const SHAPES = {
   prepareStart: 'span.sandbox_prepare_start',
   prepareEnd: 'span.sandbox_prepare_end',
   turnEndingCode: 'sandbox_unavailable',
-  environmentCodes: ['sandbox_unavailable', 'sandbox_creating'],
+  sandboxCodes: ['sandbox_unavailable', 'sandbox_creating'],
   toolResultCode: (message) => message?.details?.code ?? message?.details?.error?.code,
   sessionErrorCode: (data) => data?.error?.code ?? data?.code,
   prepareOutcome: (data) => data?.outcome,
@@ -120,9 +120,9 @@ export const SHAPES = {
   preparePairId: (data) => data?.prepareId ?? data?.attemptId ?? data?.spanId,
   prepareAttempt: (data) => data?.attempt,
   prepareSucceeded: (data) => !SHAPES.prepareCode(data) && !/fail|error|unavailable|abort|timeout/i.test(String(SHAPES.prepareOutcome(data) ?? '')),
-  environment: (session) => session?.environment,
-  environmentLastErrorCode: (environment) => {
-    const last = environment?.last_error ?? environment?.lastError;
+  sandbox: (session) => session?.sandbox,
+  sandboxLastErrorCode: (sandbox) => {
+    const last = sandbox?.last_error ?? sandbox?.lastError;
     return last == null ? null : (typeof last === 'string' ? last : last.code ?? 'unknown');
   },
 };
@@ -138,7 +138,7 @@ export const BLANKED_SANDBOX_ENV = {
   VFS_API_BASE_URL: 'http://127.0.0.1:9',
 };
 
-const SYSTEM = 'Follow the verification instructions exactly. Use only the bash tool. A tool error about the environment or the Sandbox '
+const SYSTEM = 'Follow the verification instructions exactly. Use only the bash tool. A tool error about the Sandbox '
   + '(for example sandbox_unavailable or sandbox_creating) means the Sandbox was not ready: run the same command again.';
 
 /** One bash call that writes and prints a per-Session marker; safe to repeat. */
@@ -146,7 +146,7 @@ export function bashPrompt(marker) {
   const file = `/home/user/workspace/${marker}.txt`;
   const command = `echo ${marker} > ${file} && cat ${file}`;
   return `Use bash with exactly this command: ${JSON.stringify(command)}. It is safe to repeat. If a tool result is an error about `
-    + 'the environment or the Sandbox (for example sandbox_unavailable or sandbox_creating), or says that its outcome is unknown, run '
+    + 'the Sandbox (for example sandbox_unavailable or sandbox_creating), or says that its outcome is unknown, run '
     + `the same command again, at most five times in total. Once the command has printed ${marker}, reply with exactly `
     + `RESULT:${marker} and nothing else.`;
 }
@@ -177,7 +177,7 @@ export function textOf(content) {
   return (Array.isArray(content) ? content : []).map((c) => (typeof c === 'string' ? c : c?.text ?? '')).join('');
 }
 
-const codeInText = (text) => text.match(new RegExp(`\\b(${SHAPES.environmentCodes.join('|')})\\b`))?.[1];
+const codeInText = (text) => text.match(new RegExp(`\\b(${SHAPES.sandboxCodes.join('|')})\\b`))?.[1];
 
 /** Tool calls, from the display events and from native assistant entries, one per toolUseId. */
 export function toolUses(events) {
@@ -260,7 +260,7 @@ function finalText(events) {
   return native.at(-1) ?? '';
 }
 
-/** One Session's Turn: completion, Sandbox use, environment errors, takeovers and prepare spans. */
+/** One Session's Turn: completion, Sandbox use, Sandbox errors, takeovers and prepare spans. */
 export function summarizeSession(events, { marker }) {
   const results = toolResults(events);
   const sessionErrors = events.filter((x) => x.type === SHAPES.sessionError)
@@ -296,10 +296,10 @@ export function bindingState(row) {
 /**
  * The burst's acceptance (#292): every submitted Session completed and used its Sandbox, no binding
  * stayed Creating past its deadline, no Turn ended with sandbox_unavailable. `entries`:
- * [{sessionId, submitted, summary|null}]; `bindings`: Map id → BINDING_SQL row; `environments`:
- * Map id → GET /v1/sessions/{id}.environment; `seen`: per-binding samples of the burst phase.
+ * [{sessionId, submitted, summary|null}]; `bindings`: Map id → BINDING_SQL row; `sandboxes`:
+ * Map id → GET /v1/sessions/{id}.sandbox; `seen`: per-binding samples of the burst phase.
  */
-export function summarizeBurst(entries, { bindings = new Map(), environments = new Map(), seen = {}, minSandboxUsedRatio = 1 } = {}) {
+export function summarizeBurst(entries, { bindings = new Map(), sandboxes = new Map(), seen = {}, minSandboxUsedRatio = 1 } = {}) {
   const submitted = entries.filter((x) => x.submitted);
   const summaries = submitted.map((x) => ({ sessionId: x.sessionId, s: x.summary }));
   const ids = (pred) => summaries.filter(({ s }) => s && pred(s)).map((x) => x.sessionId);
@@ -309,7 +309,7 @@ export function summarizeBurst(entries, { bindings = new Map(), environments = n
   const prepares = summaries.flatMap(({ s }) => s?.prepares ?? []);
   const states = submitted.map((x) => [x.sessionId, bindingState(bindings.get(x.sessionId))]);
   const stuck = submitted.filter((x) => bindings.get(x.sessionId)?.past_deadline).map((x) => x.sessionId);
-  const env = [...environments.values()];
+  const reported = [...sandboxes.values()];
   const creatingToReady = Object.values(seen).filter((b) => b.readyAt && b.creatingSince).map((b) => ms(b.readyAt) - ms(b.creatingSince));
   const metrics = {
     sessions: entries.length, submitted: submitted.length, completed: completed.length, sandboxUsed: used.length,
@@ -317,7 +317,7 @@ export function summarizeBurst(entries, { bindings = new Map(), environments = n
     endedSandboxUnavailable: unavailable,
     sessionErrorsByCode: tally(summaries.flatMap(({ s }) => (s?.sessionErrors ?? []).map((e) => e.code))),
     toolErrorsByCode: tally(summaries.flatMap(({ s }) => (s?.toolErrors ?? []).map((e) => e.code ?? 'none'))),
-    sessionsWithEnvironmentToolErrors: ids((s) => s.toolErrors.some((e) => SHAPES.environmentCodes.includes(e.code))).length,
+    sessionsWithSandboxToolErrors: ids((s) => s.toolErrors.some((e) => SHAPES.sandboxCodes.includes(e.code))).length,
     takeovers: { sessions: ids((s) => s.resumed.length > 0).length,
       byReason: tally(summaries.flatMap(({ s }) => (s?.resumed ?? []).map((r) => r.reason ?? 'unknown'))),
       beforeFirstSandboxUse: ids((s) => s.resumed.length > 0 && (!s.sandboxUses.length || ms(s.resumed[0].ts) < ms(s.sandboxUses[0].ts))).length },
@@ -331,7 +331,7 @@ export function summarizeBurst(entries, { bindings = new Map(), environments = n
       withoutSandbox: states.filter(([, st]) => st !== 'ready').map(([id]) => id),
       reclaiming: submitted.filter((x) => bindings.get(x.sessionId)?.reclaiming).map((x) => x.sessionId) },
     creatingToReadySampledMs: distribution(creatingToReady),
-    environment: { byState: tally(env.map((e) => e?.state ?? 'absent')), lastErrorCodes: tally(env.map(SHAPES.environmentLastErrorCode).filter(Boolean)) },
+    sandbox: { byState: tally(reported.map((e) => e?.state ?? 'absent')), lastErrorCodes: tally(reported.map(SHAPES.sandboxLastErrorCode).filter(Boolean)) },
     notCompleted: submitted.filter((x) => !x.summary?.completed).map((x) => x.sessionId),
     notUsed: submitted.filter((x) => !x.summary?.sandboxUsed).map((x) => x.sessionId),
   };
@@ -707,11 +707,11 @@ const PHASES = {
       const s = e.burst.sessions[id];
       if (!(rows.get(id)?.inputs > 0)) return { sessionId: id, submitted: false, summary: null };
       const [events, session] = await Promise.all([ctx.events(id), ctx.api(`/v1/sessions/${id}`)]);
-      return { sessionId: id, submitted: true, summary: summarizeSession(events, { marker: s.marker }), environment: SHAPES.environment(session) };
+      return { sessionId: id, submitted: true, summary: summarizeSession(events, { marker: s.marker }), sandbox: SHAPES.sandbox(session) };
     });
     const bindings = await readBindings(ctx.pool, ids);
-    const environments = new Map(fetched.filter((f) => f.submitted).map((f) => [f.sessionId, f.environment]));
-    const { metrics, checks } = summarizeBurst(fetched, { bindings, environments, seen: e.burst.seen,
+    const sandboxes = new Map(fetched.filter((f) => f.submitted).map((f) => [f.sessionId, f.sandbox]));
+    const { metrics, checks } = summarizeBurst(fetched, { bindings, sandboxes, seen: e.burst.seen,
       minSandboxUsedRatio: num('VERIFY_MIN_SANDBOX_USED_RATIO', 1) });
     if (process.env.VERIFY_SKIP_FILES !== '1') {
       // Informational: the marker reached the Workspace through the mount.
@@ -724,7 +724,7 @@ const PHASES = {
       metrics.workspaceFiles = { checked: files.length, matching: files.filter(Boolean).length };
     }
     e.burst.result = { at: now(), metrics, perSession: Object.fromEntries(fetched.map((f) => [f.sessionId, {
-      submitted: f.submitted, binding: compactBinding(bindings.get(f.sessionId)), environment: f.environment ?? null,
+      submitted: f.submitted, binding: compactBinding(bindings.get(f.sessionId)), sandbox: f.sandbox ?? null,
       ...(f.summary ? { completed: f.summary.completed, sandboxUsed: f.summary.sandboxUsed, answered: f.summary.answered,
         endedSandboxUnavailable: f.summary.endedSandboxUnavailable, sessionErrors: f.summary.sessionErrors, toolErrors: f.summary.toolErrors,
         resumed: f.summary.resumed, prepares: f.summary.prepares, prepareRetries: f.summary.prepareRetries, bashCalls: f.summary.bashCalls } : {}) }])) };
@@ -793,8 +793,8 @@ const PHASES = {
     const { metrics, checks } = evaluateKill({ events, marker: k.marker, creatingSince: k.creatingSince, disruptedAt: k.disruptedAt, marginSeconds });
     const row = (await readBindings(ctx.pool, [k.sessionId])).get(k.sessionId);
     const session = await ctx.api(`/v1/sessions/${k.sessionId}`);
-    k.result = { at: now(), marginSeconds, metrics, binding: compactBinding(row), environment: SHAPES.environment(session) ?? null };
-    console.log(`SUMMARY ${JSON.stringify({ ...metrics, prepares: metrics.prepares.length, binding: k.result.binding, environment: k.result.environment })}`);
+    k.result = { at: now(), marginSeconds, metrics, binding: compactBinding(row), sandbox: SHAPES.sandbox(session) ?? null };
+    console.log(`SUMMARY ${JSON.stringify({ ...metrics, prepares: metrics.prepares.length, binding: k.result.binding, sandbox: k.result.sandbox })}`);
     for (const c of checks) ctx.check(c.name, c.ok, c.details, c.acceptance);
   },
 

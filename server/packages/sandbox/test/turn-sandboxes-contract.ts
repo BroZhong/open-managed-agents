@@ -168,7 +168,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(finish).toHaveBeenCalledTimes(2);
     });
 
-    it("fails the operations that met an environment failure with sandbox_unavailable, tells the Turn of the preparation and the operation, and prepares again on the next one", async () => {
+    it("fails the operations that met a Sandbox unavailability with sandbox_unavailable, tells the Turn of the preparation and the operation, and prepares again on the next one", async () => {
       const h = await setup();
       const session = await h.session();
       await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
@@ -178,9 +178,9 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       // The Turn hears of each operation that met the failure, after the preparation that failed.
       const heard: string[] = [];
       const sandboxPrepares = { started: vi.fn(), ended: (outcome: SandboxPrepareOutcome) => { prepares.push(outcome); heard.push(`preparation ${outcome.outcome}`); } };
-      const environmentFailed = (error: SandboxUnavailable) => { heard.push(`operation failed: ${error.reason}`); };
+      const sandboxUnavailable = (error: SandboxUnavailable) => { heard.push(`operation failed: ${error.reason}`); };
       const fence = await h.claim(session);
-      const lease = (await h.acquire(session, fence, { sandboxPrepares, environmentFailed }))!;
+      const lease = (await h.acquire(session, fence, { sandboxPrepares, sandboxUnavailable }))!;
       const failure = await lease.executor.readFile("saved.txt").catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(SandboxUnavailable);
       expect(failure).toMatchObject({ code: "sandbox_unavailable", reason: "mount", details: { reason: "mount" },
@@ -245,7 +245,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const h = await setup();
       vi.spyOn(h.manager, "beginActivity").mockRejectedValue(new Error("Sandbox termination cleanup is still pending; retry later"));
       const session = await h.session();
-      const binding = vi.spyOn(h.stores.delegationStore, "withEnvironmentLock");
+      const binding = vi.spyOn(h.stores.delegationStore, "withBindingLock");
       await expect(h.acquire(session, await h.claim(session))).rejects.toThrow("cleanup is still pending");
       // Opened, which starts nothing, but never prepared.
       expect(binding).not.toHaveBeenCalled();
@@ -410,7 +410,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(list).toHaveBeenCalledExactlyOnceWith({ metadata: { "oma.dev/binding": session.id }, states: ["running", "paused"] });
       expect((await list.mock.results[0].value).map(({ sandboxId }: { sandboxId: string }) => sandboxId)).toEqual([extra, pausedExtra]);
       expect(await h.client.state(othersExtra)).toBe("running");
-      expect(await h.stores.delegationStore.withEnvironmentLock(session.id, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } })))
+      expect(await h.stores.delegationStore.withBindingLock(session.id, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } })))
         .toEqual({ sandboxId: null, creatingSince: null });
       // The other Session goes on in its own Sandbox.
       expect(await h.turn(other, (executor) => executor!.readFile("other.txt"))).toBe("theirs");

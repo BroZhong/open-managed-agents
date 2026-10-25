@@ -1,13 +1,13 @@
-import type { SandboxEnvironmentBinding } from "./sandbox-manager.js";
+import type { SandboxBinding } from "./sandbox-manager.js";
 
 /**
- * The binding's `environment` hint (ADR-0023): its row left Creating, for
+ * The binding's `sandbox` hint (ADR-0023): its row left Creating, for
  * Ready or Cold, or its reclamation finished. A Turn waiting for either reads
  * the row again when the hint arrives and every {@link BINDING_REREAD_MS}
  * regardless, and acts on the row alone: a lost or late hint costs a wait at
  * most one period, and the intent deadline still bounds it.
  */
-export interface EnvironmentSignals {
+export interface SandboxSignals {
   /** Tell every Runner's waiters, once the change committed. */
   publish(bindingId: string): void;
   /** Hear of every binding's changes until the returned function is called. */
@@ -30,7 +30,7 @@ export class BindingChanges {
   private changed = false;
   private wake?: () => void;
   private readonly unsubscribe: () => void;
-  constructor(signals: EnvironmentSignals | undefined, bindingId: string) {
+  constructor(signals: SandboxSignals | undefined, bindingId: string) {
     this.unsubscribe = signals?.subscribe((id) => {
       if (id !== bindingId) return;
       this.changed = true;
@@ -73,7 +73,7 @@ export class BindingChanges {
  * binding's waiters on every Runner. A move that lost its compare-and-set
  * rejects and tells no one.
  */
-export function signallingBinding(binding: SandboxEnvironmentBinding, signals: EnvironmentSignals | undefined): SandboxEnvironmentBinding {
+export function signallingBinding(binding: SandboxBinding, signals: SandboxSignals | undefined): SandboxBinding {
   if (!signals) return binding;
   return {
     ...binding,

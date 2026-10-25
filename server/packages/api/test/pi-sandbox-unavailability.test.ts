@@ -10,12 +10,12 @@ import { workspaceObjectPrefix, type StoredEvent } from "@oma-server/store";
 import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition } from "@open-managed-agents/adapter-pi-agent";
 
 /**
- * Environment failures beside a real Pi Turn (ADR-0023, #287): a tool call
+ * Sandbox unavailability beside a real Pi Turn (ADR-0023, #287): a tool call
  * that meets one is a tool error whose native result carries `details.code`,
  * the model can retry, and the Turn ends with sandbox_unavailable because its
- * environment never became ready again. The model's first request does not
+ * Sandbox never became ready again. The model's first request does not
  * wait for the Sandbox's connect. (A Turn that recovers records no error:
- * session-router's environment-failures tests.)
+ * session-router's sandbox-unavailability tests.)
  */
 
 /** One Anthropic Messages response as server-sent events. */
@@ -42,7 +42,7 @@ const provider: CustomProviderDefinition = { id: "scripted", name: "Scripted", a
 
 let agentDir: string;
 beforeEach(async () => {
-  agentDir = await mkdtemp(join(tmpdir(), "oma-pi-environment-errors-"));
+  agentDir = await mkdtemp(join(tmpdir(), "oma-pi-sandbox-unavailability-"));
   vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 });
 afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await rm(agentDir, { recursive: true, force: true }); });
@@ -105,7 +105,7 @@ it("returns each tool call of a Pi Turn whose Sandbox is never available as a to
   expect(log.filter((stored) => stored.type === "span.sandbox_prepare_end").map((stored) => stored.data))
     .toEqual([0, 1].map(() => expect.objectContaining({ outcome: "failed", code: "sandbox_unavailable", reason: "rejected" })));
   // The Session API reports it from the binding (#290).
-  expect(await h.stores.delegationStore.environment(h.session.id))
+  expect(await h.stores.delegationStore.sandbox(h.session.id))
     .toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "rejected" } });
   expect(h.errors).toEqual([]);
 }, 60000);
@@ -120,7 +120,7 @@ it("sends a Pi Turn's first model request before the Sandbox's connect returns",
   // The binding is Ready: a tool of an earlier Turn created its Sandbox.
   await h.manager.open({ tenantId: "tenant", workspaceId: h.session.workspaceId,
     workspaceMount: { ...workspaceMount, prefix: workspaceObjectPrefix("tenant", h.session.workspaceId) } },
-  { id: h.session.id, withLock: (work) => h.stores.delegationStore.withEnvironmentLock(h.session.id, work) }).writeFile("saved.txt", "kept");
+  { id: h.session.id, withLock: (work) => h.stores.delegationStore.withBindingLock(h.session.id, work) }).writeFile("saved.txt", "kept");
   let connected!: () => void;
   const connecting = new Promise<void>((resolve) => { connected = resolve; });
   const reconnect = h.sandbox.reconnect.bind(h.sandbox);

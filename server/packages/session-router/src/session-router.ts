@@ -824,15 +824,15 @@ export class SessionRouter {
   }
 
   /**
-   * Record, as the Turn ends, that a tool call of it met an environment
-   * failure and the environment never became ready again (ADR-0023): like
+   * Record, as the Turn ends, that a tool call of it met a Sandbox
+   * unavailability and the Sandbox never became ready again (ADR-0023): like
    * the Workspace check, the error keeps the answer. A Turn that recovered,
    * or whose failed preparation no tool call waited for, records nothing.
    * Only the Turn's end writes it: planResume takes any session.error in a
-   * Turn as the Turn's end, so mid-Turn an environment failure is only a tool
-   * error, and a Turn taken over after one continues.
+   * Turn as the Turn's end, so mid-Turn a Sandbox unavailability is only a
+   * tool error, and a Turn taken over after one continues.
    */
-  private async checkEnvironment(
+  private async checkSandbox(
     journal: TurnJournal,
     sandboxPrepares: SandboxPrepareSpans,
     pendingEventId: string,
@@ -1178,7 +1178,7 @@ export class SessionRouter {
       // ends the Turn (ADR-0022).
       let skillInstalls: SkillInstallSpans | undefined;
       let installFailure: SkillInstallError | undefined;
-      // The spans of the preparations of the Turn's environment, and whether
+      // The spans of the preparations of the Turn's Sandbox, and whether
       // it was left unavailable, by this attempt or an earlier one (ADR-0023).
       let sandboxPrepares: SandboxPrepareSpans | undefined;
       // Every durable write of this attempt goes through its one journal.
@@ -1261,10 +1261,10 @@ export class SessionRouter {
         // complete install is recorded on the binding.
         await lease?.prepared();
         await skillInstalls?.settled();
-        // A preparation still running ends with the Turn; an environment
-        // that failed and never became ready again ends it with an error.
+        // A preparation still running ends with the Turn; a Sandbox that
+        // failed and never became ready again ends it with an error.
         turnPrepares.endTurn();
-        await this.checkEnvironment(journal, turnPrepares, pendingEvent.id, endedTurnId);
+        await this.checkSandbox(journal, turnPrepares, pendingEvent.id, endedTurnId);
         // No Delta may land in the stream after it is reclaimed.
         await journal.endDeltas();
         await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
@@ -1474,13 +1474,13 @@ export class SessionRouter {
       // a Resumed Turn installs the current one. Preparation connects a Ready
       // binding's Sandbox, verifies its mount and decides the install beside
       // inference, and so does the install; the first Sandbox operation waits
-      // for them (ADR-0022, ADR-0023). An environment failure is a tool error,
-      // never the end of the Turn; the Turn's end judges from the calls that
-      // met one whether its environment failed.
+      // for them (ADR-0022, ADR-0023). A Sandbox unavailability is a tool
+      // error, never the end of the Turn; the Turn's end judges from the calls
+      // that met one whether its Sandbox stayed unavailable.
       lease = await this.sandboxes?.acquire({
         session, agent: currentAgent, fence: pendingFence, signal: turnController.signal, skills, skillInstalls, sandboxPrepares,
         assertOwner: assertExecutionOwner,
-        environmentFailed: () => turnPrepares.toolFailed(),
+        sandboxUnavailable: () => turnPrepares.toolFailed(),
         // The first operation to find the install failed ends the Turn: the
         // Adapter run is aborted and the Turn closed with its error. A Turn
         // already stopping or interrupted ends as it would anyway.

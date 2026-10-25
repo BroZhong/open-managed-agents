@@ -9,7 +9,7 @@ import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { sandboxBaseEnvFromKubernetes } from "./lib/sandbox-base-secret.js";
 import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
-import { environmentSignals } from "./lib/environment-signals.js";
+import { sandboxSignals } from "./lib/sandbox-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
@@ -32,7 +32,7 @@ export async function startExecution(deps: PgStores & {
   // The packaged mock emits model spans and text chunks; lifecycle events stay
   // owned by the SessionRouter. The local infrastructure profile runs only mock.
   const mockAdapter = new MockAdapter({ delayMs: Number(process.env.MOCK_DELAY_MS ?? 75) });
-  // The gateway, the native lifecycle and the environment hints the Sandbox
+  // The gateway, the native lifecycle and the `sandbox` hints the Sandbox
   // Manager and the sweeper share.
   const native = !execution?.sandboxManager && workspaceConfig ? {
     client: new E2BSandboxClient({
@@ -45,10 +45,10 @@ export async function startExecution(deps: PgStores & {
     environment: workspaceConfig.environment,
     lifecycle: await sandboxLifecycle(deps.pool),
     // A Turn waiting for a binding another Runner creates or reclaims continues on its hint.
-    hints: environmentSignals(deps.signals),
+    hints: sandboxSignals(deps.signals),
   } : undefined;
   const sandboxManager = execution?.sandboxManager ?? (native ? new DefaultSandboxManager({
-    sandboxClient: native.client, environment: native.environment, lifecycle: native.lifecycle, environmentSignals: native.hints,
+    sandboxClient: native.client, environment: native.environment, lifecycle: native.lifecycle, sandboxSignals: native.hints,
     // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
     skillBundleStore: deps.skillBundleStore,
   }) : undefined);
@@ -86,7 +86,7 @@ export async function startExecution(deps: PgStores & {
   // Runner's Sandbox Manager, as termination does.
   const sweeper = native && sandboxManager ? new SandboxSweeper({
     client: native.client, facts: native.lifecycle, bindings: deps.delegationStore, manager: sandboxManager,
-    environment: native.environment, environmentSignals: native.hints,
+    environment: native.environment, sandboxSignals: native.hints,
   }) : undefined;
   sweeper?.start();
   return { router, ready: () => dispatch.ready, stop: async () => { await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };

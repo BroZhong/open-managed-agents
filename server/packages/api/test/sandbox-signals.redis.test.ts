@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRedisClient, RedisSessionSignals, type RedisClient } from "@oma-server/redis";
 import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createMemoryStores } from "@oma-server/store-memory";
-import type { EnvironmentBinding, EnvironmentLockResult } from "@oma-server/store";
-import { BINDING_REREAD_MS, DefaultSandboxManager, FakeSandboxClient, type EnvSpec, type SandboxEnvironmentBinding } from "@oma-server/sandbox";
-import { environmentSignals } from "../src/lib/environment-signals.js";
+import type { SandboxBindingRow, BindingLockResult } from "@oma-server/store";
+import { BINDING_REREAD_MS, DefaultSandboxManager, FakeSandboxClient, type EnvSpec, type SandboxBinding } from "@oma-server/sandbox";
+import { sandboxSignals } from "../src/lib/sandbox-signals.js";
 
 // Opt-in: real Pub/Sub on a disposable Redis (REDIS_TEST_URL); never a shared instance.
 const url = process.env.REDIS_TEST_URL;
@@ -16,7 +16,7 @@ const until = async (check: () => boolean | Promise<boolean>) => {
   throw new Error("condition not reached");
 };
 
-describe.skipIf(!url)("a binding's environment hint between Runners over a real Redis (ADR-0023)", () => {
+describe.skipIf(!url)("a binding's `sandbox` hint between Runners over a real Redis (ADR-0023)", () => {
   const clients: RedisClient[] = [];
   const closes: (() => void)[] = [];
   afterEach(async () => {
@@ -35,23 +35,23 @@ describe.skipIf(!url)("a binding's environment hint between Runners over a real 
   };
 
   it("continues a Child Session's waiting Turn as soon as the parent's Runner records the Sandbox, each Runner subscribed to the control channel only", async () => {
-    const namespace = `environment-${Date.now()}`;
+    const namespace = `sandbox-${Date.now()}`;
     const stores = createMemoryStores();
     const gateway = new FakeSandboxClient();
     const runner = async () => new DefaultSandboxManager({
-      sandboxClient: gateway, environment: "test", environmentSignals: environmentSignals(await runnerSignals(namespace)),
+      sandboxClient: gateway, environment: "test", sandboxSignals: sandboxSignals(await runnerSignals(namespace)),
     });
     const [parentRunner, childRunner] = [await runner(), await runner()];
     /** A Turn's binding over the shared store, counting the Turn's reads of the row. */
     const binding = () => {
       const counted = {
         id: "root", reads: 0,
-        withLock<T>(work: (row: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+        withLock<T>(work: (row: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
           counted.reads++;
-          return stores.delegationStore.withEnvironmentLock("root", work);
+          return stores.delegationStore.withBindingLock("root", work);
         },
       };
-      return counted satisfies SandboxEnvironmentBinding;
+      return counted satisfies SandboxBinding;
     };
     const subscribers = async () => {
       const [, control, , output] = await clients[0].pubsub("NUMSUB", `${namespace}:session-control`, `${namespace}:session-output`) as [string, number, string, number];

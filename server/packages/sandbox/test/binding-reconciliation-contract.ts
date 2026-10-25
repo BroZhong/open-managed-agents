@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
-import type { Agent, DelegationStore, EnvironmentBinding, EnvironmentLockResult, PendingEventFence, Session, SessionStore } from "@oma-server/store";
+import type { Agent, DelegationStore, SandboxBindingRow, BindingLockResult, PendingEventFence, Session, SessionStore } from "@oma-server/store";
 import { DefaultSandboxManager, SandboxSessionClosed, SandboxUnavailable } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SandboxCreateRejected, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
@@ -8,7 +8,7 @@ import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox
 import { EMPTY_SKILL_SET, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { DefaultTurnSandboxes, type SandboxLease } from "../src/turn-sandboxes.js";
 import { workspaceMountMetadata } from "../src/workspace-mount.js";
-import { BINDING_REREAD_MS, type EnvironmentSignals } from "../src/environment-signals.js";
+import { BINDING_REREAD_MS, type SandboxSignals } from "../src/sandbox-signals.js";
 import { databaseClock, signalBus } from "./bindings.js";
 import { Bundles, TENANT, text } from "./skill-bundles.js";
 import type { TurnSandboxStores } from "./turn-sandboxes-contract.js";
@@ -59,14 +59,14 @@ function watch<T>(promise: Promise<T>) {
 
 /**
  * One Runner: its own Sandbox Manager and Turn side of the Sandbox protocol
- * over the shared stores, the shared gateway and the shared environment
+ * over the shared stores, the shared gateway and the shared `sandbox`
  * hints. Lost at `loss`, every call it makes stops settling.
  */
 class Runner {
   dead = false;
   readonly sandboxes: DefaultTurnSandboxes;
-  constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: EnvironmentSignals, readonly loss?: LossPoint) {
-    const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", environmentSignals: hints,
+  constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: SandboxSignals, readonly loss?: LossPoint) {
+    const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", sandboxSignals: hints,
       lifecycle: stores.lifecycle && this.alive(stores.lifecycle) });
     this.sandboxes = new DefaultTurnSandboxes({ manager, bindings: this.bindings(stores.delegationStore),
       sessions: this.alive(stores.sessionStore) as Pick<SessionStore, "getById">, workspaceMount });
@@ -87,10 +87,10 @@ class Runner {
   }
   private bindings(store: DelegationStore): DelegationStore {
     const alive = this.alive(store);
-    const withEnvironmentLock = <T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> => {
+    const withBindingLock = <T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> => {
       if (this.dead) return GONE;
-      let committed: EnvironmentLockResult<T>["next"];
-      return this.live(store.withEnvironmentLock(bindingId, async (binding) => {
+      let committed: BindingLockResult<T>["next"];
+      return this.live(store.withBindingLock(bindingId, async (binding) => {
         const result = await work(binding);
         if (this.loss === "during-write" && typeof result.next === "object") {
           // The write was sent and never committed: nothing moves.
@@ -105,7 +105,7 @@ class Runner {
         return value;
       }));
     };
-    return new Proxy(alive, { get: (object, key) => key === "withEnvironmentLock" ? withEnvironmentLock : Reflect.get(object, key) });
+    return new Proxy(alive, { get: (object, key) => key === "withBindingLock" ? withBindingLock : Reflect.get(object, key) });
   }
   private client(gateway: FakeSandboxClient): SandboxClient {
     const alive = this.alive(gateway);
@@ -196,7 +196,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
         await lapse(target, fence);
       };
       /** The binding row as it is now. */
-      const row = (bindingId: string) => stores.delegationStore.withEnvironmentLock(bindingId, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
+      const row = (bindingId: string) => stores.delegationStore.withBindingLock(bindingId, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
       const elapse = async (seconds: number) => { gatewayClock.elapse(seconds); await stores.elapse(seconds); };
       /** The Sandboxes the gateway lists for a binding. */
       const listed = async (bindingId: string) => (await gateway.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: bindingId }, states: ["running", "paused"] }))
@@ -242,13 +242,13 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const intent = await h.row(session.id);
       expect(intent).toEqual({ sandboxId: null, creatingSince: expect.any(Date) });
       // The Session API reports the intent its lost Runner left (#290).
-      expect(await h.stores.delegationStore.environment(session.id)).toEqual({ state: "creating", since: intent.creatingSince, lastError: null });
+      expect(await h.stores.delegationStore.sandbox(session.id)).toEqual({ state: "creating", since: intent.creatingSince, lastError: null });
       expect(h.gateway.created).toEqual([]);
       const { sandboxId } = await takeOver(h, session);
       expect(h.list).toHaveBeenCalledTimes(1);
       expect(h.gateway.created).toEqual([sandboxId]);
       expect(await h.row(session.id)).toEqual({ sandboxId, creatingSince: null });
-      expect(await h.stores.delegationStore.environment(session.id)).toMatchObject({ state: "ready", lastError: null });
+      expect(await h.stores.delegationStore.sandbox(session.id)).toMatchObject({ state: "ready", lastError: null });
     });
 
     it("adopts the Sandbox the gateway claimed after the Runner was lost during create", async () => {
@@ -437,14 +437,14 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(h.list).not.toHaveBeenCalled();
       expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
       // The Session API reports the failure until the Sandbox is created (#290).
-      await vi.waitFor(async () => expect(await h.stores.delegationStore.environment(session.id))
+      await vi.waitFor(async () => expect(await h.stores.delegationStore.sandbox(session.id))
         .toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "rejected" } }));
       // Cold: the next tool creates at once, with no deadline to wait for.
       h.gateway.createFault = undefined;
       const sandboxId = await h.toolsWork(lease, session.id);
       expect(h.gateway.created).toEqual([sandboxId]);
       expect(h.list).not.toHaveBeenCalled();
-      expect(await h.stores.delegationStore.environment(session.id)).toMatchObject({ state: "ready", lastError: null });
+      expect(await h.stores.delegationStore.sandbox(session.id)).toMatchObject({ state: "ready", lastError: null });
     });
 
     it("waits for the deadline after a create whose answer was lost, then adopts the Sandbox the gateway did create, in the same tool call", async () => {
@@ -519,7 +519,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(h.list).toHaveBeenCalledTimes(2);
       expect(h.gateway.created).toEqual([]);
       expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
-      await vi.waitFor(async () => expect(await h.stores.delegationStore.environment(session.id))
+      await vi.waitFor(async () => expect(await h.stores.delegationStore.sandbox(session.id))
         .toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "unknown" } }));
     }, 15_000);
 
@@ -634,7 +634,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
         expect(h.gateway.destroyed).toEqual([]);
         release();
         // The creator's tool fails: with the native lifecycle the claimed
-        // reclamation refuses its binding write, an environment failure the
+        // reclamation refuses its binding write, a Sandbox unavailability the
         // tool reports (#287); without it the creator records its Sandbox,
         // and finds its Session terminated.
         const failure = await tool.promise.catch((error: unknown) => error);

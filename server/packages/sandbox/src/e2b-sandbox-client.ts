@@ -655,8 +655,8 @@ async function* streamRun(
       error = reason instanceof Error ? reason : new Error(String(reason));
       if (handle) {
         // A lost stream is not exit evidence. Do not issue a new destructive
-        // RPC into a Paused/unknown environment or block recovery on that RPC.
-        // Explicit user cancellation owns killPromise above; environmental
+        // RPC into a Paused/unknown Sandbox or block recovery on that RPC.
+        // Explicit user cancellation owns killPromise above; transport
         // failures disconnect and preserve uncertainty for the caller.
         try { await handle.disconnect(); } catch { /* Preserve the original error. */ }
       }

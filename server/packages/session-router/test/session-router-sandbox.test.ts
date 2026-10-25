@@ -125,7 +125,7 @@ const legacyAgent: Agent = {
 /**
  * Wire the real Sandbox Manager with a shared mounted Workspace and an
  * in-memory Skill Bundle store, behind the Turn Sandboxes over the in-memory
- * environment bindings. The Router still owns the complete Session
+ * Sandbox Bindings. The Router still owns the complete Session
  * lifecycle and emits the durable completion/error events.
  */
 function createDeps(opts: {
@@ -938,8 +938,8 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     await router.handleNewEvent(session.id, sandboxedAgent);
     expect(adapterRuns).toBe(1);
 
-    // The next Turn runs: its tool fails with the environment failure, and
-    // the Turn, its environment never ready again, ends with sandbox_unavailable.
+    // The next Turn runs: its tool fails with the Sandbox unavailability, and
+    // the Turn, its Sandbox never ready again, ends with sandbox_unavailable.
     await enqueue(pendingEventStore, session.id, "cannot execute while unavailable");
     await router.handleNewEvent(session.id, sandboxedAgent);
     expect(adapterRuns).toBe(2);
@@ -1351,7 +1351,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
   });
 });
 
-describe('SessionRouter — recoverable environment faults', () => {
+describe('SessionRouter — recoverable Sandbox faults', () => {
   it('continues within one Turn after a paused tool failure without replaying its write', async () => {
     const sandboxClient = new FakeSandboxClient();
     const errors: string[] = [];
@@ -1369,7 +1369,7 @@ describe('SessionRouter — recoverable environment faults', () => {
     } };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({ adapter, sandboxClient });
     const session = await sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
-    await enqueue(pendingEventStore, session.id, 'continue after environment recovery');
+    await enqueue(pendingEventStore, session.id, 'continue after Sandbox recovery');
     await router.handleNewEvent(session.id, sandboxedAgent);
     expect(runs).toBe(1);
     expect(errors).toHaveLength(1);

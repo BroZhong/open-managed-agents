@@ -34,7 +34,7 @@ import {
   SANDBOX_WORKSPACE_ROOT,
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
-import { ToolEnvironmentErrors } from "./environment-errors.js";
+import { ExecutorUnavailableErrors } from "./executor-unavailable.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { mcpGatewayToolName } from "./mcp-gateway.js";
 import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
@@ -457,10 +457,10 @@ export class PiAgentAdapter implements Adapter {
     // Real SDK path. When a ToolExecutor is injected, disable Pi's own
     // built-in fs/bash tools ("builtin") and register custom tools that proxy
     // into the executor (ADR-0002 §2). When absent, keep Pi's default tools.
-    // An environment failure of the executor is a tool error carrying its code (ADR-0023).
-    const environmentErrors = new ToolEnvironmentErrors();
+    // An unavailable executor is a tool error carrying its code (ADR-0023).
+    const unavailableErrors = new ExecutorUnavailableErrors();
     const customTools = args.input.toolExecutor
-      ? [...buildCustomTools(args.input.toolExecutor).map(environmentErrors.wrap), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents) : [])]
+      ? [...buildCustomTools(args.input.toolExecutor).map(unavailableErrors.wrap), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents) : [])]
       : undefined;
 
     const agentDir = getAgentDir();
@@ -533,7 +533,7 @@ export class PiAgentAdapter implements Adapter {
         // never compete with the Host-owned tools, including in local dev.
         extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter(extension =>
           !["Agent", "get_subagent_result", "steer_subagent"].some(name => extension.tools.has(name))) }),
-        extensionFactories: [journal.extension, imageBudgetExtension(), ...(customTools ? [environmentErrors.extension, createManagedSkillCommandExtension(skillDescriptors)] : [])],
+        extensionFactories: [journal.extension, imageBudgetExtension(), ...(customTools ? [unavailableErrors.extension, createManagedSkillCommandExtension(skillDescriptors)] : [])],
         // When we inject the skills section ourselves (custom-tool path), skip
         // Pi's own skill loading so the section is not duplicated / re-gated.
         ...(injectSkillsIntoPrompt || args.input.execution?.isChild

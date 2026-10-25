@@ -1,4 +1,4 @@
-import type { EnvironmentBinding } from './delegation-store.js';
+import type { SandboxBindingRow } from './delegation-store.js';
 import type { PendingEventFence } from './pending-event-store.js';
 
 /** A Turn's business execution identity, not an independent resource lease. */
@@ -10,12 +10,12 @@ export interface SandboxActivity {
 /**
  * A committed explicit reclamation (ADR-0023, "Release and reclamation"): the
  * binding row as it was claimed, `now` read at the claim. Until it completes
- * the binding admits no Turn and no environment transaction, so its Sandbox
+ * the binding admits no Turn and no binding transaction, so its Sandbox
  * and creation intent stay as claimed. Every Sandbox the gateway lists for the
  * binding is the reclamation's, whatever the row records: a binding without a
  * Sandbox can still have one a lost create left.
  */
-export interface SandboxReclamation extends EnvironmentBinding { bindingId: string }
+export interface SandboxReclamation extends SandboxBindingRow { bindingId: string }
 /** One binding row and its Sessions, as the sweeper (ADR-0023, "The sweeper") reads them. */
 export interface SandboxBindingFacts {
   sandboxId: string | null;

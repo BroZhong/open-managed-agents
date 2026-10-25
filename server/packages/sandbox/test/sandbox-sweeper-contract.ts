@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { DelegationStore, EnvironmentTransition, SandboxActivity, SandboxLifecycleStore, SandboxSweepStore } from "@oma-server/store";
+import type { DelegationStore, BindingTransition, SandboxActivity, SandboxLifecycleStore, SandboxSweepStore } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, SANDBOX_RUNNING_SECONDS, type SandboxClient } from "../src/sandbox-client.js";
 import { DefaultSandboxManager } from "../src/sandbox-manager.js";
@@ -9,7 +9,7 @@ import { signalBus } from "./bindings.js";
 
 /** One Runner's stores: its own binding operations over the rows every Runner shares. */
 export interface SweeperRunnerStores {
-  bindings: Pick<DelegationStore, "withEnvironmentLock">;
+  bindings: Pick<DelegationStore, "withBindingLock">;
   facts: SandboxSweepStore;
   /** Turn admission and reclamation, as the Runner's Sandbox Manager uses them. */
   lifecycle: SandboxLifecycleStore;
@@ -91,11 +91,11 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
         if (paused) gateway.pause(id);
         return id;
       };
-      const move = (bindingId: string, next: EnvironmentTransition) =>
-        stores.runner().bindings.withEnvironmentLock(bindingId, async () => ({ next, value: undefined }));
+      const move = (bindingId: string, next: BindingTransition) =>
+        stores.runner().bindings.withBindingLock(bindingId, async () => ({ next, value: undefined }));
       /** A Runner's Sandbox Manager: it admits that Runner's Turns and reclaims bindings. */
       const manager = (runner: SweeperRunnerStores, client: SandboxClient = gateway) =>
-        new DefaultSandboxManager({ sandboxClient: client, environment: ENVIRONMENT, lifecycle: runner.lifecycle, environmentSignals: hints });
+        new DefaultSandboxManager({ sandboxClient: client, environment: ENVIRONMENT, lifecycle: runner.lifecycle, sandboxSignals: hints });
       /**
        * A sweeper on its own Runner. `afterScan` runs once its round has read
        * the listed bindings, before any action; `afterRecheck` once the first
@@ -115,7 +115,7 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
         };
         const client = hooks.client ?? gateway;
         return new SandboxSweeper({ client, facts, bindings: runner.bindings, manager: manager(runner, client), environment: ENVIRONMENT,
-          environmentSignals: hints, logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
+          sandboxSignals: hints, logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
       };
       const alive = async (id: string) => await gateway.state(id) !== "missing";
       const deadlineOf = async (id: string) => (await gateway.listSandboxes({ metadata: {}, states: ["running", "paused"] }))

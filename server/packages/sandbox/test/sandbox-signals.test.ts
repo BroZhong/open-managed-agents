@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
-import type { EnvironmentBinding, EnvironmentLockResult, SandboxActivity, SandboxLifecycleStore } from "@oma-server/store";
-import { DefaultSandboxManager, type EnvSpec, type SandboxEnvironmentBinding } from "../src/sandbox-manager.js";
+import type { SandboxBindingRow, BindingLockResult, SandboxActivity, SandboxLifecycleStore } from "@oma-server/store";
+import { DefaultSandboxManager, type EnvSpec, type SandboxBinding } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS } from "../src/sandbox-client.js";
-import { BINDING_REREAD_MS } from "../src/environment-signals.js";
+import { BINDING_REREAD_MS } from "../src/sandbox-signals.js";
 import { signalBus } from "./bindings.js";
 
 const spec: EnvSpec = { tenantId: "t", workspaceId: "w", workspaceMount: {
@@ -35,28 +35,28 @@ function fleet() {
     begin: vi.fn(async () => !reclaiming),
     finish: vi.fn(async () => {}),
     claimReclamation: vi.fn(async (bindingId: string) => {
-      const row = await stores.delegationStore.withEnvironmentLock(bindingId, async ({ sandboxId, creatingSince, now }) => ({ value: { sandboxId, creatingSince, now } }));
+      const row = await stores.delegationStore.withBindingLock(bindingId, async ({ sandboxId, creatingSince, now }) => ({ value: { sandboxId, creatingSince, now } }));
       reclaiming = true;
       return { bindingId, ...row };
     }),
     completeReclamation: vi.fn(async ({ bindingId }) => {
-      await stores.delegationStore.withEnvironmentLock(bindingId, async () => ({ next: "cold", value: undefined }));
+      await stores.delegationStore.withBindingLock(bindingId, async () => ({ next: "cold", value: undefined }));
       reclaiming = false;
     }),
   };
   /** A Runner; one without hints reads the rows it waits for on its own. */
   const runner = ({ hints = true } = {}) =>
-    new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle, environmentSignals: hints ? bus : undefined });
+    new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle, sandboxSignals: hints ? bus : undefined });
   /** A Turn's binding on its Runner, counting the Turn's reads of the row. */
   const binding = (id = "root") => {
     const counted = {
       id, reads: 0,
-      withLock<T>(work: (row: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+      withLock<T>(work: (row: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
         counted.reads++;
-        return stores.delegationStore.withEnvironmentLock(id, work);
+        return stores.delegationStore.withBindingLock(id, work);
       },
     };
-    return counted satisfies SandboxEnvironmentBinding;
+    return counted satisfies SandboxBinding;
   };
   /** The next create stalls at the gateway's claim until released. */
   const stallCreate = () => {
@@ -66,11 +66,11 @@ function fleet() {
     gateway.createFault = async (step) => { if (step === "claim" && !stalled) { stalled = true; await released; } };
     return release;
   };
-  const row = (id = "root") => stores.delegationStore.withEnvironmentLock(id, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
+  const row = (id = "root") => stores.delegationStore.withBindingLock(id, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
   return { gateway, bus, lifecycle, runner, binding, stallCreate, row };
 }
 
-describe("Turns waiting for a binding follow its environment hint (ADR-0023)", () => {
+describe("Turns waiting for a binding follow its `sandbox` hint (ADR-0023)", () => {
   // Fake time: no wait ends on its timer unless a test lets time pass.
   beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); });
   afterEach(() => { vi.useRealTimers(); });

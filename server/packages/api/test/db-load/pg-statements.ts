@@ -74,8 +74,8 @@ const TX_SESSION = [pk("SELECT FOR UPDATE", "sessions"), pk("SELECT", "sessions"
 const EXECUTION_BY_ID = pk("SELECT", "delegation_executions");
 /** PgDelegationStore.append inside a delegation transaction (always keyed). */
 const TX_APPEND = appendCore(true, true);
-/** PgDelegationStore.withEnvironmentLock: snapshot transaction, then compare-and-set transaction. */
-const ENVIRONMENT_ROW = [pk("INSERT ON CONFLICT", "delegation_environments"), pk("SELECT FOR UPDATE", "delegation_environments")];
+/** PgDelegationStore.withBindingLock: snapshot transaction, then compare-and-set transaction. */
+const BINDING_ROW = [pk("INSERT ON CONFLICT", "delegation_environments"), pk("SELECT FOR UPDATE", "delegation_environments")];
 
 type Cost = (facts: CallFacts) => Statement[];
 const fixed = (statements: Statement[]): Cost => () => statements;
@@ -154,11 +154,11 @@ export const PG_COSTS: Record<string, Cost> = {
     ...(((facts.result as unknown[]) ?? []).length ? delegationTx(0, EXECUTION_BY_ID, ...TX_SESSION, ...TX_SESSION) : [])],
   // A callback that throws (a Turn waiting for another's create) leaves after the
   // snapshot; the UPDATE runs only when the callback moves the row or records an
-  // environment failure or the recovery from one (#290), counted as always.
-  "delegationStore.withEnvironmentLock": (facts) => facts.failed ? tx(...ENVIRONMENT_ROW)
-    : [...tx(...ENVIRONMENT_ROW), ...tx(...ENVIRONMENT_ROW, pk("UPDATE", "delegation_environments"))],
+  // Sandbox unavailability or the recovery from one (#290), counted as always.
+  "delegationStore.withBindingLock": (facts) => facts.failed ? tx(...BINDING_ROW)
+    : [...tx(...BINDING_ROW), ...tx(...BINDING_ROW, pk("UPDATE", "delegation_environments"))],
   // GET /v1/sessions/{id}: one autocommitted read, no lock (#290).
-  "delegationStore.environment": fixed([pk("SELECT", "delegation_environments")]),
+  "delegationStore.sandbox": fixed([pk("SELECT", "delegation_environments")]),
 
   // PgDelegationStore: transactions under the global delegation_lock
   "delegationStore.acquireResourceUse": fixed(delegationTx(1, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_resource_uses"))),
@@ -188,12 +188,12 @@ export const PG_COSTS: Record<string, Cost> = {
     st("INSERT ON CONFLICT", "delegation_executions"), st("INSERT ON CONFLICT", "delegation_waits"))),
 
   // PgSandboxLifecycleStore (one binding row lock per transaction)
-  "sandboxLifecycle.begin": fixed(tx(...ENVIRONMENT_ROW, pk("SELECT", "delegation_environments"), pk("SELECT", "pending_events"),
+  "sandboxLifecycle.begin": fixed(tx(...BINDING_ROW, pk("SELECT", "delegation_environments"), pk("SELECT", "pending_events"),
     seq("DELETE", "delegation_resource_uses"), st("INSERT ON CONFLICT", "delegation_resource_uses"))),
-  "sandboxLifecycle.finish": fixed(tx(...ENVIRONMENT_ROW, pk("DELETE", "delegation_resource_uses"), seq("SELECT", "delegation_resource_uses"),
+  "sandboxLifecycle.finish": fixed(tx(...BINDING_ROW, pk("DELETE", "delegation_resource_uses"), seq("SELECT", "delegation_resource_uses"),
     pk("SELECT", "delegation_environments"))),
-  "sandboxLifecycle.claimReclamation": fixed(tx(...ENVIRONMENT_ROW, pk("SELECT", "delegation_environments"), seq("SELECT", "delegation_resource_uses"))),
-  "sandboxLifecycle.completeReclamation": fixed(tx(...ENVIRONMENT_ROW, pk("UPDATE", "delegation_environments"), seq("DELETE", "delegation_resource_uses"))),
+  "sandboxLifecycle.claimReclamation": fixed(tx(...BINDING_ROW, pk("SELECT", "delegation_environments"), seq("SELECT", "delegation_resource_uses"))),
+  "sandboxLifecycle.completeReclamation": fixed(tx(...BINDING_ROW, pk("UPDATE", "delegation_environments"), seq("DELETE", "delegation_resource_uses"))),
 
   // PgSessionCleanupStore.sweep: discovery, then one locked transaction per candidate
   "sessionCleanup.discover": fixed([ix("SELECT", "session_cleanup")]),

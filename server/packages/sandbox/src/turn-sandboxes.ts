@@ -1,7 +1,7 @@
 import type { Agent, DelegationStore, PendingEventFence, SandboxActivity, Session, SessionStore } from "@oma-server/store";
-import { environmentBindingId, workspaceObjectPrefix } from "@oma-server/store";
+import { sandboxBindingId, workspaceObjectPrefix } from "@oma-server/store";
 import type { ToolExecutor } from "@open-managed-agents/adapter-core";
-import type { EnvSpec, SandboxEnvironmentBinding, SandboxManager, SandboxPrepareObserver, SkillInstallObserver } from "./sandbox-manager.js";
+import type { EnvSpec, SandboxBinding, SandboxManager, SandboxPrepareObserver, SkillInstallObserver } from "./sandbox-manager.js";
 import type { SkillSet } from "./skill-install.js";
 import { turnExecutor, type TurnExecutorGuard } from "./turn-executor.js";
 import { WORKSPACE_ENV } from "./workspace-environment.js";
@@ -36,7 +36,7 @@ export interface SandboxLeaseRequest extends TurnExecutorGuard {
   skills: SkillSet;
   /** Told of every Skill Install the Sandbox runs for the Turn, a cold Sandbox's included. */
   skillInstalls?: SkillInstallObserver;
-  /** Told of every preparation of the Turn's environment: the Turn-start connect and each operation's ensure. */
+  /** Told of every preparation of the Turn's Sandbox: the Turn-start connect and each operation's ensure. */
   sandboxPrepares?: SandboxPrepareObserver;
 }
 
@@ -65,8 +65,8 @@ export interface SandboxLease {
   /**
    * The Turn's executor (ADR-0005 §1), fenced by ownership of the Turn: a
    * fresh capability per Turn, so stale owners cannot start new Sandbox work.
-   * Every operation waits for the Turn's preparation and Skill Install. An
-   * environment failure fails the operations that met it with a
+   * Every operation waits for the Turn's preparation and Skill Install. A
+   * Sandbox unavailability fails the operations that met it with a
    * SandboxUnavailable, a tool error the model can retry; it never ends the
    * Turn (ADR-0023).
    */
@@ -112,8 +112,8 @@ export interface TurnSandboxes {
 export interface TurnSandboxesDeps {
   /** The single owner of sandbox lifecycle (ADR-0005 §1, design doc §2/§6). */
   manager: SandboxManager;
-  /** Durable environment bindings, the resource uses that protect them, and their Skill Install records. */
-  bindings: Pick<DelegationStore, "withEnvironmentLock" | "installedSkillSet" | "recordSkillSetInstall"
+  /** Durable Sandbox Bindings, the resource uses that protect them, and their Skill Install records. */
+  bindings: Pick<DelegationStore, "withBindingLock" | "installedSkillSet" | "recordSkillSetInstall"
     | "acquireResourceUse" | "releaseResourceUse" | "hasResourceUsers">;
   /** A terminated Session's Turn prepares no Sandbox. */
   sessions: Pick<SessionStore, "getById">;
@@ -151,7 +151,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     // `open` is cheap: it starts no Sandbox, the first filesystem or code
     // primitive does, so a pure-chat Turn spins nothing up.
     const sandbox = manager.open(this.specFor(session, agent, request.skills), this.bindingFor(session));
-    const activity: SandboxActivity = { bindingId: environmentBindingId(session), sessionId: session.id, fence };
+    const activity: SandboxActivity = { bindingId: sandboxBindingId(session), sessionId: session.id, fence };
     // The use protects the binding from reclamation while this claim owns
     // the Turn; an admitted activity keeps it until observed settlement.
     await bindings.acquireResourceUse(session.id, activity.bindingId, fence);
@@ -173,7 +173,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     const settledInSandbox = () => sandbox.executionSettled?.() !== false;
     return {
       executor: turnExecutor(sandbox, { assertOwner: request.assertOwner, skillInstallFailed: request.skillInstallFailed,
-        environmentFailed: request.environmentFailed }),
+        sandboxUnavailable: request.sandboxUnavailable }),
       prepared: () => prepared,
       checkWorkspace: () => sandbox.checkWorkspace(),
       release: async (evidence) => {
@@ -220,16 +220,16 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
   }
 
   /**
-   * The Session's durable environment binding, as its Sandbox session
+   * The Session's durable Sandbox Binding, as its Sandbox session
    * coordinates through it. A Child Session shares its root's, and so its
    * Skill Install record.
    */
-  private bindingFor(session: Session): SandboxEnvironmentBinding {
-    const bindingId = environmentBindingId(session);
+  private bindingFor(session: Session): SandboxBinding {
+    const bindingId = sandboxBindingId(session);
     const { bindings, sessions } = this.deps;
     return {
       id: bindingId,
-      withLock: (work) => bindings.withEnvironmentLock(bindingId, work),
+      withLock: (work) => bindings.withBindingLock(bindingId, work),
       canReclaim: async () => !await bindings.hasResourceUsers(bindingId),
       canExecute: async () => (await sessions.getById(session.id))?.status !== "terminated",
       installedSkills: () => bindings.installedSkillSet(bindingId),

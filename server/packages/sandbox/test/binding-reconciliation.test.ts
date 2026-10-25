@@ -12,7 +12,7 @@ bindingReconciliationContract("Sandbox binding reconciliation over the in-memory
     legacyPending: async (bindingId) => {
       const now = clock.now();
       clock.set(new Date(0));
-      try { await stores.delegationStore.withEnvironmentLock(bindingId, async () => ({ next: "creating", value: undefined })); }
+      try { await stores.delegationStore.withBindingLock(bindingId, async () => ({ next: "creating", value: undefined })); }
       finally { clock.set(now); }
     },
   };

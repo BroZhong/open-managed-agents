@@ -42,11 +42,12 @@ describe.skipIf(!url)("RedisSessionSignals on a real Redis", () => {
     runner.publish({ sessionId: "s", kind: "chunk", chunk: { type: "agent.message_chunk", data: { text: "a" }, deltaId: "1-0" } });
     api.publish({ sessionId: "s", kind: "check" });
     runner.publish({ sessionId: "s", kind: "durable" });
-    runner.publish({ sessionId: "binding", kind: "environment" });
+    runner.publish({ sessionId: "binding", kind: "sandbox" });
     await until(() => controls.length === 3 && outputs.length === 2);
     await new Promise(r => setTimeout(r, 50)); // and nothing else arrives
 
-    expect(controls.map(s => s.kind)).toEqual(["wake", "check", "environment"]);
+    // Two publishers' connections: Redis keeps each one's order, not theirs together.
+    expect(controls.map(s => s.kind).sort()).toEqual(["check", "sandbox", "wake"]);
     expect(outputs).toEqual([
       { sessionId: "s", kind: "chunk", chunk: { type: "agent.message_chunk", data: { text: "a" }, deltaId: "1-0" } },
       { sessionId: "s", kind: "durable" },

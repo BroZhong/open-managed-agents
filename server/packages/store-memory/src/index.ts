@@ -51,7 +51,7 @@ export interface MemoryStores {
 export interface MemoryStoresOptions {
   /**
    * Stands in for PostgreSQL's now() where a store writes and judges it: the
-   * environment bindings' creation intents (ADR-0023). Default: system time.
+   * Sandbox Bindings' creation intents (ADR-0023). Default: system time.
    */
   databaseClock?: () => Date;
 }

@@ -1063,7 +1063,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Sessions"],
     request: { params: idParams },
     responses: {
-      200: jsonResponse(z.union([SessionDetailSchema, SharedSessionSchema]), "Session found, with its Sandbox environment; share credentials receive display fields only"),
+      200: jsonResponse(z.union([SessionDetailSchema, SharedSessionSchema]), "Session found, with the state of its Sandbox; share credentials receive display fields only"),
       404: errorResponse("Session not found"),
     },
   }),

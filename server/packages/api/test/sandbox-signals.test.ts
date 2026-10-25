@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sessionSignalScope, type SessionSignal, type SessionSignalScope, type SessionSignals } from "@oma-server/redis";
-import { environmentSignals } from "../src/lib/environment-signals.js";
+import { sandboxSignals } from "../src/lib/sandbox-signals.js";
 
 /** One Redis for every process: each signal reaches the subscribers of its scope. */
 class Signals implements SessionSignals {
@@ -19,10 +19,10 @@ class Signals implements SessionSignals {
   }
 }
 
-describe("a binding's environment hint on the session signals (ADR-0023)", () => {
+describe("a binding's `sandbox` hint on the session signals (ADR-0023)", () => {
   it("is a control signal whose sessionId is the binding id, heard on the control channel only", () => {
     const signals = new Signals();
-    const hints = environmentSignals(signals);
+    const hints = sandboxSignals(signals);
     const heard: string[] = [];
     const unsubscribe = hints.subscribe((bindingId) => heard.push(bindingId));
     expect(signals.subscriptions).toEqual(["control"]);
@@ -32,8 +32,8 @@ describe("a binding's environment hint on the session signals (ADR-0023)", () =>
     signals.publish({ sessionId: "sess_other", kind: "wake" });
     signals.publish({ sessionId: "sess_other", kind: "check" });
     signals.publish({ sessionId: "sess_other", kind: "durable" });
-    expect(signals.published[0]).toEqual({ sessionId: "sess_root", kind: "environment" });
-    expect(sessionSignalScope("environment")).toBe("control");
+    expect(signals.published[0]).toEqual({ sessionId: "sess_root", kind: "sandbox" });
+    expect(sessionSignalScope("sandbox")).toBe("control");
     expect(heard).toEqual(["sess_root"]);
 
     unsubscribe();

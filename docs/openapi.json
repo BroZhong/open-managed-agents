@@ -1276,15 +1276,15 @@
           {
             "type": "object",
             "properties": {
-              "environment": {
-                "$ref": "#/components/schemas/SessionEnvironment"
+              "sandbox": {
+                "$ref": "#/components/schemas/SessionSandbox"
               }
             }
           }
         ],
-        "description": "A Session with its Sandbox environment, which every Host that keeps Sandbox bindings reports, as deployed Hosts do."
+        "description": "A Session with the state of its Sandbox, which every Host that keeps Sandbox bindings reports, as deployed Hosts do."
       },
-      "SessionEnvironment": {
+      "SessionSandbox": {
         "type": "object",
         "properties": {
           "state": {
@@ -1295,7 +1295,7 @@
               "ready",
               "unavailable"
             ],
-            "description": "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records an environment failure (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call."
+            "description": "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records a Sandbox unavailability (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call."
           },
           "since": {
             "type": [
@@ -1303,7 +1303,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first environment failure since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
+            "description": "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first Sandbox unavailability since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
             "example": "2026-07-14T00:00:00.000Z"
           },
           "last_error": {
@@ -1334,7 +1334,7 @@
               "reason",
               "at"
             ],
-            "description": "The last environment failure observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves."
+            "description": "The last Sandbox unavailability observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves."
           }
         },
         "required": [
@@ -1342,7 +1342,7 @@
           "since",
           "last_error"
         ],
-        "description": "The state of the Session's Sandbox environment (ADR-0023). Read without waiting: a Turn's tool call may change it at any time."
+        "description": "The state of the Session's Sandbox (ADR-0023). Read without waiting: a Turn's tool call may change it at any time."
       },
       "SharedSession": {
         "type": "object",
@@ -8392,7 +8392,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Session found, with its Sandbox environment; share credentials receive display fields only",
+            "description": "Session found, with the state of its Sandbox; share credentials receive display fields only",
             "content": {
               "application/json": {
                 "schema": {

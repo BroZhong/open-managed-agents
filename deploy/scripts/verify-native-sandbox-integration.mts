@@ -92,7 +92,7 @@ try {
       workspaceMount: { ...config.mount, prefix: `${evidence.tenant}/${evidence.workspace}/` },
       ...(phase === 'rebuild' ? { image: evidence.snapshotId } : {}) };
     const open = (sessionId: string) => manager.open(spec, { id: evidence.root,
-      withLock: work => stores.delegationStore.withEnvironmentLock(evidence.root, work),
+      withLock: work => stores.delegationStore.withBindingLock(evidence.root, work),
       canExecute: async () => (await stores.sessionStore.getById(sessionId))?.status !== 'terminated',
     });
     const begin = async (sessionId: string): Promise<SandboxActivity> => {
@@ -102,7 +102,7 @@ try {
       await manager.beginActivity(activity); return activity;
     };
     const finish = async (activity: SandboxActivity) => { await stores.pendingEventStore.ack(activity.sessionId, activity.fence.eventId, activity.fence); await manager.finishActivity(activity); };
-    const currentId = () => stores.delegationStore.withEnvironmentLock(evidence.root, async id => ({ sandboxId: id, value: id! }));
+    const currentId = () => stores.delegationStore.withBindingLock(evidence.root, async id => ({ sandboxId: id, value: id! }));
     const assertDeadline = async (seconds: number) => {
       const info = await Sandbox.getInfo(await currentId(), sdk);
       const remainingSeconds = (info.endAt.getTime() - Date.now()) / 1000;

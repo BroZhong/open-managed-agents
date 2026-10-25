@@ -368,7 +368,7 @@ export interface SpanSkillsInstallEndEvent extends BaseEvent {
 }
 
 /**
- * One preparation of the Turn's environment (ADR-0023): at Turn start,
+ * One preparation of the Turn's Sandbox (ADR-0023): at Turn start,
  * connecting to the Sandbox a Ready binding records and verifying its mount,
  * beside the model's first request; for a tool, bringing the binding to Ready
  * (connect, wait for another Turn's create, reconcile, create) and verifying
@@ -389,7 +389,7 @@ export interface SpanSandboxPrepareEndEvent extends BaseEvent {
    * `deferred`: the Turn-start connect found no Sandbox to connect (the
    * recorded one is gone, or the binding moved on); the first tool brings
    * the binding to Ready.
-   * `failed`: an environment failure; `code` is the one the tools that
+   * `failed`: a Sandbox unavailability; `code` is the one the tools that
    * waited for it carry in their results' details.
    * `aborted`: the Turn stopped waiting for it first, as `reason` says.
    */

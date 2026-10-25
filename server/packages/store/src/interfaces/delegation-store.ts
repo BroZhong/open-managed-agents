@@ -103,7 +103,7 @@ export interface ResourceUseLease {
   generation: number;
 }
 /**
- * What a Skill Install placed into an environment binding's Sandbox
+ * What a Skill Install placed into a Sandbox Binding's Sandbox
  * (ADR-0022): the Sandbox it went into, the Skill Set hash it installed and
  * the switch generation the Sandbox gave its `/skills` switch. It describes
  * that Sandbox only; a binding that now holds another Sandbox has nothing
@@ -126,12 +126,12 @@ export interface InstalledSkillSet {
  */
 export type SkillSetRecordOutcome = "recorded" | "superseded" | "detached";
 /**
- * An environment binding's row as `withEnvironmentLock` reads it (ADR-0023).
+ * A Sandbox Binding's row as `withBindingLock` reads it (ADR-0023).
  * The row records intent; whether a Sandbox exists is the gateway's answer.
  * Its state is derived: Ready while `sandboxId` is set, Creating while
  * `creatingSince` is, Cold when neither is.
  */
-export interface EnvironmentBinding {
+export interface SandboxBindingRow {
   sandboxId: string | null;
   /** When the creation intent was committed, by the database clock. */
   creatingSince: Date | null;
@@ -146,40 +146,40 @@ export interface EnvironmentBinding {
  * which ends a creation intent; or Creating, whose `creating_since` is the
  * database's `now()` when the move commits.
  */
-export type EnvironmentTransition = { ready: string } | "cold" | "creating";
+export type BindingTransition = { ready: string } | "cold" | "creating";
 /**
- * An environment failure a preparation of the binding's Sandbox observed
+ * A Sandbox unavailability a preparation of the binding's Sandbox observed
  * (ADR-0023): `code` and `reason` as the tool results it failed carry them.
  */
-export interface EnvironmentFailure {
+export interface SandboxUnavailability {
   code: string;
   reason: string;
 }
 /**
- * What `work` found of the binding's environment: its Sandbox ready
- * (connected, its mount verified), which ends a recorded failure; or a
- * failure, recorded with the database clock as the binding's last error.
+ * What `work` found of the binding's Sandbox: ready (connected, its mount
+ * verified), which ends a recorded failure; or a failure, recorded with the
+ * database clock as the binding's last error.
  */
-export type EnvironmentObservation = "ready" | { failure: EnvironmentFailure };
-export interface EnvironmentLockResult<T> {
+export type SandboxObservation = "ready" | { failure: SandboxUnavailability };
+export interface BindingLockResult<T> {
   value: T;
   /**
    * Absent: the row stays as it was read. A move begins a new state: it
    * records when, and clears the last error, which was the old state's.
    */
-  next?: EnvironmentTransition;
+  next?: BindingTransition;
   /** Recorded by the same compare-and-set, after `next`. */
-  observed?: EnvironmentObservation;
+  observed?: SandboxObservation;
 }
 /**
- * A binding's environment as the Session API reports it (ADR-0023), derived
+ * A binding's Sandbox as the Session API reports it (ADR-0023), derived
  * from its row: `unavailable` while it records an error, else `ready` while
  * it records a Sandbox, `creating` while it records a creation intent (past
  * its deadline too: the next use reconciles it), and `cold` otherwise.
  */
-export type EnvironmentState = "cold" | "creating" | "ready" | "unavailable";
-export interface EnvironmentStatus {
-  state: EnvironmentState;
+export type SandboxState = "cold" | "creating" | "ready" | "unavailable";
+export interface SandboxStatus {
+  state: SandboxState;
   /**
    * When the state began, by the database clock: the binding's last move,
    * its first failure since, or its recovery from one. Null when the binding
@@ -187,10 +187,10 @@ export interface EnvironmentStatus {
    */
   since: Date | null;
   /**
-   * The last environment failure observed in the current state, recorded at
+   * The last Sandbox unavailability observed in the current state, recorded at
    * `at`; null once a preparation ended ready or the binding moved.
    */
-  lastError: (EnvironmentFailure & { at: Date }) | null;
+  lastError: (SandboxUnavailability & { at: Date }) | null;
 }
 /** Coordination shares the pending-input lease: no second execution scheduler. */
 export interface DelegationStore {
@@ -204,18 +204,18 @@ export interface DelegationStore {
    * Read the binding (created Cold on first use), run `work` on it, then
    * move it to `next` and record what it `observed` by compare-and-set: they
    * apply only while the row is still as `work` read it, and otherwise
-   * reject with `EnvironmentBindingChanged`. A `work` that throws
+   * reject with `SandboxBindingChanged`. A `work` that throws
    * moves nothing. No database lock or pooled client is held while `work`
    * runs, which may call the gateway; callers of one store are serialized per
    * binding. Rejects while the binding's reclamation is in progress.
    */
-  withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
+  withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T>;
   /**
-   * The binding's environment for the Session API (ADR-0023). One plain
+   * The binding's Sandbox for the Session API (ADR-0023). One plain
    * read: it takes no lock, creates no row and answers for a binding under
    * reclamation too.
    */
-  environment(bindingId: string): Promise<EnvironmentStatus>;
+  sandbox(bindingId: string): Promise<SandboxStatus>;
   /** The binding's last recorded Skill Install; null when none was recorded. */
   installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
   /**
@@ -224,7 +224,7 @@ export interface DelegationStore {
    * binding never inherits it, and only over the record of an earlier switch
    * (another Sandbox's, or a lower generation), so the record follows the
    * last switch of `/skills`. No lock outlives it, and it never conflicts with
-   * an environment operation, which compares only the Sandbox identity.
+   * a binding operation, which compares only the Sandbox identity.
    */
   recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
   get(tenantId: string, callerSessionId: string, childId: string, executionId?: string): Promise<DelegationExecution | null>;

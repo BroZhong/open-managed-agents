@@ -6,13 +6,13 @@ import type {
   ToolFileSystem,
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
-import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ToolEnvironmentError } from "@open-managed-agents/adapter-core";
+import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ExecutorUnavailableError } from "@open-managed-agents/adapter-core";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected, intentExpired, intentExpiresAt } from "./sandbox-client.js";
 import type { ListedSandbox, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
-import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type EnvironmentTransition, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
-import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
+import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type BindingTransition, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
+import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type SandboxSignals } from "./sandbox-signals.js";
 import { EMPTY_SKILL_SET, SkillInstallError, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
   assertWorkspaceMountSpec,
@@ -47,10 +47,10 @@ export interface SandboxManagerDeps {
   /** Skill Install budget calibration (ADR-0022): 20 MB/s with a 30 s floor by default. */
   skillInstallBudget?: SkillInstallBudget;
   /**
-   * The bindings' `environment` hints across Runners (ADR-0023). Without them
+   * The bindings' `sandbox` hints across Runners (ADR-0023). Without them
    * a Turn waiting for a binding reads its row every 2 s alone.
    */
-  environmentSignals?: EnvironmentSignals;
+  sandboxSignals?: SandboxSignals;
 }
 export interface SandboxDescriptor {
   sandboxId: string;
@@ -95,13 +95,13 @@ const UNAVAILABLE: Record<SandboxUnavailableReason, string> = {
 };
 
 /**
- * The environment failure of a tool call (ADR-0023): the Session's Sandbox
+ * The Sandbox unavailability of a tool call (ADR-0023): the Session's Sandbox
  * was not ready, so the operation did not run. It is a tool error the model
  * can retry, carrying `code` and `reason` in the result's details, never the
  * end of the Turn. The message is stable: SDK and provider diagnostics can
  * carry credentials, and the error they came with is kept as the cause.
  */
-export class SandboxUnavailable extends ToolEnvironmentError {
+export class SandboxUnavailable extends ExecutorUnavailableError {
   declare readonly code: "sandbox_unavailable";
   constructor(readonly reason: SandboxUnavailableReason, readonly status?: number, options?: ErrorOptions) {
     super("sandbox_unavailable", UNAVAILABLE[reason], { reason }, options);
@@ -113,7 +113,7 @@ export class SandboxUnavailable extends ToolEnvironmentError {
  * What the operations waiting for a failed preparation see: a create's own
  * classification, or the kind of step that failed.
  */
-function environmentFailure(error: unknown): SandboxUnavailable {
+function sandboxUnavailable(error: unknown): SandboxUnavailable {
   if (error instanceof SandboxUnavailable) return error;
   return new SandboxUnavailable(error instanceof WorkspaceMountUnavailable ? "mount" : "unreachable", undefined, { cause: error });
 }
@@ -145,7 +145,7 @@ type EnsureStep =
  * one is resolved, which no other Runner does before its deadline, so an
  * intent that began within a deadline of `notBefore` is that one.
  */
-function holdsIntent(binding: EnvironmentBinding, notBefore: Date): boolean {
+function holdsIntent(binding: SandboxBindingRow, notBefore: Date): boolean {
   const since = binding.creatingSince?.getTime();
   return binding.sandboxId === null && since !== undefined
     && since >= notBefore.getTime() && since < intentExpiresAt(notBefore);
@@ -155,7 +155,7 @@ function holdsIntent(binding: EnvironmentBinding, notBefore: Date): boolean {
 export interface SandboxManager {
   beginActivity?(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean>;
   finishActivity?(activity: SandboxActivity): Promise<void>;
-  open(spec: EnvSpec, binding: SandboxEnvironmentBinding): SandboxSession;
+  open(spec: EnvSpec, binding: SandboxBinding): SandboxSession;
   list(filter?: {
     tenantId?: string;
     workspaceId?: string;
@@ -166,18 +166,18 @@ export interface SandboxManager {
    * creation intent: reclaimed, or Cold while another Session still uses it.
    * False while it is retained; the caller retries.
    */
-  reclaim(binding: SandboxEnvironmentBinding): Promise<boolean>;
+  reclaim(binding: SandboxBinding): Promise<boolean>;
 }
 
 /**
  * Infrastructure capability supplied separately from the serializable recipe:
  * the durable binding row, the only state a Sandbox session reads (ADR-0023).
  */
-export interface SandboxEnvironmentBinding {
+export interface SandboxBinding {
   /** The root Session's id, which every Sandbox of the binding carries as `oma.dev/binding`. */
   id: string;
-  /** See `DelegationStore.withEnvironmentLock`. */
-  withLock<T>(work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
+  /** See `DelegationStore.withBindingLock`. */
+  withLock<T>(work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T>;
   canExecute?(): Promise<boolean>;
   /** Evaluated inside withLock immediately before reclamation. */
   canReclaim?(): Promise<boolean>;
@@ -201,7 +201,7 @@ export interface SkillInstallObserver {
   ended(outcome: { report: SkillInstallReport } | { error: unknown }): void;
 }
 
-/** How one preparation of the Turn's environment ended (ADR-0023). */
+/** How one preparation of the Turn's Sandbox ended (ADR-0023). */
 export type SandboxPrepareOutcome =
   /** The Sandbox is connected, or created, and its mount verified. */
   | { outcome: "ready"; sandboxId: string }
@@ -210,13 +210,13 @@ export type SandboxPrepareOutcome =
    * gone, or the binding moved on. The first operation brings it to Ready.
    */
   | { outcome: "deferred" }
-  /** An environment failure: each operation that waited for it fails with `error`. */
+  /** A Sandbox unavailability: each operation that waited for it fails with `error`. */
   | { outcome: "failed"; error: SandboxUnavailable }
   /** The Turn stopped waiting for it, or its Session was terminated, as `reason` says. */
   | { outcome: "aborted"; reason: unknown };
 
 /**
- * Told of each preparation of the Turn's environment, which records them
+ * Told of each preparation of the Turn's Sandbox, which records them
  * (ADR-0023): the Turn-start connect of a Ready binding, and each operation's
  * ensure. One runs at a time.
  */
@@ -235,7 +235,7 @@ export interface PrepareOptions {
   signal?: AbortSignal;
   /** Told of every install the session runs until the next prepare, a cold Sandbox's included. */
   skillInstalls?: SkillInstallObserver;
-  /** Told of every preparation of the environment until the next prepare. */
+  /** Told of every preparation of the Sandbox until the next prepare. */
   sandboxPrepares?: SandboxPrepareObserver;
 }
 
@@ -253,7 +253,7 @@ export interface SandboxSession {
    * does not wait for it (ADR-0023): every operation does, so none runs
    * before preparation and the install succeeded. Resolves once the install
    * is decided, a skipped install fully prepared; an install runs on beside
-   * the Turn (ADR-0022). An environment failure (SandboxUnavailable)
+   * the Turn (ADR-0022). A Sandbox unavailability (SandboxUnavailable)
    * fails the operations that waited for it, and the next one prepares
    * again; a failed install (a SkillInstallError) or a cancelled one fails
    * each of them until the next prepare. Cold sessions stay cold and install
@@ -277,7 +277,7 @@ export class DefaultSandboxManager implements SandboxManager {
     // stay unresolved; termination's outbox retries a slower reclamation.
     const deadline = Date.now() + INTENT_DEADLINE_MS;
     // Heard from before the first attempt: the reclaimer's hint ends a wait at once.
-    const changes = new BindingChanges(this.deps.environmentSignals, activity.bindingId);
+    const changes = new BindingChanges(this.deps.sandboxSignals, activity.bindingId);
     try {
       while (!await store.begin(activity)) {
         const remainingMs = deadline - Date.now();
@@ -293,8 +293,8 @@ export class DefaultSandboxManager implements SandboxManager {
     const store = this.deps.lifecycle;
     await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
   }
-  open(spec: EnvSpec, binding: SandboxEnvironmentBinding): SandboxSession {
-    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, signallingBinding(binding, this.deps.environmentSignals));
+  open(spec: EnvSpec, binding: SandboxBinding): SandboxSession {
+    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, signallingBinding(binding, this.deps.sandboxSignals));
   }
   async list(_filter?: {
     tenantId?: string;
@@ -302,8 +302,8 @@ export class DefaultSandboxManager implements SandboxManager {
   }): Promise<SandboxDescriptor[]> {
     return [];
   }
-  reclaim(binding: SandboxEnvironmentBinding): Promise<boolean> {
-    return reclaimBinding(this.deps, signallingBinding(binding, this.deps.environmentSignals));
+  reclaim(binding: SandboxBinding): Promise<boolean> {
+    return reclaimBinding(this.deps, signallingBinding(binding, this.deps.sandboxSignals));
   }
 }
 
@@ -312,7 +312,7 @@ export class DefaultSandboxManager implements SandboxManager {
  * until the intent's deadline, by the database clock, it can still produce a
  * Sandbox the gateway does not list yet.
  */
-function creationMayBeInFlight({ creatingSince, now }: EnvironmentBinding): boolean {
+function creationMayBeInFlight({ creatingSince, now }: SandboxBindingRow): boolean {
   return creatingSince !== null && !intentExpired(creatingSince, now);
 }
 
@@ -334,7 +334,7 @@ function creationMayBeInFlight({ creatingSince, now }: EnvironmentBinding): bool
  * no intent to record and kills its Sandbox itself; the sweeper (#291) kills
  * one whose kill failed.
  */
-async function reclaimBinding({ lifecycle, sandboxClient: client, environmentSignals: signals }: SandboxManagerDeps, binding: SandboxEnvironmentBinding): Promise<boolean> {
+async function reclaimBinding({ lifecycle, sandboxClient: client, sandboxSignals: signals }: SandboxManagerDeps, binding: SandboxBinding): Promise<boolean> {
   if (lifecycle) {
     const ticket = await lifecycle.claimReclamation(binding.id);
     if (!ticket) return binding.withLock<boolean>(async ({ sandboxId: id, creatingSince }) => {
@@ -360,7 +360,7 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, environmentSig
     });
   } catch (error) {
     // A creator recorded its Sandbox meanwhile: the retry kills it as the recorded one.
-    if (error instanceof EnvironmentBindingChanged) return false;
+    if (error instanceof SandboxBindingChanged) return false;
     throw error;
   }
 }
@@ -377,7 +377,7 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, environmentSig
  * first, or it moved on, and the caller follows the row.
  */
 export async function reconcileBinding(client: Pick<SandboxClient, "listSandboxes">,
-  binding: Pick<SandboxEnvironmentBinding, "id" | "withLock">, creatingSince: Date): Promise<{ kept?: ListedSandbox; duplicates: ListedSandbox[] } | null> {
+  binding: Pick<SandboxBinding, "id" | "withLock">, creatingSince: Date): Promise<{ kept?: ListedSandbox; duplicates: ListedSandbox[] } | null> {
   // By binding alone: its id is a Session id, unique across environments,
   // and a Sandbox created before the environment label is adopted too.
   const found = await client.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: binding.id }, states: ["running", "paused"] });
@@ -393,14 +393,14 @@ export async function reconcileBinding(client: Pick<SandboxClient, "listSandboxe
  * The binding's row as a session last read it, or as a move it committed
  * left it; unknown after a move to Creating, whose time it does not learn.
  */
-type KnownRow = Pick<EnvironmentBinding, "sandboxId" | "creatingSince">;
+type KnownRow = Pick<SandboxBindingRow, "sandboxId" | "creatingSince">;
 
 /** `binding`, telling `known` of each row the session reads and each move it commits. */
-function knownBinding(binding: SandboxEnvironmentBinding, known: (row: KnownRow | undefined) => void): SandboxEnvironmentBinding {
+function knownBinding(binding: SandboxBinding, known: (row: KnownRow | undefined) => void): SandboxBinding {
   return {
     ...binding,
     withLock: async (work) => {
-      let next: EnvironmentTransition | undefined;
+      let next: BindingTransition | undefined;
       const value = await binding.withLock(async (row) => {
         known({ sandboxId: row.sandboxId, creatingSince: row.creatingSince });
         const result = await work(row);
@@ -437,15 +437,15 @@ class SandboxSessionImpl implements SandboxSession {
    * failed or was cancelled, they rethrow its error until the next prepare.
    */
   private installing?: Promise<void>;
-  private readonly binding: SandboxEnvironmentBinding;
-  /** What an environment failure is recorded against (see recordFailure). */
+  private readonly binding: SandboxBinding;
+  /** What a Sandbox unavailability is recorded against (see recordFailure). */
   private known?: KnownRow;
 
   constructor(
     private readonly deps: SandboxManagerDeps,
     private readonly skillInstaller: SkillInstaller,
     private readonly spec: EnvSpec,
-    binding: SandboxEnvironmentBinding,
+    binding: SandboxBinding,
   ) {
     this.binding = knownBinding(binding, (row) => { this.known = row; });
     const legacyRoot = (spec as EnvSpec & { workspaceDir?: unknown })
@@ -544,7 +544,7 @@ class SandboxSessionImpl implements SandboxSession {
     // filesystem operation rejects with it only before it starts or once its
     // outcome is known. exec latches a command cancelled without exit evidence.
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    // Ordinary tool errors are not environment failures.
+    // Ordinary tool errors are not Sandbox unavailability.
     if (error && typeof error === 'object' && (
       'exitCode' in error || ('name' in error && ['AbortError', 'FileNotFoundError', 'InvalidArgumentError'].includes(String(error.name))) ||
       ('code' in error && ['ENOENT', 'EACCES', 'EPERM', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EINVAL'].includes(String(error.code)))
@@ -559,7 +559,7 @@ class SandboxSessionImpl implements SandboxSession {
       await this.recovering;
       recovered = this.prepared;
     } catch { /* Unknown control-plane outcomes cannot justify replacement. */ }
-    throw new Error(`Sandbox operation outcome is unconfirmed and may have side effects. The original operation was not replayed. ${recovered ? 'The environment is available for subsequent tools.' : 'Environment recovery is unconfirmed; a subsequent tool may retry preparation.'} Inspect files or external effects before deciding whether to request the operation again.`);
+    throw new Error(`Sandbox operation outcome is unconfirmed and may have side effects. The original operation was not replayed. ${recovered ? 'The Sandbox is available for subsequent tools.' : 'Sandbox recovery is unconfirmed; a subsequent tool may retry preparation.'} Inspect files or external effects before deciding whether to request the operation again.`);
   }
   private async recover(): Promise<void> {
     const id = await this.binding.withLock<string | null>(async ({ sandboxId: id }) => {
@@ -576,7 +576,7 @@ class SandboxSessionImpl implements SandboxSession {
       await this.attach(id);
       return { value: id };
     });
-    // A known missing environment stays cold until the next tool requests it.
+    // A known missing Sandbox stays cold until the next tool requests it.
     if (id) await this.finishPreparation(id);
   }
 
@@ -615,7 +615,7 @@ class SandboxSessionImpl implements SandboxSession {
       return { value: id, observed: "ready" };
     }).catch((error: unknown) => {
       // The row moved on meanwhile: the first operation follows it.
-      if (error instanceof EnvironmentBindingChanged) return null;
+      if (error instanceof SandboxBindingChanged) return null;
       throw error;
     }));
     if (!id) return;
@@ -635,10 +635,10 @@ class SandboxSessionImpl implements SandboxSession {
     this.installing.catch(() => {});
   }
   /**
-   * One preparation of the Turn's environment (ADR-0023): the Turn-start
+   * One preparation of the Turn's Sandbox (ADR-0023): the Turn-start
    * connect, or an operation's ensure. `work` calls `begin` once there is a
    * Sandbox to prepare, and the Turn's observer hears of the preparation's
-   * start and end. This is the one place an environment failure is
+   * start and end. This is the one place a Sandbox unavailability is
    * observed: every failure but a cancellation is one, and it reaches each
    * operation that waited for the preparation as a SandboxUnavailable,
    * a tool error the model can retry, and the binding as its last error. The
@@ -653,12 +653,12 @@ class SandboxSessionImpl implements SandboxSession {
     try {
       id = await work(begin);
     } catch (error) {
-      // The Turn stopped waiting, or its Session was terminated: no environment failure.
+      // The Turn stopped waiting, or its Session was terminated: no Sandbox unavailability.
       if (error instanceof SandboxSessionClosed || signal?.aborted) {
         if (begun) observer?.ended({ outcome: "aborted", reason: error });
         throw error;
       }
-      const failure = environmentFailure(error);
+      const failure = sandboxUnavailable(error);
       this.recordFailure(failure);
       begin();
       observer?.ended({ outcome: "failed", error: failure });
@@ -668,7 +668,7 @@ class SandboxSessionImpl implements SandboxSession {
     return id;
   }
   /**
-   * Record an environment failure as the binding's last error, which the
+   * Record a Sandbox unavailability as the binding's last error, which the
    * Session API reports (ADR-0023), by its compare-and-set and only while
    * the row is as this session last read or left it: a move another Turn or
    * Runner made since (a new Sandbox or intent, Cold) began a state the
@@ -769,7 +769,7 @@ class SandboxSessionImpl implements SandboxSession {
     if (!this.ensuring) {
       // Heard from before its first read of the row: a change committed after
       // a read ends the wait that read decided.
-      const changes = new BindingChanges(this.deps.environmentSignals, this.binding.id);
+      const changes = new BindingChanges(this.deps.sandboxSignals, this.binding.id);
       this.ensuring = this.preparation(async (begin) => { begin(); return this.provision(changes); })
         .then(async (id) => { await this.finishPreparation(id); return id; })
         .finally(() => { changes.close(); this.ensuring = undefined; });
@@ -781,7 +781,7 @@ class SandboxSessionImpl implements SandboxSession {
    * "ensure"); ensure then installs Skills. Each step reads the row and acts
    * on it alone: Ready → connect, a confirmed missing Sandbox → Cold;
    * Creating → wait; Unresolved → reconcile; Cold → create. A wait ends on
-   * the binding's `environment` hint, or after 2 s, when the row is read
+   * the binding's `sandbox` hint, or after 2 s, when the row is read
    * again; it lasts until the intent deadline at most, so no outcome, known
    * or not, blocks the binding longer.
    *
@@ -818,7 +818,7 @@ class SandboxSessionImpl implements SandboxSession {
           continue;
         }
         // Another Runner moved the row on meanwhile: read it again and follow it.
-        if (!(error instanceof EnvironmentBindingChanged)) throw error;
+        if (!(error instanceof SandboxBindingChanged)) throw error;
       }
       if (id) return id;
     }
@@ -900,12 +900,12 @@ class SandboxSessionImpl implements SandboxSession {
     });
   }
   /** Under the binding lock; a row that moved on between the read and the write is decided again as it is now. */
-  private async decide<T>(work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+  private async decide<T>(work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
     for (;;) {
       try {
         return await this.binding.withLock<T>(work);
       } catch (error) {
-        if (!(error instanceof EnvironmentBindingChanged)) throw error;
+        if (!(error instanceof SandboxBindingChanged)) throw error;
       }
     }
   }

@@ -4,16 +4,16 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, SandboxCreateRejected } from "@oma-server/sandbox";
 import { presentEvent, type StoredEvent } from "@oma-server/store";
-import { ToolEnvironmentError, type Adapter, type AdapterInput, type SessionEvent } from "@open-managed-agents/adapter-core";
+import { ExecutorUnavailableError, type Adapter, type AdapterInput, type SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
 import { PREPARE_ATTEMPT_STOPPED } from "../src/sandbox-prepare-spans.js";
 
 /**
- * An environment failure is a tool error, not the end of the Turn (ADR-0023,
- * #287): the Turn runs on, records each preparation as a span, and only its
- * end records `sandbox_unavailable`, when its environment never became ready
- * again. Real Sandbox Manager and Turn Sandboxes over a fake gateway.
+ * A Sandbox unavailability is a tool error, not the end of the Turn
+ * (ADR-0023, #287): the Turn runs on, records each preparation as a span, and
+ * only its end records `sandbox_unavailable`, when its Sandbox never became
+ * ready again. Real Sandbox Manager and Turn Sandboxes over a fake gateway.
  */
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -79,14 +79,14 @@ async function harness(script: Script) {
 /**
  * A tool call through the Turn's executor, its result recorded as Pi records
  * it: a native toolResult entry, an error the model sees whose details carry
- * an environment failure's code.
+ * a Sandbox unavailability's code.
  */
 async function tool(input: AdapterInput, write: Write, id: string): Promise<unknown> {
   await write(event("agent.tool_use", { toolUseId: id, name: "write", input: { path: "note.txt" } }));
   const result = (text: string, error?: unknown) => write(event("agent.context_entry", { sdk: "pi@0.83.0",
     entry: { type: "message", id: `entry_${id}`, parentId: null, timestamp: new Date().toISOString(), message: {
       role: "toolResult", toolCallId: id, toolName: "write", content: [{ type: "text", text }], isError: error !== undefined,
-      ...(error instanceof ToolEnvironmentError ? { details: { ...error.details, code: error.code } } : {}), timestamp: Date.now() } },
+      ...(error instanceof ExecutorUnavailableError ? { details: { ...error.details, code: error.code } } : {}), timestamp: Date.now() } },
     presentation: { version: 1, blocks: [{ type: "agent.tool_result" }] } }));
   try {
     await input.toolExecutor!.writeFile("note.txt", id);
@@ -106,8 +106,8 @@ const spansOf = (log: StoredEvent[]) => log.filter((stored) => stored.type.start
 const errorCodes = (log: StoredEvent[]) => log.filter((stored) => stored.type === "session.error")
   .map((stored) => (stored.data as { error: { code: string } }).error.code);
 
-describe("an environment failure is a tool error (ADR-0023)", () => {
-  it("runs a Turn whose environment is never available to its answer, and ends it with one sandbox_unavailable", async () => {
+describe("a Sandbox unavailability is a tool error (ADR-0023)", () => {
+  it("runs a Turn whose Sandbox is never available to its answer, and ends it with one sandbox_unavailable", async () => {
     const failures: unknown[] = [];
     const h = await harness(async (input, write) => {
       failures.push(await tool(input, write, "call_1"), await tool(input, write, "call_2"));
@@ -139,13 +139,13 @@ describe("an environment failure is a tool error (ADR-0023)", () => {
     expect((await h.stores.sessionStore.getById(h.session.id))?.status).toBe("idle");
     expect(h.errors).toEqual([]);
 
-    // The next Turn, whose environment works again, records no error.
+    // The next Turn, whose Sandbox works again, records no error.
     h.gateway.createFault = undefined;
     await h.turn("again");
     expect(errorCodes(await h.log())).toEqual(["sandbox_unavailable"]);
   });
 
-  it("records no error for a Turn whose environment failed once and then became ready", async () => {
+  it("records no error for a Turn whose Sandbox was unavailable once and then became ready", async () => {
     const failures: unknown[] = [];
     const h = await harness(async (input, write) => {
       failures.push(await tool(input, write, "call_1"), await tool(input, write, "call_2"));
@@ -260,8 +260,8 @@ describe("a failed preparation no tool call waited for", () => {
   });
 });
 
-describe("a Runner lost after an environment failure", () => {
-  it("leaves the Turn to the takeover, which continues it: an environment ready again records no error", async () => {
+describe("a Runner lost after a Sandbox unavailability", () => {
+  it("leaves the Turn to the takeover, which continues it: a Sandbox ready again records no error", async () => {
     const h = await harness(async (input, write, attempt) => {
       if (attempt === 1) {
         await tool(input, write, "call_1");
@@ -338,7 +338,7 @@ describe("a Runner lost after an environment failure", () => {
     expect(results(log).map(({ isError }) => isError)).toEqual([false, false]);
   });
 
-  it("ends the continued Turn with sandbox_unavailable when its environment never became ready again", async () => {
+  it("ends the continued Turn with sandbox_unavailable when its Sandbox never became ready again", async () => {
     const h = await harness(async (input, write, attempt) => {
       if (attempt === 1) {
         await tool(input, write, "call_1");

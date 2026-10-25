@@ -25,8 +25,8 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
   }
   async begin(activity: SandboxActivity): Promise<boolean> {
     return this.locked(activity.bindingId, async client => {
-      const { rows: [environment] } = await client.query<{ reclaiming: boolean }>('SELECT reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
-      if (environment.reclaiming) return false;
+      const { rows: [binding] } = await client.query<{ reclaiming: boolean }>('SELECT reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
+      if (binding.reclaiming) return false;
       const fence = activity.fence;
       const owned = await client.query(`SELECT p.id FROM pending_events p JOIN sessions s ON s.id=p.session_id
         WHERE p.session_id=$1 AND p.id=$2 AND p.claim_owner=$3 AND p.claim_generation=$4
@@ -82,7 +82,7 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
     await this.locked(ticket.bindingId, async client => {
       // The ticket's row, as read (a Date has millisecond precision): nothing
       // moves a reclaiming row, so only this reclamation's own callback matches.
-      // Clearing it is a move to Cold, as withEnvironmentLock writes one.
+      // Clearing it is a move to Cold, as withBindingLock writes one.
       const result = await client.query(`UPDATE delegation_environments SET sandbox_id=NULL, creating_since=NULL, reclaiming=FALSE,
           state_since=now(), last_error_code=NULL, last_error_reason=NULL, last_error_at=NULL
         WHERE id=$1 AND reclaiming=TRUE AND sandbox_id IS NOT DISTINCT FROM $2

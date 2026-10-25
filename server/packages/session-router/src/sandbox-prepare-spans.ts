@@ -20,7 +20,7 @@ export interface SandboxPrepareSpansDeps {
   turnId: string;
   /** The attempt's claim generation: it names the attempt's preparations apart from every other attempt's. */
   generation: number;
-  /** The events earlier attempts of the Turn wrote: whether they left its environment unavailable. */
+  /** The events earlier attempts of the Turn wrote: whether they left its Sandbox unavailable. */
   events: readonly StoredEvent[];
   /** Record one of the attempt's own events under a key segment and write it now. */
   write(event: JournalEvent, keySegment: string): void;
@@ -28,26 +28,26 @@ export interface SandboxPrepareSpansDeps {
 
 /**
  * The Sandbox preparation spans of one Turn attempt (ADR-0023): a start when
- * a preparation of the Turn's environment begins, an end when it ends,
+ * a preparation of the Turn's Sandbox begins, an end when it ends,
  * written through the attempt's journal under keys of their own. An attempt
  * that stops writes nothing more; the attempt that takes its Turn over ends
  * what it started ({@link unendedSandboxPrepares}). The session runs one
  * preparation at a time.
  *
- * It also judges whether the Turn's environment is unavailable
- * ({@link EnvironmentVerdict}), from what earlier attempts of the Turn
+ * It also judges whether the Turn's Sandbox is unavailable
+ * ({@link SandboxVerdict}), from what earlier attempts of the Turn
  * recorded and what this one sees. Only the Turn's end records that, as
  * `sandbox_unavailable`: planResume takes any session.error in a Turn as its
- * end, so mid-Turn an environment failure is only a tool error.
+ * end, so mid-Turn a Sandbox unavailability is only a tool error.
  */
 export class SandboxPrepareSpans implements SandboxPrepareObserver {
   private prepares = 0;
   private running?: { start: SandboxPrepareStartData; startedAt: number };
   private closed = false;
-  private readonly verdict: EnvironmentVerdict;
+  private readonly verdict: SandboxVerdict;
 
   constructor(private readonly deps: SandboxPrepareSpansDeps) {
-    this.verdict = EnvironmentVerdict.of(deps.events);
+    this.verdict = SandboxVerdict.of(deps.events);
   }
 
   started(): void {
@@ -62,12 +62,12 @@ export class SandboxPrepareSpans implements SandboxPrepareObserver {
     this.end(endOf(outcome));
   }
 
-  /** A tool call of the attempt failed with an environment error: its executor operation did not run. */
+  /** A tool call of the attempt met a Sandbox unavailability: its executor operation did not run. */
   toolFailed(): void {
     this.verdict.toolFailed();
   }
 
-  /** A tool call of the Turn failed with an environment error, and no preparation ended ready since. */
+  /** A tool call of the Turn met a Sandbox unavailability, and no preparation ended ready since. */
   unavailable(): boolean {
     return this.verdict.unavailable;
   }
@@ -115,25 +115,25 @@ export function unendedSandboxPrepares(events: readonly StoredEvent[]): SandboxP
 }
 
 /**
- * Whether a Turn's environment is unavailable (ADR-0023, #287): a tool call
- * of the Turn, in any attempt, failed with an environment error, and no
+ * Whether a Turn's Sandbox is unavailable (ADR-0023, #287): a tool call of
+ * the Turn, in any attempt, met a Sandbox unavailability, and no
  * preparation ended ready after it. A failed preparation no tool call waited
  * for leaves it available: a pure-chat Turn whose Turn-start connect failed
  * shows that in its span only. A deferred or aborted preparation changes
  * nothing.
  */
-export class EnvironmentVerdict {
+export class SandboxVerdict {
   /** A preparation failed and none ended ready since. */
   private failing = false;
   /** A tool call met that failure. */
   private met = false;
 
   /** The verdict `events`, a Turn's, leave: its preparations' end spans and its tool results. */
-  static of(events: readonly StoredEvent[]): EnvironmentVerdict {
-    const verdict = new EnvironmentVerdict();
+  static of(events: readonly StoredEvent[]): SandboxVerdict {
+    const verdict = new SandboxVerdict();
     for (const event of events) {
       if (event.type === "span.sandbox_prepare_end") verdict.prepareEnded((event.data as { outcome?: unknown } | null)?.outcome);
-      else if (environmentFailedResult(event)) verdict.toolFailed();
+      else if (sandboxUnavailableResult(event)) verdict.toolFailed();
     }
     return verdict;
   }
@@ -148,7 +148,7 @@ export class EnvironmentVerdict {
   }
 
   /**
-   * A tool call failed with an environment error. It counts only while a
+   * A tool call met a Sandbox unavailability. It counts only while a
    * failed preparation stands: Pi records a step's tool results after the
    * step, so the result of a call can follow the ready span of a preparation
    * a later call of the step ran after the failure.
@@ -159,11 +159,11 @@ export class EnvironmentVerdict {
 }
 
 /**
- * Whether `event` is the result of a tool call that failed with an
- * environment error: Pi's native toolResult entry carries the error's code
+ * Whether `event` is the result of a tool call that met a Sandbox
+ * unavailability: Pi's native toolResult entry carries the error's code
  * in its details.
  */
-function environmentFailedResult(event: StoredEvent): boolean {
+function sandboxUnavailableResult(event: StoredEvent): boolean {
   if (event.type !== "agent.context_entry") return false;
   const entry = (event.data as { entry?: { type?: string; message?: { role?: string; isError?: boolean; details?: { code?: unknown } } } } | null)?.entry;
   const message = entry?.type === "message" ? entry.message : undefined;

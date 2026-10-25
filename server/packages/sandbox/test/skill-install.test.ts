@@ -32,7 +32,7 @@ async function setUp() {
 /** One binding of the in-memory delegation store, optionally recording `initial` as installed into its Sandbox. */
 async function ledger(initial: Omit<InstalledSkillSet, "generation"> | null = null) {
   const store = createMemoryStores().delegationStore;
-  const bind = (sandboxId: string | null) => store.withEnvironmentLock("binding", async () => ({ next: sandboxId ? { ready: sandboxId } : "cold" as const, value: undefined }));
+  const bind = (sandboxId: string | null) => store.withBindingLock("binding", async () => ({ next: sandboxId ? { ready: sandboxId } : "cold" as const, value: undefined }));
   if (initial) {
     await bind(initial.sandboxId);
     await store.recordSkillSetInstall("binding", { ...initial, generation: 1 });

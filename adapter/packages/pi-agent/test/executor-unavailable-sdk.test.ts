@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { ToolEnvironmentError, type ToolExecutor } from "@open-managed-agents/adapter-core";
+import { ExecutorUnavailableError, type ToolExecutor } from "@open-managed-agents/adapter-core";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { MemoryTurnJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 
 /**
- * An environment failure of the executor reaches the model as a tool error
- * whose details carry its code (ADR-0023, #287), through the real Pi SDK: the
- * native toolResult entry the Turn journal records keeps them.
+ * An unavailable executor (a Sandbox unavailability) reaches the model as a
+ * tool error whose details carry its code (ADR-0023, #287), through the real
+ * Pi SDK: the native toolResult entry the Turn journal records keeps them.
  */
 
 type Content = AssistantMessage["content"];
@@ -18,7 +18,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
     constructor(options: ConstructorParameters<typeof sdk.DefaultResourceLoader>[0]) {
-      super({ ...options, cwd: options.cwd ?? "/tmp", agentDir: "/tmp/oma-environment-errors-no-ambient", noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true });
+      super({ ...options, cwd: options.cwd ?? "/tmp", agentDir: "/tmp/oma-executor-unavailable-no-ambient", noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true });
     }
   }
   return { ...sdk, DefaultResourceLoader: IsolatedLoader,
@@ -62,7 +62,7 @@ let dispose: (() => Promise<void>) | undefined;
 beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.responses = []; });
 afterEach(async () => { vi.unstubAllEnvs(); await dispose?.(); dispose = undefined; });
 
-/** A local executor whose environment fails the first `failures` operations that start a tool. */
+/** A local executor unavailable for the first `failures` operations that start a tool. */
 async function executor(failures: number): Promise<ToolExecutor> {
   const local = await createLocalToolExecutor();
   dispose = local.dispose;
@@ -70,7 +70,7 @@ async function executor(failures: number): Promise<ToolExecutor> {
   const fileSystem = local.executor.fileSystem!;
   return Object.assign(Object.create(local.executor), {
     fileSystem: { ...fileSystem, createTempFile: async (options?: Parameters<typeof fileSystem.createTempFile>[0]) => {
-      if (failed++ < failures) throw new ToolEnvironmentError("sandbox_unavailable", "The Session's Sandbox is not available right now.", { reason: "unknown" });
+      if (failed++ < failures) throw new ExecutorUnavailableError("sandbox_unavailable", "The Session's Sandbox is not available right now.", { reason: "unknown" });
       return fileSystem.createTempFile(options);
     } },
   });
@@ -83,7 +83,7 @@ async function run(toolExecutor: ToolExecutor): Promise<DurableEvent[]> {
   return journal.committed;
 }
 
-describe("an environment failure of the executor", () => {
+describe("an unavailable executor", () => {
   it("is a tool error whose details carry its code, which the model retries", async () => {
     control.responses = [
       { content: [call("ls-1", "ls", { path: "." })], stopReason: "toolUse" },

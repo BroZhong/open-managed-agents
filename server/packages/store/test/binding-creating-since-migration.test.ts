@@ -36,7 +36,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("migration 0024: creating_since replac
     expect(migrated.cold).toMatchObject({ sandbox_id: null, creating_since: null });
     // The first use reads the legacy intent as past any deadline, by the database clock.
     const stores = await createPgStores(harness.pool, { ensureSchema: false });
-    const binding = await stores.delegationStore.withEnvironmentLock("pending", async (row) => ({ value: row }));
+    const binding = await stores.delegationStore.withBindingLock("pending", async (row) => ({ value: row }));
     expect(binding.creatingSince).toEqual(new Date(0));
     expect(binding.now.getTime() - binding.creatingSince!.getTime()).toBeGreaterThan(180_000);
   });

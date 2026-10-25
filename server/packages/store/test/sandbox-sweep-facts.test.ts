@@ -35,7 +35,7 @@ describe("the sweeper's binding facts on PostgreSQL", () => {
     await stores.pendingEventStore.ack(session.id, fence.eventId, fence);
   };
   const bind = (bindingId: string, next: "cold" | "creating" | { ready: string }) =>
-    stores.delegationStore.withEnvironmentLock(bindingId, async () => ({ next, value: undefined }));
+    stores.delegationStore.withBindingLock(bindingId, async () => ({ next, value: undefined }));
   const rows = async () => Number((await harness.pool.query<{ n: string }>("SELECT count(*) AS n FROM delegation_environments")).rows[0].n);
   const unused = { reclaiming: false, inUse: false, allSessionsTerminated: false };
 

@@ -10,8 +10,8 @@ import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js"
 
 /**
  * Skill Install per Turn (ADR-0022, #265): the Router hands the Agent's Skill
- * Set to the Sandbox session, which installs it unless the environment
- * binding records that Set for its Sandbox.
+ * Set to the Sandbox session, which installs it unless the Sandbox Binding
+ * records that Set for its Sandbox.
  */
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;

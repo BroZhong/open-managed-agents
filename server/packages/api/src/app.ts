@@ -51,8 +51,8 @@ export interface AppDeps {
   pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
   loopStore?: LoopStore;
-  /** Delegation reads, and each Session's Sandbox environment for GET /v1/sessions/{id}. */
-  delegationStore?: DelegationRouteDeps["delegationStore"] & Pick<DelegationStore, "environment">;
+  /** Delegation reads, and each Session's Sandbox state for GET /v1/sessions/{id}. */
+  delegationStore?: DelegationRouteDeps["delegationStore"] & Pick<DelegationStore, "sandbox">;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
@@ -174,7 +174,7 @@ export function createApp(deps: AppDeps) {
       eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
-      environments: deps.delegationStore,
+      sandboxes: deps.delegationStore,
     }));
   }
 

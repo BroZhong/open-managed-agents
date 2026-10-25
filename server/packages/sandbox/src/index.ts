@@ -93,12 +93,12 @@ export {
   type SandboxManagerDeps,
   type SandboxDescriptor,
   type EnvSpec,
-  type SandboxEnvironmentBinding,
+  type SandboxBinding,
   type PrepareOptions,
   type SkillInstallObserver,
 } from "./sandbox-manager.js";
 
-export { BINDING_REREAD_MS, type EnvironmentSignals } from "./environment-signals.js";
+export { BINDING_REREAD_MS, type SandboxSignals } from "./sandbox-signals.js";
 
 export {
   DefaultTurnSandboxes,

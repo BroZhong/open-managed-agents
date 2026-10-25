@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import type { WorkspaceMetadataStore, AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution, EnvironmentObservation, EnvironmentTransition } from "../src/index.js";
+import type { WorkspaceMetadataStore, AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution, SandboxObservation, BindingTransition } from "../src/index.js";
 export interface DelegationFixture { workspaceStore: WorkspaceMetadataStore; agentStore: AgentStore; sessionStore: SessionStore; pendingEventStore: PendingEventStore; eventLogStore: EventLogStore; delegationStore: DelegationStore }
 export function delegationContract(name: string, create: () => Promise<DelegationFixture>, close?: () => Promise<void>) {
   describe(name, () => {
@@ -234,21 +234,21 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(await stores.delegationStore.listCommands(asynchronous.id)).toEqual([]);
       expect(await stores.pendingEventStore.count(input.callerSessionId)).toBe(0);
     });
-    it("retains the shared environment for queued children after parent termination", async () => {
+    it("retains the shared Sandbox binding for queued children after parent termination", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       await stores.sessionStore.terminate(input.callerSessionId);
       expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(true);
       await stores.sessionStore.terminate(child.childId);
       expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(false);
     });
-    it("retains the environment between execution admission and Router resource acquisition", async () => {
+    it("retains the Sandbox binding between execution admission and Router resource acquisition", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const fence = await fenceFor(child);
       await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
       await stores.sessionStore.terminate(input.callerSessionId);
       expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(true);
     });
-    it("retains independent child resource use after parent release and serializes environment bindings", async () => {
+    it("retains independent child resource use after parent release and serializes Sandbox bindings", async () => {
       const child = await stores.delegationStore.accept(input, parentFence); const fence = await fenceFor(child);
       await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
       await stores.delegationStore.acquireResourceUse(input.callerSessionId, input.sandboxSessionId, parentFence);
@@ -258,45 +258,45 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await finish(child, fence);
       await stores.delegationStore.releaseResourceUse(child.childId, fence);
       expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(false);
-      await stores.delegationStore.withEnvironmentLock("binding", async ({ sandboxId }) => { expect(sandboxId).toBeNull(); return { next: { ready: "sandbox-1" }, value: 1 }; });
-      expect(await stores.delegationStore.withEnvironmentLock("binding", async ({ sandboxId }) => ({ value: sandboxId }))).toBe("sandbox-1");
+      await stores.delegationStore.withBindingLock("binding", async ({ sandboxId }) => { expect(sandboxId).toBeNull(); return { next: { ready: "sandbox-1" }, value: 1 }; });
+      expect(await stores.delegationStore.withBindingLock("binding", async ({ sandboxId }) => ({ value: sandboxId }))).toBe("sandbox-1");
     });
     it("records a creation intent with the database clock and ends it by Ready or Cold (ADR-0023)", async () => {
       const store = stores.delegationStore;
-      const read = () => store.withEnvironmentLock("intent", async (binding) => ({ value: binding }));
+      const read = () => store.withBindingLock("intent", async (binding) => ({ value: binding }));
       const cold = await read();
       expect(cold).toMatchObject({ sandboxId: null, creatingSince: null });
-      await store.withEnvironmentLock("intent", async () => ({ next: "creating", value: undefined }));
+      await store.withBindingLock("intent", async () => ({ next: "creating", value: undefined }));
       const creating = await read();
       expect(creating.sandboxId).toBeNull();
       // now() when the intent committed: after the read that decided it, not after a later read.
       expect(creating.creatingSince!.getTime()).toBeGreaterThanOrEqual(cold.now.getTime());
       expect(creating.creatingSince!.getTime()).toBeLessThanOrEqual(creating.now.getTime());
       // A callback that names no move keeps the intent, and one that throws moves nothing.
-      expect(await store.withEnvironmentLock("intent", async ({ creatingSince }) => ({ value: creatingSince }))).toEqual(creating.creatingSince);
-      await expect(store.withEnvironmentLock("intent", async () => { throw new Error("gateway unavailable"); })).rejects.toThrow("gateway unavailable");
+      expect(await store.withBindingLock("intent", async ({ creatingSince }) => ({ value: creatingSince }))).toEqual(creating.creatingSince);
+      await expect(store.withBindingLock("intent", async () => { throw new Error("gateway unavailable"); })).rejects.toThrow("gateway unavailable");
       expect(await read()).toMatchObject({ sandboxId: null, creatingSince: creating.creatingSince });
-      await store.withEnvironmentLock("intent", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
+      await store.withBindingLock("intent", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
       expect(await read()).toMatchObject({ sandboxId: "sandbox-1", creatingSince: null });
-      await store.withEnvironmentLock("intent", async () => ({ next: "creating", value: undefined }));
-      await store.withEnvironmentLock("intent", async () => ({ next: "cold", value: undefined }));
+      await store.withBindingLock("intent", async () => ({ next: "creating", value: undefined }));
+      await store.withBindingLock("intent", async () => ({ next: "cold", value: undefined }));
       expect(await read()).toMatchObject({ sandboxId: null, creatingSince: null });
     });
-    it("reports a binding's environment from its row: cold, creating, ready and unavailable (ADR-0023)", async () => {
+    it("reports a binding's Sandbox from its row: cold, creating, ready and unavailable (ADR-0023)", async () => {
       const store = stores.delegationStore;
-      const now = async () => (await store.withEnvironmentLock("reported", async ({ now: at }) => ({ value: at }))).getTime();
-      const observe = (observed: EnvironmentObservation, next?: EnvironmentTransition) =>
-        store.withEnvironmentLock("reported", async () => ({ value: undefined, next, observed }));
+      const now = async () => (await store.withBindingLock("reported", async ({ now: at }) => ({ value: at }))).getTime();
+      const observe = (observed: SandboxObservation, next?: BindingTransition) =>
+        store.withBindingLock("reported", async () => ({ value: undefined, next, observed }));
       const failure = (reason: string) => ({ failure: { code: "sandbox_unavailable", reason } });
       // Never used: Cold since nothing recorded.
-      expect(await store.environment("reported")).toEqual({ state: "cold", since: null, lastError: null });
-      await store.withEnvironmentLock("reported", async () => ({ next: "creating", value: undefined }));
-      const { creatingSince } = await store.withEnvironmentLock("reported", async (binding) => ({ value: binding }));
-      expect(await store.environment("reported")).toEqual({ state: "creating", since: creatingSince, lastError: null });
+      expect(await store.sandbox("reported")).toEqual({ state: "cold", since: null, lastError: null });
+      await store.withBindingLock("reported", async () => ({ next: "creating", value: undefined }));
+      const { creatingSince } = await store.withBindingLock("reported", async (binding) => ({ value: binding }));
+      expect(await store.sandbox("reported")).toEqual({ state: "creating", since: creatingSince, lastError: null });
 
       const beforeReady = await now();
-      await store.withEnvironmentLock("reported", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
-      const ready = await store.environment("reported");
+      await store.withBindingLock("reported", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
+      const ready = await store.sandbox("reported");
       expect(ready).toMatchObject({ state: "ready", lastError: null });
       expect(ready.since!.getTime()).toBeGreaterThanOrEqual(beforeReady);
       expect(ready.since!.getTime()).toBeLessThanOrEqual(await now());
@@ -304,43 +304,43 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       // A failure: unavailable since it was recorded, with its code, reason and time.
       const beforeFailure = await now();
       await observe(failure("mount"));
-      const failed = await store.environment("reported");
+      const failed = await store.sandbox("reported");
       expect(failed).toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "mount" } });
       expect(failed.lastError!.at.getTime()).toBeGreaterThanOrEqual(beforeFailure);
       expect(failed.since).toEqual(failed.lastError!.at);
       // Another one: the latest is reported, unavailable since the first.
       await observe(failure("unreachable"));
-      const again = await store.environment("reported");
+      const again = await store.sandbox("reported");
       expect(again).toMatchObject({ state: "unavailable", since: failed.since, lastError: { reason: "unreachable" } });
       expect(again.lastError!.at.getTime()).toBeGreaterThanOrEqual(failed.lastError!.at.getTime());
 
       // A preparation that ends ready clears it: ready since the recovery.
       await observe("ready");
-      const recovered = await store.environment("reported");
+      const recovered = await store.sandbox("reported");
       expect(recovered).toMatchObject({ state: "ready", lastError: null });
       expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(again.lastError!.at.getTime());
       // With nothing to clear, it changes nothing.
       await observe("ready");
-      expect(await store.environment("reported")).toEqual(recovered);
+      expect(await store.sandbox("reported")).toEqual(recovered);
 
       // A move begins a new state, which the old state's failure says nothing about.
       await observe(failure("unreachable"));
       const beforeCold = await now();
-      await store.withEnvironmentLock("reported", async () => ({ next: "cold", value: undefined }));
-      const cold = await store.environment("reported");
+      await store.withBindingLock("reported", async () => ({ next: "cold", value: undefined }));
+      const cold = await store.sandbox("reported");
       expect(cold).toMatchObject({ state: "cold", lastError: null });
       expect(cold.since!.getTime()).toBeGreaterThanOrEqual(beforeCold);
       // A failure recorded with a move belongs to the new state.
-      await store.withEnvironmentLock("reported", async () => ({ next: "creating", value: undefined }));
+      await store.withBindingLock("reported", async () => ({ next: "creating", value: undefined }));
       await observe(failure("rejected"), "cold");
-      const rejected = await store.environment("reported");
+      const rejected = await store.sandbox("reported");
       expect(rejected).toMatchObject({ state: "unavailable", lastError: { reason: "rejected" } });
       expect(rejected.since).toEqual(rejected.lastError!.at);
-      expect(await store.withEnvironmentLock("reported", async (binding) => ({ value: binding }))).toMatchObject({ sandboxId: null, creatingSince: null });
+      expect(await store.withBindingLock("reported", async (binding) => ({ value: binding }))).toMatchObject({ sandboxId: null, creatingSince: null });
       // A callback that throws records nothing.
-      await expect(store.withEnvironmentLock("reported", async () => { throw new Error("gateway unavailable"); })).rejects.toThrow();
-      expect(await store.environment("reported")).toEqual(rejected);
-      expect(await store.environment("other-binding")).toEqual({ state: "cold", since: null, lastError: null });
+      await expect(store.withBindingLock("reported", async () => { throw new Error("gateway unavailable"); })).rejects.toThrow();
+      expect(await store.sandbox("reported")).toEqual(rejected);
+      expect(await store.sandbox("other-binding")).toEqual({ state: "cold", since: null, lastError: null });
     });
     it("records a Skill Install only while the binding still holds the Sandbox it went into", async () => {
       const store = stores.delegationStore;
@@ -348,32 +348,32 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(await store.installedSkillSet("skills-binding")).toBeNull();
       // Nothing is bound yet: there is no Sandbox an install could have gone into.
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first, generation: 1 })).toBe("detached");
-      await store.withEnvironmentLock("skills-binding", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
+      await store.withBindingLock("skills-binding", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
       expect(await store.installedSkillSet("skills-binding")).toBeNull();
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first, generation: 1 })).toBe("recorded");
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: first, generation: 1 });
-      // A record is not part of the environment operation's compare-and-set.
-      expect(await store.withEnvironmentLock("skills-binding", async ({ sandboxId }) => {
+      // A record is not part of the binding operation's compare-and-set.
+      expect(await store.withBindingLock("skills-binding", async ({ sandboxId }) => {
         expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: second, generation: 2 })).toBe("recorded");
         return { next: { ready: sandboxId! }, value: sandboxId };
       })).toBe("sandbox-1");
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: second, generation: 2 });
       // A rebuilt binding keeps the old record, naming the old Sandbox: the
       // new Sandbox never inherits it, and a late install into the old one is refused.
-      await store.withEnvironmentLock("skills-binding", async () => ({ next: { ready: "sandbox-2" }, value: undefined }));
+      await store.withBindingLock("skills-binding", async () => ({ next: { ready: "sandbox-2" }, value: undefined }));
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: second, generation: 2 });
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first, generation: 3 })).toBe("detached");
       // Generations count switches per Sandbox: a new Sandbox starts again.
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-2", setHash: first, generation: 1 })).toBe("recorded");
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-2", setHash: first, generation: 1 });
-      await store.withEnvironmentLock("skills-binding", async () => ({ next: "cold", value: undefined }));
+      await store.withBindingLock("skills-binding", async () => ({ next: "cold", value: undefined }));
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-2", setHash: second, generation: 2 })).toBe("detached");
       expect(await store.installedSkillSet("other-binding")).toBeNull();
     });
     it("keeps the latest switch when installs into one Sandbox record out of order", async () => {
       const store = stores.delegationStore;
       const [x, y] = ["c".repeat(64), "d".repeat(64)];
-      await store.withEnvironmentLock("racing-binding", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
+      await store.withBindingLock("racing-binding", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
       // Y switched first (generation 1), X after it (generation 2), but X records first.
       expect(await store.recordSkillSetInstall("racing-binding", { sandboxId: "sandbox-1", setHash: x, generation: 2 })).toBe("recorded");
       expect(await store.recordSkillSetInstall("racing-binding", { sandboxId: "sandbox-1", setHash: y, generation: 1 })).toBe("superseded");
