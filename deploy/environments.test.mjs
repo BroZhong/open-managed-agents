@@ -106,14 +106,14 @@ test("no environment injects the removed per-Agent or default Sandbox variables 
   assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /oma-auto-story-env|AUTO_STORY_|OPENGROVE_WW_|name: DEFAULT_SANDBOX_/);
 });
 
-test("the oma-test Warm Pool is the auto-story-v2 template without base-secret pod env (ADR-0024)", () => {
+test("the oma-test Warm Pool is the auto-story-v2 template without base-secret pod env or the policy mount (ADR-0024)", () => {
   const pool = readFileSync(new URL("sandbox/warm-pool/oma-test-sandbox.yaml", root), "utf8");
   const manifest = pool.split("\n").filter((line) => !line.startsWith("#")).join("\n");
   assert.match(manifest, /^kind: SandboxSet\nmetadata:\n  name: oma-test-sandbox\n  namespace: sandbox-system\n  labels:\n    oma\.dev\/test-only: "true"$/m);
   assert.match(manifest, /^  replicas: 1$/m);
   assert.match(manifest, /image\.alibabacloud\.com\/enable-image-cache: "true"/);
-  assert.match(manifest, /- mountPath: \/etc\/vfs-cli\n\s+name: vfs-cli-policy\n\s+readOnly: true/);
-  assert.doesNotMatch(manifest, /base-secret|secretKeyRef|auto-story-source|^\s+env:/m);
+  // video-production carries /etc/vfs-cli/policy.json in its image.
+  assert.doesNotMatch(manifest, /base-secret|secretKeyRef|auto-story-source|vfs-cli|^\s+env:|^\s+volumes:/m);
   assert.doesNotMatch(manifest, /name: auto-story-v2/);
 });
 
