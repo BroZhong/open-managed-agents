@@ -27,7 +27,7 @@ test("accepts the repository's generated OpenAPI inventory", () => {
     ...operation,
   }));
 
-  assert.equal(desired.length, 75);
+  assert.equal(desired.length, 82);
   assert.ok(desired.some((operation) =>
     operation.method === "POST" && operation.path === "/v1/skills/{id}/files/upload"
   ));
