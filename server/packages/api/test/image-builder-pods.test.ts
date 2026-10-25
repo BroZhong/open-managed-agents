@@ -118,12 +118,14 @@ function setup() {
   return { kube, clock, runner, logged, run, runToEnd };
 }
 
-const ts = (second: number, nanos = "") => `2026-10-26T01:00:${String(second).padStart(2, "0")}${nanos}Z`;
+/** As the ACS kubelet stamps lines: in the node's zone. */
+const ts = (second: number, nanos = "") => `2026-10-26T09:00:${String(second).padStart(2, "0")}${nanos}+08:00`;
 
 describe("KubernetesBuildRunner", () => {
   it("runs an attempt in one unprivileged ACS pod with the context in a ConfigMap it owns, and reports the pushed digest", async () => {
     const { kube, logged, runToEnd } = setup();
-    kube.streams = [[`${ts(1, ".5")} ==> Pulling the Base Image`, `${ts(2)} Pushed ${DIGEST}`]];
+    kube.streams = [[`${ts(1, ".5")} ==> Pulling the Base Image`, `${ts(1, ".6")} `, `${ts(2)} Pushed ${DIGEST}`,
+      "failed to load spec: open /run/kata-containers/x/config.json: no such file or directory"]];
     expect(await runToEnd()).toEqual({ outcome: "pushed", digest: DIGEST });
     const name = buildPodName("envb_Xy_-9", 1);
     expect(name).toMatch(/^oma-env-build-[0-9a-f]{16}-1$/);
@@ -131,8 +133,7 @@ describe("KubernetesBuildRunner", () => {
     expect(created).toEqual([`POST ${NS}/pods`, `POST ${NS}/configmaps`]);
     expect(kube.calls.slice(-2)).toEqual([`DELETE ${NS}/pods/${name}`, `DELETE ${NS}/configmaps/${name}`]);
     expect(kube.pods.size + kube.configMaps.size).toBe(0);
-    expect(logged.join("")).toContain("==> Pulling the Base Image\nPushed ");
-    expect(logged.join("")).not.toContain("2026-10-26T01:00:01");
+    expect(logged.join("")).toBe(`==> Pulling the Base Image\n\nPushed ${DIGEST}\n`);
     expect(kube.streamPaths[0]).toBe(`${NS}/pods/${name}/log?container=build&follow=true&timestamps=true`);
   });
 
@@ -185,7 +186,7 @@ describe("KubernetesBuildRunner", () => {
       `${ts(2)} [oma] init script failed at line 1: false (exit status 1)`,
       `${ts(2, ".1")} OMA_INIT_FAILED n0nce exit=1`,
     ]];
-    kube.phases = [running, terminated(11, '{"stage":"script"}')];
+    kube.phases = [running, terminated(11)];
     expect(await runToEnd()).toEqual({ outcome: "script_failed", message: "The init script failed at line 1: false (exit status 1)" });
   });
 
@@ -226,6 +227,17 @@ describe("KubernetesBuildRunner", () => {
     expect(await runToEnd()).toEqual({ outcome: "pushed", digest: DIGEST });
     expect(logged.join("")).toBe("one\ntwo\nthree\nfour\n");
     expect(kube.streamPaths[1]).toContain(`&sinceTime=${encodeURIComponent("2026-10-26T01:00:02Z")}`);
+    expect(kube.streamPaths[1]).not.toContain(".");
+  });
+
+  it("takes the pushed digest from this attempt's log marker when the pod has no termination message (ACS)", async () => {
+    const { kube, runToEnd } = setup();
+    kube.streams = [[
+      `${ts(1)} OMA_BUILD_RESULT n0nce-of-another-attempt {"stage":"pushed","digest":"sha256:${"0".repeat(64)}"}`,
+      `${ts(2)} OMA_BUILD_RESULT n0nce {"stage":"pushed","digest":"${DIGEST}"}`,
+    ]];
+    kube.phases = [running, terminated(0)];
+    expect(await runToEnd()).toEqual({ outcome: "pushed", digest: DIGEST });
   });
 
   it("replaces a leftover pod of the same attempt", async () => {

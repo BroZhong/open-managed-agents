@@ -114,12 +114,18 @@ class Tail {
   }
 }
 
-/** `<RFC3339Nano> <line>` as `kubectl logs --timestamps` prints; the stamp as a comparable pair. */
+/**
+ * `<RFC3339Nano> <line>` as the kubelet stamps each line with
+ * `timestamps=true` (on ACS in the node's zone, `+08:00`); the stamp as a
+ * comparable pair of epoch milliseconds of the second and nanoseconds.
+ */
 function stamped(line: string): { at: [number, number]; text: string } | undefined {
   const space = line.indexOf(" ");
-  const match = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?Z$/.exec(line.slice(0, space));
+  const match = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/.exec(space < 0 ? line : line.slice(0, space));
   if (!match) return undefined;
-  return { at: [Date.parse(`${match[1]}Z`), Number((match[2] ?? "").padEnd(9, "0"))], text: line.slice(space + 1) };
+  const second = Date.parse(`${match[1]}${match[3]}`);
+  if (Number.isNaN(second)) return undefined;
+  return { at: [second, Number((match[2] ?? "").padEnd(9, "0"))], text: space < 0 ? "" : line.slice(space + 1) };
 }
 const after = (a: [number, number], b: [number, number]) => a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
 
@@ -230,6 +236,8 @@ export class KubernetesBuildRunner implements BuildRunner {
   /**
    * Follow the container's log until it ends. A dropped stream is resumed
    * from its last line's timestamp, skipping what was already passed on.
+   * (The driver's report also reaches the log: ACS pods return no
+   * termination message.)
    */
   private async followLogs(name: string, log: BuildLogSink, signal: AbortSignal): Promise<void> {
     let last: [number, number] | undefined;
@@ -244,9 +252,10 @@ export class KubernetesBuildRunner implements BuildRunner {
           const end = pending.lastIndexOf("\n");
           if (end < 0) continue;
           for (const line of pending.slice(0, end).split("\n")) {
+            // Every container line is stamped; anything else is the runtime's
+            // (Kata ends a followed stream with "failed to load spec").
             const entry = stamped(line);
-            if (!entry) { log(`${line}\n`); continue; }
-            if (last && !after(entry.at, last)) continue;
+            if (!entry || (last && !after(entry.at, last))) continue;
             last = entry.at;
             log(`${entry.text}\n`);
           }
