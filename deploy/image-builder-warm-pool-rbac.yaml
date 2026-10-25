@@ -1,0 +1,31 @@
+# The production image builder may read and patch the production Warm Pool
+# only (ADR-0024 "Starting a Sandbox"; used from #305: once video-production
+# is ready it points the pool at its image, after an ACS ImageCache for that
+# image is ready). ImageCache is an Alibaba Cloud API, not a Kubernetes
+# resource in this cluster, so it is granted by RAM, not here. Not applied
+# yet: production still serves from auto-story-v2 until the production
+# release; apply it with that release.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oma-image-builder-warm-pool
+  namespace: sandbox-system
+rules:
+- apiGroups: [agents.kruise.io]
+  resources: [sandboxsets]
+  resourceNames: [oma-sandbox]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oma-image-builder-warm-pool
+  namespace: sandbox-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oma-image-builder-warm-pool
+subjects:
+- kind: ServiceAccount
+  name: oma-image-builder
+  namespace: oma-infra

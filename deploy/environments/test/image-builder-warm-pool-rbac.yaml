@@ -1,0 +1,33 @@
+# Cross-namespace grant for the oma-test image builder, applied separately
+# from the oma-test overlay because the overlay rewrites every namespace.
+# Mirrors deploy/image-builder-warm-pool-rbac.yaml: once video-production is
+# ready, the builder points the oma-test Warm Pool at its image (#305), and
+# can read and patch that one SandboxSet only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oma-test-image-builder-warm-pool
+  namespace: sandbox-system
+  labels:
+    oma.dev/test-only: "true"
+rules:
+- apiGroups: [agents.kruise.io]
+  resources: [sandboxsets]
+  resourceNames: [oma-test-sandbox]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oma-test-image-builder-warm-pool
+  namespace: sandbox-system
+  labels:
+    oma.dev/test-only: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oma-test-image-builder-warm-pool
+subjects:
+- kind: ServiceAccount
+  name: oma-image-builder
+  namespace: oma-test

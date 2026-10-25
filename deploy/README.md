@@ -17,10 +17,10 @@ See [the 2026-10-11 native lifecycle release](../docs/verification/native-sandbo
 
 | Scope | Namespace | Resources |
 | --- | --- | --- |
-| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
+| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress; `oma-image-builder` is declared but not yet applied in production |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
 | Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
-| Test environment | `oma-test` | Its own `oma-api`, `oma-runner`, `oma-web`, Redis and `oma-console` Ingress; see [Environments](#environments) |
+| Test environment | `oma-test` | Its own `oma-api`, `oma-runner`, `oma-web`, `oma-image-builder` (and its build pods), Redis and `oma-console` Ingress; see [Environments](#environments) |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to the API Service and all other paths to `oma-web`. The Server therefore
@@ -74,16 +74,20 @@ Manifests are Kustomize overlays on one base:
 
 | Path | Contents |
 | --- | --- |
-| `app/` | API, Runner, Web and Ingress without a namespace; production configuration values |
+| `app/` | API, Runner, image builder, Web and Ingress without a namespace; production configuration values |
 | `environments/production/` | `oma-infra`; keeps the live `/api` route to the legacy `oma-server` Service |
 | `environments/test/` | `oma-test`, test configuration patches, ServiceAccount and Redis |
 | `environments/test/sandbox-rbac.yaml` | Read grant on `sandbox-system/base-secret`; applied separately because the overlay rewrites namespaces |
+| `environments/test/image-builder-warm-pool-rbac.yaml` | The oma-test builder may get and patch the `oma-test-sandbox` SandboxSet; applied separately for the same reason |
+| `image-builder-warm-pool-rbac.yaml` | The production equivalent for the `oma-sandbox` pool; applied with the production release of Environments |
 
-`scripts/render.mjs` renders an overlay and substitutes the three image
-placeholders. Each version is an immutable tag or a `sha256:` digest:
+`scripts/render.mjs` renders an overlay and substitutes the four image
+placeholders; the image builder runs the Server image like the API and the
+Runner, released on its own. Each version is an immutable tag or a `sha256:`
+digest:
 
 ```bash
-node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION
+node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION
 ```
 
 The production overlay matches the live Deployments, ConfigMaps, Services and
@@ -97,10 +101,10 @@ Release the same image to test before production:
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
-node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-test.yaml
+node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION > /tmp/oma-test.yaml
 kubectl diff -f /tmp/oma-test.yaml
 kubectl apply -f /tmp/oma-test.yaml
-for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
+for d in redis oma-api oma-runner oma-web oma-image-builder; do kubectl -n oma-test rollout status deploy/$d; done
 curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status == "ok")'
 ```
 
@@ -139,6 +143,53 @@ kubectl -n oma-infra get secret oma-secrets -o json \
       '.metadata = {name: "oma-secrets", namespace: "oma-test"} | .data.PG_PASSWORD = $pg' \
   | kubectl apply -f -
 ```
+
+## Image builder (ADR-0024)
+
+`oma-image-builder` builds Environments: it claims `environment_builds` rows
+from PostgreSQL by lease, runs each build in its own pod in its namespace,
+pushes the image to `welltop/oma-environments:<environment>-<envId>-<buildId>`
+(the repository is created on the first push), claims one Sandbox from the
+Warm Pool with the new digest to verify it, and only then makes the
+Environment ready. The API only queues builds and reads their logs, which the
+builder keeps in the Host Bucket under `__oma/environment-builds/`. It is one
+replica with `Recreate`: on SIGTERM it deletes its build pods and releases
+their leases, and the next builder resumes those builds at once; after an
+abrupt stop it reclaims them when their leases expire (90 s) and removes the
+earlier attempts' pods. A build fails after 60 minutes; a script failure is
+final, an infrastructure failure is retried twice.
+
+| Configuration (`oma-image-builder-config`) | |
+| --- | --- |
+| `BASE_IMAGE_OMA_BASE`, `BASE_IMAGE_OMA_MEDIA` | The Base Images by digest; equal to `sandbox/oma-{base,media}/image.lock.json` (checked by `environments.test.mjs`) |
+| `BUILDAH_IMAGE` | buildah v1.43.5 by digest under `welltop/buildah`, mirrored with `scripts/build-base-images.sh --push buildah` on vfs-dev |
+| `ENVIRONMENT_IMAGE_REPOSITORY` | `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments` |
+| `OMA_ENVIRONMENT` | The tag prefix and the label of build pods and verification Sandboxes (`production`, `test`) |
+| `BUILD_REGISTRY_AUTH_SECRET`, `BUILD_IMAGE_PULL_SECRET` | `ali-shanghai`: mounted into build pods as the push credential (the only Secret a build pod sees), and pulls buildah |
+| `BUILD_PROXY_URL`, `BUILD_NO_PROXY` | sing-box for GitHub downloads, with the Aliyun mirrors and cluster addresses direct; given to the init script through `build.env`, never kept in an image |
+| `SANDBOX_TEMPLATE`, `E2B_*` | The Runners' Warm Pool and gateway, for the verification claim |
+| `BUILD_NAMESPACE` | The builder's own namespace (downward API) |
+
+The builder holds PG, the Workspace OSS keys (for logs) and the E2B key; no
+encryption key and no Sandbox base Secret: Environment secrets never reach a
+build. Its Role in its own namespace allows only `pods`
+(create/delete/get/list/watch), `pods/log` (get) and `configmaps`
+(create/delete/list, the build context each pod owns). The cross-namespace
+grant on the environment's Warm Pool (get/patch of one SandboxSet by name) is
+applied separately; ACS ImageCache (#305) is an Alibaba Cloud API, granted by
+RAM, not by Kubernetes RBAC.
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+kubectl apply -f deploy/environments/test/image-builder-warm-pool-rbac.yaml
+```
+
+**Release order:** Base Images (rebuild, then update the two digests above),
+then the image builder — wait until the Environments it rebuilds are ready
+(`oma-cli environment list`) — then the Runner, whose Pi version must match the
+new Base Images. A build's progress: `oma-cli environment logs --environment-id
+<id> --follow`, or the builder's `environment_build_start`/`environment_build_end`
+log lines.
 
 ## Image pipeline
 
@@ -360,7 +411,7 @@ node deploy/scripts/migration-for-env.mjs test deploy/migrations/0025_binding_en
 # 4. The new image, built on vfs-dev from the release commit (see "Image pipeline"), then
 #    "Test releases": the full manifest also returns oma-runner to 2 replicas. deploy-app.sh
 #    targets production only.
-node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-test.yaml
+node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION > /tmp/oma-test.yaml
 kubectl diff -f /tmp/oma-test.yaml; kubectl apply -f /tmp/oma-test.yaml
 for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
 curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status == "ok")'

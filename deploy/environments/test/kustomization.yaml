@@ -34,6 +34,14 @@ patches:
     - {op: replace, path: /data/SANDBOX_TEMPLATE, value: oma-test-sandbox}
     - {op: replace, path: /data/SANDBOX_IMAGE, value: 'registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d'}
 - target:
+    kind: ConfigMap
+    name: oma-image-builder-config
+  patch: |-
+    - {op: replace, path: /data/PG_USER, value: oma_test_app}
+    - {op: replace, path: /data/PG_SCHEMA, value: oma_test}
+    - {op: replace, path: /data/OMA_ENVIRONMENT, value: test}
+    - {op: replace, path: /data/SANDBOX_TEMPLATE, value: oma-test-sandbox}
+- target:
     kind: Deployment
     name: oma-runner
   # Fault injection on test only. With a shared process namespace the Runner's
