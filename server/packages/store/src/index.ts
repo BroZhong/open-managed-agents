@@ -211,6 +211,7 @@ export type {
   EnvironmentStoreCreateInput,
   EnvironmentStoreUpdateInput,
   EnvironmentVariable,
+  SandboxEnvironmentRecord,
 } from "./interfaces/environment-store.js";
 export { ENVIRONMENT_BASE_IMAGES, newEnvironmentId, newEnvironmentBuildId, environmentDefinitionSha256 } from "./environment.js";
 export { EnvironmentNameConflictError } from "./errors.js";

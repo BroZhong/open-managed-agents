@@ -155,6 +155,22 @@ export function environmentStoreContract(name: string, create: () => Promise<Env
       expect(await store.listForSessions("t2", [own.id])).toEqual([]);
     });
 
+    it("reads what a Session's Sandbox needs of its Environment, deleted or not, only where the Tenant sees it", async () => {
+      const own = await store.create(input(T1, { name: "vars", env: [{ name: "A", value: "1" }, { name: "T", secretRef: { source: "environment", key: "T" } }],
+        encryptedSecrets: { T: "sealed" } }));
+      const builtIn = await store.create(input(PLATFORM, { name: "platform-vars", env: [{ name: "P", secretRef: { source: "platform", key: "P" } }] }));
+      expect(await store.getForSandbox("t1", own.id)).toEqual({
+        id: own.id, tenantId: "t1", image: null, env: own.env, encryptedSecrets: { T: "sealed" },
+      });
+      expect(await store.getForSandbox("t2", builtIn.id)).toEqual({ id: builtIn.id, tenantId: null, image: null, env: builtIn.env, encryptedSecrets: {} });
+      expect(await store.getForSandbox("t2", own.id)).toBeNull();
+      expect(await store.getForSandbox("t1", "env_missing")).toBeNull();
+      // A variable changed now is what the next read sees.
+      await store.update(T1, own.id, { env: [{ name: "A", value: "2" }], encryptedSecrets: {} });
+      await store.delete(T1, own.id);
+      expect(await store.getForSandbox("t1", own.id)).toMatchObject({ env: [{ name: "A", value: "2" }], encryptedSecrets: {} });
+    });
+
     it("soft-deletes: hidden from every read but a Session's, its builds kept and the active one superseded", async () => {
       const env = await store.create(input(T1));
       expect(await store.delete(T1, env.id)).toBe(true);

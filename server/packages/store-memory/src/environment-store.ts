@@ -9,6 +9,7 @@ import {
   type EnvironmentStore,
   type EnvironmentStoreCreateInput,
   type EnvironmentStoreUpdateInput,
+  type SandboxEnvironmentRecord,
 } from "@oma-server/store";
 
 type StoredEnvironment = Omit<Environment, "lastBuild"> & { lastBuildId: string; deletedAt: Date | null };
@@ -39,6 +40,12 @@ export class InMemoryEnvironmentStore implements EnvironmentStore {
       const env = this.environments.get(id);
       return env && (env.ownerType === "platform" || env.tenantId === tenantId) ? [this.view(env)] : [];
     });
+  }
+
+  async getForSandbox(tenantId: string, id: string): Promise<SandboxEnvironmentRecord | null> {
+    const env = this.environments.get(id);
+    if (!env || (env.ownerType !== "platform" && env.tenantId !== tenantId)) return null;
+    return structuredClone({ id: env.id, tenantId: env.tenantId, image: env.image, env: env.env, encryptedSecrets: env.encryptedSecrets });
   }
 
   /**

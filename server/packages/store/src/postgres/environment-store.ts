@@ -13,6 +13,7 @@ import type {
   EnvironmentStoreCreateInput,
   EnvironmentStoreUpdateInput,
   EnvironmentVariable,
+  SandboxEnvironmentRecord,
 } from "../interfaces/environment-store.js";
 
 interface EnvironmentRow {
@@ -165,6 +166,16 @@ export class PgEnvironmentStore implements EnvironmentStore {
       [tenantId, ...unique],
     );
     return rows.map(rowToEnvironment);
+  }
+
+  async getForSandbox(tenantId: string, id: string): Promise<SandboxEnvironmentRecord | null> {
+    // A primary-key read of the columns a command needs: no build join, script or manifest.
+    const { rows: [row] } = await this.pool.query<Pick<EnvironmentRow, "id" | "tenant_id" | "image" | "env" | "secrets">>(
+      `SELECT id, tenant_id, image, env, secrets FROM environments
+       WHERE id = $1 AND (owner_type = 'platform' OR tenant_id = $2)`,
+      [id, tenantId],
+    );
+    return row ? { id: row.id, tenantId: row.tenant_id, image: row.image, env: row.env, encryptedSecrets: row.secrets } : null;
   }
 
   async create(input: EnvironmentStoreCreateInput): Promise<Environment> {

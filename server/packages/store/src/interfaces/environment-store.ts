@@ -109,6 +109,13 @@ export interface Environment {
   updatedAt: Date;
 }
 
+/**
+ * What a Session's Sandbox reads of its Environment (ADR-0024): the image
+ * new Sandboxes are claimed with, and the variables injected into every
+ * command, Tenant secrets still sealed.
+ */
+export type SandboxEnvironmentRecord = Pick<Environment, "id" | "tenantId" | "image" | "env" | "encryptedSecrets">;
+
 /** Who may change an Environment: a Tenant its own, the platform its built-ins. */
 export type EnvironmentOwner =
   | { ownerType: "tenant"; tenantId: string }
@@ -150,6 +157,12 @@ export interface EnvironmentStore {
    * running on a deleted Environment's image (ADR-0024). In no order.
    */
   listForSessions(tenantId: string, ids: readonly string[]): Promise<Environment[]>;
+  /**
+   * {@link SandboxEnvironmentRecord} of an Environment a Tenant's Session
+   * runs in, deleted or not; null when the Tenant cannot see it. The Host
+   * reads it for every command, so it reads nothing else.
+   */
+  getForSandbox(tenantId: string, id: string): Promise<SandboxEnvironmentRecord | null>;
   /**
    * Insert the Environment `pending` with its first build, in one
    * transaction. Throws `EnvironmentNameConflictError` when its owner already
