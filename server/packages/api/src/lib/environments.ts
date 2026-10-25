@@ -10,8 +10,11 @@ import {
   type EnvironmentVariable,
 } from "@oma-server/store";
 import { ENVIRONMENT_VARIABLE_NAME, isReservedEnvironmentVariable } from "@oma-server/sandbox";
-import { ENVIRONMENT_ENV_MAX_BYTES, ENVIRONMENT_INIT_SCRIPT_MAX_BYTES } from "../openapi/environments.js";
 import { SecretBox, sealedPlaintextBytes } from "./secret-box.js";
+
+/** Bytes, not characters: the limits bound what the builder and Sandboxes receive. */
+export const ENVIRONMENT_ENV_MAX_BYTES = 32 * 1024;
+export const ENVIRONMENT_INIT_SCRIPT_MAX_BYTES = 256 * 1024;
 
 /** A variable as written: a Tenant secret reference may carry the secret's new value. */
 export type EnvironmentVariableInput =

@@ -1,10 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ENVIRONMENT_BASE_IMAGES } from "@oma-server/store";
+import { ENVIRONMENT_ENV_MAX_BYTES } from "../lib/environments.js";
 import { DateTimeSchema, DeletedSchema, ErrorSchema } from "./schemas.js";
-
-/** Bytes, not characters: the limits bound what the builder and Sandboxes receive. */
-export const ENVIRONMENT_ENV_MAX_BYTES = 32 * 1024;
-export const ENVIRONMENT_INIT_SCRIPT_MAX_BYTES = 256 * 1024;
 
 const text = (field: string, max: number) => z.string().max(max, { error: `${field} must be at most ${max} characters` })
   .refine((value) => !value.includes("\0"), { error: `${field} must not contain NUL characters` });
