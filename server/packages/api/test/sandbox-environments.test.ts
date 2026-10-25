@@ -22,7 +22,7 @@ async function setup(platform: Record<string, string> = { VFS_TOKEN: "platform-v
     initScript: "", env: [{ name: "VFS_TOKEN", secretRef: { source: "platform", key: "VFS_TOKEN" } },
       { name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }], encryptedSecrets: {},
   });
-  stores.environmentStore.succeedBuild("env_video_production", IMAGE);
+  await stores.environmentStore.buildNow("env_video_production", IMAGE);
   const warn = vi.fn();
   const resolver = new SandboxEnvironmentResolver(stores.environmentStore, KEY, platform, { warn });
   return { stores, service, resolver, warn };
@@ -66,7 +66,7 @@ describe("a Session's commands in its Environment, edited through the API (ADR-0
     const { stores, service, resolver } = await setup();
     const env = await service.create("t1", { name: "tools", baseImage: "oma-base",
       env: [{ name: "MODE", value: "first" }, { name: "API_TOKEN", secretRef: { source: "environment", key: "API_TOKEN" }, value: CANARY }] });
-    stores.environmentStore.succeedBuild(env.id, IMAGE);
+    await stores.environmentStore.buildNow(env.id, IMAGE);
     const client = new FakeSandboxClient();
     const sandboxes = new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: client, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, environments: resolver,
