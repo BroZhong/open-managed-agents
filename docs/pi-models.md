@@ -104,9 +104,10 @@ is `k3`, not Ark's `kimi-k3`. Secret subPath mounts require a Host rollout to
 load changed configuration.
 
 The console creates Agents with the default Sandbox template and no image
-override. Production currently sets `SANDBOX_TEMPLATE=auto-story-v2`. Saving
-an Agent with the retired `auto-story` option removes that override; existing
-custom templates and Sandbox environment variables are preserved.
+override. The Host no longer reads an Agent's template override: every
+Sandbox is claimed from the Runner's Warm Pool (`SANDBOX_TEMPLATE`, production
+`auto-story-v2`) with `SANDBOX_IMAGE` (ADR-0024). Sandbox environment
+variables are preserved.
 
 ## Model metadata (verified 2026-09-15)
 

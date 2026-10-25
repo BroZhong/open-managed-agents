@@ -9,8 +9,9 @@ Use `kubectl --kubeconfig "$HOME/.kube/agent-platform-config"` explicitly;
 the machine's default context may point to another cluster. The Host and web
 console are in `oma-infra`; SandboxSets are in `sandbox-system`.
 
-The Host enables sandboxes with global default template
-`auto-story-v2` (the sole maintained Sandbox template) and E2B domain `sandbox.agentry.welltop.tech`.
+The Host claims every Sandbox from its deployment's **Warm Pool**
+(`SANDBOX_TEMPLATE`: production `auto-story-v2`, oma-test `oma-test-sandbox`)
+with the image `SANDBOX_IMAGE`, through E2B domain `sandbox.agentry.welltop.tech`.
 Sandbox images come from the Shanghai ACR repository
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 See `deploy/k8s.yaml` and `sandbox/README.md` for deployment configuration.
@@ -18,8 +19,8 @@ Historical test reports describe their original runs, not the current deployment
 
 ## Repository boundaries
 
-`sandbox/` contains the sole maintained template, its image recipe and required
-build tools. `deploy/` contains application deployment and shared infrastructure.
+`sandbox/` contains the Base Image recipes, the Warm Pool manifests, the
+`auto-story-v2` template and its recipe, and required build tools. `deploy/` contains application deployment and shared infrastructure.
 Business Agent presets, prompts, workflows and Skill content belong outside
 this repository; the platform still provides Skill Library, Equip and Skill
 Install mechanisms. The legacy `AUTO_STORY_*` environment injection remains

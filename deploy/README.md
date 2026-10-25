@@ -237,10 +237,17 @@ deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-pro
 
 ```
 
-Pool deployment does not change the Server's `SANDBOX_TEMPLATE` setting.
-The ConfigMap and the SDK fallback default to `auto-story-v2`; explicit Agent
-template selection still takes precedence. Existing Session sandboxes need a
-rebuild or a new Session to pick up a changed image or template.
+Every Sandbox is claimed from the Runner's Warm Pool, `SANDBOX_TEMPLATE`
+(production `auto-story-v2`, oma-test `oma-test-sandbox`), with the image
+`SANDBOX_IMAGE` (ADR-0024). Both are required: a Runner without them, or
+with an image not pinned by digest, does not start. `SANDBOX_IMAGE` must
+equal the pool's image byte for byte, or every claim swaps the container in
+place: a pool deployment that changes the image must change the Runner
+ConfigMap in the same release (a Runner rollout loads it), and a Runner
+image that introduces the key needs the ConfigMap applied first. Agent
+template selection no longer exists. Existing Session sandboxes need a
+rebuild or a new Session to pick up a changed image. The oma-test pool is
+`sandbox/warm-pool/oma-test-sandbox.yaml`; see `sandbox/README.md`.
 
 ## What the repository owns
 
