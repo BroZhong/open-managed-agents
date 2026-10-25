@@ -196,3 +196,22 @@ export { contextPresentation, eventSequenceWidth, presentContextData, presentEve
 export type { ModelProviderStore, ModelProviderRecord } from "./interfaces/model-provider-store.js";
 export { PgModelProviderStore } from "./postgres/model-provider-store.js";
 export { migrateModelProviderCapabilities } from "./postgres/migrate-model-provider-capabilities.js";
+
+export type {
+  Environment,
+  EnvironmentBaseImage,
+  EnvironmentBuild,
+  EnvironmentBuildStatus,
+  EnvironmentBuildSummary,
+  EnvironmentOwner,
+  EnvironmentOwnerType,
+  EnvironmentSecretSource,
+  EnvironmentStatus,
+  EnvironmentStore,
+  EnvironmentStoreCreateInput,
+  EnvironmentStoreUpdateInput,
+  EnvironmentVariable,
+} from "./interfaces/environment-store.js";
+export { ENVIRONMENT_BASE_IMAGES, newEnvironmentId, newEnvironmentBuildId, environmentDefinitionSha256 } from "./environment.js";
+export { EnvironmentNameConflictError } from "./errors.js";
+export { PgEnvironmentStore } from "./postgres/environment-store.js";

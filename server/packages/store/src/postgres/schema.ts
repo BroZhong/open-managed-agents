@@ -276,6 +276,76 @@ CREATE TABLE IF NOT EXISTS ${s}.users (
   created_at    TIMESTAMPTZ NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON ${s}.users (lower(username));
+
+-- Environments (ADR-0024): a Base Image, an init script and variables, built
+-- once into the image that serves Sandboxes. Built-in Environments have
+-- owner_type 'platform', no tenant and a fixed id. env holds plain values and
+-- secret references; secrets holds the Tenant secrets' ciphertexts by key.
+-- image is the digest serving Sandboxes (NULL until a build first succeeds);
+-- last_build_id is the most recent build. Deletion is soft.
+CREATE TABLE IF NOT EXISTS ${s}.environments (
+  id             TEXT PRIMARY KEY,
+  owner_type     TEXT NOT NULL CHECK (owner_type IN ('platform', 'tenant')),
+  tenant_id      TEXT,
+  name           TEXT NOT NULL,
+  description    TEXT NOT NULL,
+  base_image     TEXT NOT NULL,
+  init_script    TEXT NOT NULL,
+  env            JSONB NOT NULL,
+  secrets        JSONB NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('pending', 'building', 'failed', 'ready')),
+  image          TEXT,
+  manifest       JSONB,
+  last_build_id  TEXT,
+  created_at     TIMESTAMPTZ NOT NULL,
+  updated_at     TIMESTAMPTZ NOT NULL,
+  deleted_at     TIMESTAMPTZ,
+  CHECK ((owner_type = 'platform') = (tenant_id IS NULL))
+);
+-- Names are unique per owner among Environments that are not deleted.
+CREATE UNIQUE INDEX IF NOT EXISTS environments_tenant_name_unique
+  ON ${s}.environments (tenant_id, name) WHERE owner_type = 'tenant' AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS environments_platform_name_unique
+  ON ${s}.environments (owner_type, name) WHERE owner_type = 'platform' AND deleted_at IS NULL;
+
+-- Environment Builds, written in the transaction that changes the Environment
+-- (ADR-0018: the API executes nothing). A row snapshots what to build; the
+-- image builder claims a pending row, or a running one whose lease expired,
+-- by lease_owner/lease_expires_at, and records its outcome. A newer change, or
+-- deleting the Environment, supersedes the active build. seq orders builds.
+CREATE TABLE IF NOT EXISTS ${s}.environment_builds (
+  id                 TEXT PRIMARY KEY,
+  seq                BIGSERIAL,
+  environment_id     TEXT NOT NULL,
+  owner_type         TEXT NOT NULL,
+  tenant_id          TEXT,
+  status             TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'superseded')),
+  base_image         TEXT NOT NULL,
+  init_script        TEXT NOT NULL,
+  definition_sha256  TEXT NOT NULL,
+  base_image_digest  TEXT,
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  lease_owner        TEXT,
+  lease_expires_at   TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL,
+  started_at         TIMESTAMPTZ,
+  finished_at        TIMESTAMPTZ,
+  error_code         TEXT,
+  error_message      TEXT,
+  image              TEXT,
+  manifest           JSONB,
+  log_key            TEXT
+);
+-- An Environment's builds; then at most one active build per Environment.
+-- (pg-mem serves a lookup from the first index on its columns, ignoring a
+-- partial index's predicate, so the plain index comes first.)
+CREATE INDEX IF NOT EXISTS environment_builds_environment_idx
+  ON ${s}.environment_builds (environment_id);
+CREATE UNIQUE INDEX IF NOT EXISTS environment_builds_active_unique
+  ON ${s}.environment_builds (environment_id) WHERE status IN ('pending', 'running');
+-- The builder's claim scan, oldest first.
+CREATE INDEX IF NOT EXISTS environment_builds_claim_idx
+  ON ${s}.environment_builds (seq) WHERE status IN ('pending', 'running');
 `;
 }
 

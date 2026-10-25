@@ -77,3 +77,12 @@ export class SandboxBindingChanged extends Error {
     this.name = "SandboxBindingChanged";
   }
 }
+
+/** The owner already has an Environment of this name that is not deleted; the API maps this to 409. */
+export class EnvironmentNameConflictError extends Error {
+  readonly code = "environment_name_conflict";
+  constructor(readonly environmentName: string) {
+    super(`An Environment named "${environmentName}" already exists.`);
+    this.name = "EnvironmentNameConflictError";
+  }
+}
