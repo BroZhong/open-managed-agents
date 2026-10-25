@@ -91,6 +91,12 @@ export interface SandboxFileEntry {
 }
 
 /**
+ * The create metadata key the gateway claims a Warm Pool Sandbox with,
+ * naming the image it runs (ADR-0024).
+ */
+export const CLAIM_IMAGE_METADATA = "e2b.agents.kruise.io/image";
+
+/**
  * Whether `image` names one image by digest: `<repository>@sha256:<64 hex>`,
  * with no tag. The Warm Pool compares the claim's image with its own as
  * strings, so a Sandbox claimed with the pool's exact reference keeps its

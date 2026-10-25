@@ -6,7 +6,7 @@ import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SandboxCreateRejected, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
 import { EMPTY_SKILL_SET, skillSetOf, type SkillSet } from "../src/skill-install.js";
-import { DefaultTurnSandboxes, type SandboxLease } from "../src/turn-sandboxes.js";
+import { DefaultTurnSandboxes, type SandboxLease, type TurnSandboxesDeps } from "../src/turn-sandboxes.js";
 import { workspaceMountMetadata } from "../src/workspace-mount.js";
 import { BINDING_REREAD_MS, type SandboxSignals } from "../src/sandbox-signals.js";
 import { databaseClock, signalBus } from "./bindings.js";
@@ -65,11 +65,12 @@ function watch<T>(promise: Promise<T>) {
 class Runner {
   dead = false;
   readonly sandboxes: DefaultTurnSandboxes;
-  constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: SandboxSignals, readonly loss?: LossPoint) {
+  constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: SandboxSignals, readonly loss?: LossPoint,
+    deps: Pick<TurnSandboxesDeps, "sandboxImage" | "environments"> = {}) {
     const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", sandboxSignals: hints,
       lifecycle: stores.lifecycle && this.alive(stores.lifecycle) });
     this.sandboxes = new DefaultTurnSandboxes({ manager, bindings: this.bindings(stores.delegationStore),
-      sessions: this.alive(stores.sessionStore) as Pick<SessionStore, "getById">, workspaceMount });
+      sessions: this.alive(stores.sessionStore) as Pick<SessionStore, "getById">, workspaceMount, ...deps });
     if (loss === "during-skill-install") {
       // The install goes on in the Sandbox; the Runner never hears how it ended.
       gateway.skillInstallFault = (stage) => { if (stage === "download") this.dead = true; };
@@ -153,16 +154,16 @@ export function bindingReconciliationContract(name: string, createStores: () => 
   describe(name, () => {
     if (options.teardown) afterAll(options.teardown);
 
-    async function setup() {
+    async function setup(deps: Pick<TurnSandboxesDeps, "sandboxImage" | "environments"> = {}) {
       const stores = await createStores();
       const gatewayClock = databaseClock(new Date("2026-10-22T13:19:30Z"));
       const gateway = new FakeSandboxClient({ clock: gatewayClock.now });
       const bundles = new Bundles();
       const list = vi.spyOn(gateway, "listSandboxes");
       const hints = signalBus();
-      const runner = (loss?: LossPoint) => new Runner(stores, gateway, bundles, hints, loss);
-      const session = (parent?: Session) => stores.sessionStore.create({
-        tenantId: TENANT, agentId: agent.id, agent, workspaceId: "ws_1",
+      const runner = (loss?: LossPoint) => new Runner(stores, gateway, bundles, hints, loss, deps);
+      const session = (parent?: Session, environmentId?: string) => stores.sessionStore.create({
+        tenantId: TENANT, agentId: agent.id, agent, workspaceId: "ws_1", ...(environmentId ? { environmentId } : {}),
         ...(parent ? { delegation: { parentSessionId: parent.id, parentTurnId: "turn_1_a1", parentToolUseId: "call_agent", sandboxSessionId: parent.id } } : {}),
       });
       /** Queue an input and claim it: a Turn attempt's fence. */
@@ -261,6 +262,29 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(sandboxId).toBe(claimedId);
       expect(h.gateway.created).toEqual([claimedId]);
       expect(h.gateway.destroyed).toEqual([]);
+    });
+
+    it("records for an adopted Sandbox the binding's Environment and the image its create asked for (ADR-0024)", async () => {
+      const image = "registry.example/welltop/oma-environments@sha256:" + "e".repeat(64);
+      const h = await setup({ environments: { image: async () => image, variables: async () => ({}) } });
+      const session = await h.session(undefined, "env_tools");
+      await h.lose("after-create", session);
+      const [createdId] = h.gateway.created;
+      const { sandboxId } = await takeOver(h, session);
+      expect(sandboxId).toBe(createdId);
+      expect(await h.stores.delegationStore.withBindingLock(session.id, async ({ environmentId, image: recorded }) => ({ value: { environmentId, image: recorded } })))
+        .toEqual({ environmentId: "env_tools", image });
+    });
+
+    it("records no image for an adopted Sandbox whose listing does not show one", async () => {
+      const h = await setup();
+      const session = await h.session();
+      const orphan = await h.claimed(session.id);
+      await h.stores.legacyPending(session.id);
+      const { lease } = await h.turn(h.runner(), session);
+      expect(await h.toolsWork(lease, session.id)).toBe(orphan);
+      expect(await h.stores.delegationStore.withBindingLock(session.id, async ({ environmentId, image }) => ({ value: { environmentId, image } })))
+        .toEqual({ environmentId: null, image: null });
     });
 
     it("recreates the Sandbox when the claim died with the Runner during create", async () => {

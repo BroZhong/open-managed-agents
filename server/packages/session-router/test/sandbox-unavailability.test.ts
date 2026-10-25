@@ -32,7 +32,8 @@ type Write = ReturnType<typeof journalWriter>;
 type Script = (input: AdapterInput, write: Write, attempt: number) => Promise<void>;
 
 /** Runners sharing one store and one gateway, each with its own Sandbox Manager; a lost Runner never renews or claims again. */
-async function harness(script: Script, claims: { poolImage?: string; sandboxImage?: string; environmentImage?: string } = {}) {
+async function harness(script: Script, claims: { poolImage?: string; sandboxImage?: string; environmentImage?: string;
+  environmentVariables?: Record<string, string> } = {}) {
   const stores = createMemoryStores();
   // The Session's Environment, built, when the test names its image (ADR-0024).
   const environment = claims.environmentImage === undefined ? undefined : await stores.environmentStore.create({
@@ -63,7 +64,11 @@ async function harness(script: Script, claims: { poolImage?: string; sandboxImag
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: gateway, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, sandboxImage: claims.sandboxImage,
-      environments: stores.environmentStore,
+      // The Host's resolution, here of plain values only (the Runner's opens secrets too).
+      environments: {
+        image: async (tenantId, id) => (await stores.environmentStore.getForSandbox(tenantId, id))?.image ?? null,
+        variables: async () => ({ ...claims.environmentVariables }),
+      },
       onError: ({ error }) => errors.push({ owner: ownerId, error }) }),
     pendingClaimOwnerId: ownerId, pendingClaimLeaseMs: 100, pendingClaimRenewIntervalMs: 30,
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
@@ -132,6 +137,23 @@ describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
       ["span.sandbox_prepare_end", { turnId: expect.not.stringMatching(/^turn_1_/), prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
         durationMs: expect.any(Number) }],
     ]);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("runs a Session's commands with its Environment's variables, which reach no event, no command line and not the Sandbox's creation", async () => {
+    const CANARY = "sk-canary-" + "7d1e".repeat(8);
+    const h = await harness(async (input, write) => {
+      await write(event("agent.tool_use", { toolUseId: "call_deploy", name: "bash", input: { command: "deploy-tool --dry-run" } }));
+      for await (const _ of input.toolExecutor!.exec(["deploy-tool", "--dry-run"])) { /* drain */ }
+      await answer(write);
+    }, { sandboxImage: POOL, environmentImage: OTHER, environmentVariables: { API_TOKEN: CANARY } });
+    await h.turn("deploy");
+    const [sandboxId] = h.gateway.created;
+    const command = h.gateway.execs.find((run) => run.command[0] === "deploy-tool")!;
+    expect(command.env).toMatchObject({ API_TOKEN: CANARY, HOME: "/home/user" });
+    expect(command.command.join(" ")).not.toContain(CANARY);
+    expect(JSON.stringify(await h.log())).not.toContain(CANARY);
+    expect(JSON.stringify(h.gateway.createOptsOf(sandboxId))).not.toContain(CANARY);
     expect(h.errors).toEqual([]);
   });
 

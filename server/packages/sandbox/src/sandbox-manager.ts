@@ -7,7 +7,7 @@ import type {
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ExecutorUnavailableError } from "@open-managed-agents/adapter-core";
-import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected, intentExpired, intentExpiresAt } from "./sandbox-client.js";
+import { CLAIM_IMAGE_METADATA, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected, intentExpired, intentExpiresAt, isDigestPinnedImage } from "./sandbox-client.js";
 import type { ListedSandbox, SandboxClaim, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
@@ -21,6 +21,25 @@ import {
   type WorkspaceMountSpec,
   type WorkspaceMountTarget,
 } from "./workspace-mount.js";
+
+/**
+ * The variables every command a session runs for its Turn receives
+ * (ADR-0024, "Starting a Sandbox"), resolved by the Host just before each
+ * command, so a change applies from the next one. They travel with the
+ * command only: never in the Sandbox's creation, the tool protocol or any
+ * event. Host-internal commands (the Skill Install, mount checks, file
+ * primitives) do not receive them.
+ */
+export type CommandVariables = () => Promise<Readonly<Record<string, string>>>;
+
+/** A command's variables could not be resolved: it was not run. */
+export class CommandVariablesUnavailable extends Error {
+  constructor(options?: ErrorOptions) {
+    // Stable and value-free: the cause may come from a store or a decryption.
+    super("The Session's Environment variables could not be read; the command was not run. A later command can retry.", options);
+    this.name = "CommandVariablesUnavailable";
+  }
+}
 
 /** Host computes the trusted mount identity and the Skill Set to install. */
 export interface EnvSpec {
@@ -165,7 +184,8 @@ function holdsIntent(binding: SandboxBindingRow, notBefore: Date): boolean {
 export interface SandboxManager {
   beginActivity?(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean>;
   finishActivity?(activity: SandboxActivity): Promise<void>;
-  open(spec: EnvSpec, binding: SandboxBinding): SandboxSession;
+  /** `variables`: what every command of the session runs with (see {@link CommandVariables}); none without them. */
+  open(spec: EnvSpec, binding: SandboxBinding, variables?: CommandVariables): SandboxSession;
   list(filter?: {
     tenantId?: string;
     workspaceId?: string;
@@ -309,8 +329,8 @@ export class DefaultSandboxManager implements SandboxManager {
     const store = this.deps.lifecycle;
     await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
   }
-  open(spec: EnvSpec, binding: SandboxBinding): SandboxSession {
-    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, signallingBinding(binding, this.deps.sandboxSignals));
+  open(spec: EnvSpec, binding: SandboxBinding, variables?: CommandVariables): SandboxSession {
+    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, signallingBinding(binding, this.deps.sandboxSignals), variables);
   }
   async list(_filter?: {
     tenantId?: string;
@@ -393,16 +413,31 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, sandboxSignals
  * first, or it moved on, and the caller follows the row.
  */
 export async function reconcileBinding(client: Pick<SandboxClient, "listSandboxes">,
-  binding: Pick<SandboxBinding, "id" | "withLock">, creatingSince: Date): Promise<{ kept?: ListedSandbox; duplicates: ListedSandbox[] } | null> {
+  binding: Pick<SandboxBinding, "id" | "withLock">, creatingSince: Date,
+  /** The Environment the binding's Sessions run in, when the caller knows it (ADR-0024); recorded for an adopted Sandbox. */
+  environmentId?: string): Promise<{ kept?: ListedSandbox; duplicates: ListedSandbox[] } | null> {
   // By binding alone: its id is a Session id, unique across environments,
   // and a Sandbox created before the environment label is adopted too.
   const found = await client.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: binding.id }, states: ["running", "paused"] });
   const [kept, ...duplicates] = [...found].sort(byKeepPreference);
   const converged = await binding.withLock<boolean>(async (row) => {
     if (row.sandboxId !== null || row.creatingSince?.getTime() !== creatingSince.getTime()) return { value: false };
-    return { next: kept ? { ready: kept.sandboxId } : "cold", value: true };
+    // An adopted Sandbox records what is known of its creation: the binding's
+    // Environment, and the image its create asked for when the listing shows it.
+    return { next: kept ? { ready: kept.sandboxId, environmentId: environmentId ?? null, image: claimedImage(kept) } : "cold", value: true };
   });
   return converged ? { kept, duplicates } : null;
+}
+
+/**
+ * The image a listed Sandbox was claimed with, from its create metadata
+ * (`e2b.agents.kruise.io/image`) when the gateway lists it and it names one
+ * image by digest; null otherwise. Nothing else of the metadata is read: it
+ * can hold credentials.
+ */
+function claimedImage({ metadata }: ListedSandbox): string | null {
+  const image = metadata[CLAIM_IMAGE_METADATA];
+  return isDigestPinnedImage(image) ? image : null;
 }
 
 /**
@@ -464,6 +499,7 @@ class SandboxSessionImpl implements SandboxSession {
     private readonly skillInstaller: SkillInstaller,
     private readonly spec: EnvSpec,
     binding: SandboxBinding,
+    private readonly variables?: CommandVariables,
   ) {
     this.binding = knownBinding(binding, (row) => { this.known = row; });
     const legacyRoot = (spec as EnvSpec & { workspaceDir?: unknown })
@@ -517,11 +553,14 @@ class SandboxSessionImpl implements SandboxSession {
   ): AsyncIterable<ExecOutputChunk> {
     const id = await this.ensure();
     const generation = this.generation;
+    // Resolved before the command starts: a failure runs nothing, so it
+    // leaves no uncertain execution. The command's own env is most specific.
+    const env = this.variables ? { ...await this.commandVariables(), ...opts?.env } : opts?.env;
     let settled = false;
     try {
       yield* this.deps.sandboxClient.exec(id, command, {
         cwd: this.resolve(opts?.cwd ?? '.'), timeoutSeconds: opts?.timeoutSeconds,
-        env: opts?.env, signal: opts?.signal,
+        env, signal: opts?.signal,
         onExit: result => { settled = true; opts?.onExit?.(result); },
       });
     } catch (error) {
@@ -535,6 +574,10 @@ class SandboxSessionImpl implements SandboxSession {
     }
   }
 
+  private async commandVariables(): Promise<Readonly<Record<string, string>>> {
+    try { return await this.variables!(); }
+    catch (error) { throw new CommandVariablesUnavailable({ cause: error }); }
+  }
   async readFile(path: string): Promise<string> {
     return this.perform(id => this.deps.sandboxClient.readFile(id, this.resolve(path)));
   }
@@ -958,7 +1001,7 @@ class SandboxSessionImpl implements SandboxSession {
    * mount and installs Skills as for any Ready binding.
    */
   private async reconcile(creatingSince: Date): Promise<void> {
-    const outcome = await reconcileBinding(this.deps.sandboxClient, this.binding, creatingSince);
+    const outcome = await reconcileBinding(this.deps.sandboxClient, this.binding, creatingSince, this.spec.environmentId);
     // A failed kill leaves a superseded Sandbox, which the sweeper kills.
     if (outcome) await killSandboxes(this.deps.sandboxClient, outcome.duplicates.map(({ sandboxId }) => sandboxId));
   }

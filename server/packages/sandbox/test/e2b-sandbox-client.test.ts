@@ -1,10 +1,15 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import { Sandbox, SandboxNotFoundError } from 'e2b';
 import {
   CLAIM_PROBE,
   E2BSandboxClient,
   parseFindOutput,
+  wrapCommand,
   type CreateSandboxFn,
   type E2BSandbox,
   type E2BCommandResult,
@@ -1077,5 +1082,35 @@ describe("classifying a failed create by the gateway's answer (ADR-0023)", () =>
       expect(failure).toBeInstanceOf(Error);
       expect(failure).not.toBeInstanceOf(SandboxCreateRejected);
     } finally { await server.close(); }
+  });
+});
+
+describe("a command's variables in the login shell envd starts it in (ADR-0024)", () => {
+  /**
+   * envd starts every command as `/bin/bash -l -c <wrapped>` with the
+   * request's `envs` in its environment; the login shell runs the image's
+   * profile scripts first. Modelled with real bash: the process environment,
+   * then a profile script, then the command line `wrapCommand` builds.
+   */
+  const run = (profile: string, injected: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "oma-login-shell-"));
+    try {
+      writeFileSync(join(dir, "oma-env.sh"), profile);
+      // What the command, and any process it starts, inherits.
+      const wrapped = wrapCommand(["sh", "-c", 'printf "%s\\n" "$REGION" "$TOOL_HOME"'], { env: injected });
+      return execFileSync("bash", ["--noprofile", "--norc", "-c", `. ${join(dir, "oma-env.sh")} && ${wrapped}`],
+        { env: { PATH: process.env.PATH, ...injected }, encoding: "utf8" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("keeps an injected value over a profile default, which still serves a name not injected", () => {
+    const profile = `export REGION="\${REGION:-image-default}"\nexport TOOL_HOME="\${TOOL_HOME:-/opt/tool}"\n`;
+    expect(run(profile, { REGION: "from-environment" })).toBe("from-environment\n/opt/tool\n");
+  });
+
+  it("keeps it even over a profile script that exports the name unconditionally", () => {
+    expect(run(`export REGION=forced\nexport TOOL_HOME=/opt/tool\n`, { REGION: "from-environment" })).toBe("from-environment\n/opt/tool\n");
   });
 });

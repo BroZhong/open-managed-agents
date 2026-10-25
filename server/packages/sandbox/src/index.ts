@@ -20,6 +20,7 @@ export {
   CREATE_REQUEST_MS,
   INTENT_DEADLINE_SECONDS,
   SandboxCreateRejected,
+  CLAIM_IMAGE_METADATA,
   isDigestPinnedImage,
 } from "./sandbox-client.js";
 
@@ -85,6 +86,7 @@ export {
 
 export {
   DefaultSandboxManager,
+  CommandVariablesUnavailable,
   SandboxSessionClosed,
   SandboxUnavailable,
   type SandboxUnavailableReason,
@@ -95,6 +97,7 @@ export {
   type SandboxManagerDeps,
   type SandboxDescriptor,
   type EnvSpec,
+  type CommandVariables,
   type SandboxBinding,
   type PrepareOptions,
   type SkillInstallObserver,
@@ -107,6 +110,7 @@ export {
   isSandboxedAgent,
   type TurnSandboxes,
   type TurnSandboxesDeps,
+  type SandboxEnvironments,
   type SandboxLease,
   type SandboxLeaseRequest,
   type TurnSettlement,

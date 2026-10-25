@@ -11,6 +11,7 @@ import {
   WorkspaceMountUnavailable,
   type WorkspaceMountTarget,
 } from "./workspace-mount.js";
+import { CLAIM_IMAGE_METADATA } from "./sandbox-client.js";
 import type {
   ListedSandbox,
   SandboxClient,
@@ -113,6 +114,20 @@ export interface FakeSandboxClientOptions {
     files: Map<string, FakeFile>,
     opts?: SandboxExecOptions,
   ) => SandboxExecChunk[] | undefined;
+  /**
+   * The image's `/etc/profile.d` defaults, each as an init script writes it
+   * (`export NAME="${NAME:-value}"`): the login shell every command starts in
+   * applies them (see {@link FakeSandboxClient.commandEnvironment}).
+   */
+  profile?: Readonly<Record<string, string>>;
+}
+
+/** One command the fake ran, as the Sandbox received it (test helper). */
+export interface FakeExec {
+  sandboxId: string;
+  command: string[];
+  env?: Record<string, string>;
+  user?: "root";
 }
 
 /**
@@ -150,6 +165,9 @@ export class FakeSandboxClient implements SandboxClient {
   private readonly clock: () => Date;
   private readonly poolImage?: string;
   private readonly execHandler?: FakeSandboxClientOptions["execHandler"];
+  private readonly profile: Readonly<Record<string, string>>;
+  /** Every command run, Skill Installs included, in order. */
+  readonly execs: FakeExec[] = [];
   /** See {@link FakeSkillInstallFault}. */
   skillInstallFault?: FakeSkillInstallFault;
   /** See {@link FakeCreateFault}. */
@@ -168,6 +186,21 @@ export class FakeSandboxClient implements SandboxClient {
     this.clock = opts.clock ?? (() => new Date());
     this.poolImage = opts.poolImage;
     this.execHandler = opts.execHandler;
+    this.profile = opts.profile ?? {};
+  }
+
+  /**
+   * The environment a command sees, as envd and the E2B client give it one
+   * (ADR-0024): the process starts with the Sandbox's create `envs` and the
+   * command's own env; `bash -l -c` then runs the image's profile scripts,
+   * whose `${NAME:-value}` defaults apply only to a name unset or empty; and
+   * the command line (`wrapCommand`) sets the command's env again before it
+   * execs the program.
+   */
+  commandEnvironment(id: string, env?: Readonly<Record<string, string>>): Record<string, string> {
+    const started: Record<string, string> = { ...this.require(id).createOpts.env, ...env };
+    for (const [name, value] of Object.entries(this.profile)) if (!started[name]) started[name] = value;
+    return { ...started, ...env };
   }
 
   /** Number of live (created, not destroyed) sandboxes. */
@@ -276,7 +309,8 @@ export class FakeSandboxClient implements SandboxClient {
     for (const sandbox of this.sandboxes.values()) {
       if (sandbox.destroyed || sandbox.reclaimed) continue;
       const state = sandbox.paused ? "paused" : "running";
-      const metadata = { ...sandbox.createOpts.metadata };
+      // The E2B client claims with the image as create metadata, which the gateway lists.
+      const metadata: Record<string, string> = { ...sandbox.createOpts.metadata, ...(sandbox.createOpts.image ? { [CLAIM_IMAGE_METADATA]: sandbox.createOpts.image } : {}) };
       if (!filter.states.includes(state) || Object.entries(filter.metadata).some(([key, value]) => metadata[key] !== value)) continue;
       listed.push({ sandboxId: sandbox.id, state, metadata, startedAt: sandbox.claimedAt, endAt: sandbox.endAt });
     }
@@ -315,6 +349,7 @@ export class FakeSandboxClient implements SandboxClient {
   ): AsyncIterable<SandboxExecChunk> {
     if (opts?.signal?.aborted) throw new ExecAbortedBeforeStartError();
     const sandbox = this.require(id);
+    this.execs.push({ sandboxId: id, command: [...command], ...(opts?.env ? { env: { ...opts.env } } : {}), ...(opts?.user ? { user: opts.user } : {}) });
     if (isSkillInstallCommand(command)) {
       yield* this.installSkills(sandbox, opts);
       return;
@@ -323,6 +358,15 @@ export class FakeSandboxClient implements SandboxClient {
     if (custom) {
       yield* custom;
       opts?.onExit?.({ exitCode: 0 });
+      return;
+    }
+    if (command[0] === "printenv") {
+      // printenv NAME…: each value set, one per line; exit 1 when one is unset.
+      const environment = this.commandEnvironment(id, opts?.env);
+      const names = command.slice(1);
+      const values = names.flatMap((name) => (name in environment ? [environment[name]!] : []));
+      if (values.length) yield { stream: "stdout", text: values.map((value) => `${value}\n`).join("") };
+      opts?.onExit?.({ exitCode: values.length === names.length ? 0 : 1 });
       return;
     }
     yield* this.builtinExec(command, sandbox.files);

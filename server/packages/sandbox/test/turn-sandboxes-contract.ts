@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { Agent, DelegationStore, Environment, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
-import { DefaultSandboxManager, SandboxUnavailable, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
-import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
+import type { Agent, DelegationStore, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
+import { CommandVariablesUnavailable, DefaultSandboxManager, SandboxUnavailable, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
+import { FakeSandboxClient, type FakeSandboxClientOptions } from "../src/fake-sandbox-client.js";
 import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { SANDBOX_IDLE_SECONDS } from "../src/sandbox-client.js";
-import { DefaultTurnSandboxes, type SandboxLeaseRequest, type TurnSandboxesDeps } from "../src/turn-sandboxes.js";
+import { DefaultTurnSandboxes, type SandboxEnvironments, type SandboxLeaseRequest, type TurnSandboxesDeps } from "../src/turn-sandboxes.js";
+import { PLATFORM_DEFAULT_ENV } from "../src/environment-variables.js";
+import { WORKSPACE_ENV } from "../src/workspace-environment.js";
 import { WorkspaceMountUnavailable } from "../src/workspace-mount.js";
 import { Bundles, TENANT, text } from "./skill-bundles.js";
 
@@ -41,9 +43,9 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
   describe(name, () => {
     if (options.teardown) afterAll(options.teardown);
 
-    async function setup(deps: Partial<TurnSandboxesDeps> = {}) {
+    async function setup(deps: Partial<TurnSandboxesDeps> = {}, gateway: FakeSandboxClientOptions = {}) {
       const stores = await createStores();
-      const client = new FakeSandboxClient();
+      const client = new FakeSandboxClient(gateway);
       const bundles = new Bundles();
       const manager = new DefaultSandboxManager({ sandboxClient: client, skillBundleStore: bundles, lifecycle: stores.lifecycle, environment: "test" });
       const open = vi.spyOn(manager, "open");
@@ -381,16 +383,25 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
     describe("a Session in an Environment (ADR-0024)", () => {
       const digest = (n: number) => "registry.example/welltop/oma-environments@sha256:" + String(n).repeat(64);
       const CONFIGURED = digest(1);
-      /** The Environments' serving images, as the store reads them when a Turn begins; a rebuild replaces one. */
-      function served(images: Record<string, string | null>) {
+      /**
+       * The Environments as the Host resolves them: their serving images, read
+       * when a Turn begins (a rebuild replaces one), and their resolved
+       * variables, read for each command (an edit replaces them).
+       */
+      function served(images: Record<string, string | null>, variables: Record<string, Record<string, string>> = {}) {
         const reads: string[][] = [];
-        const environments = {
-          listForSessions: async (tenantId: string, ids: readonly string[]) => {
-            reads.push([...ids]);
-            return ids.filter((id) => tenantId === TENANT && id in images).map((id) => ({ id, image: images[id] }) as Environment);
+        const variableReads: string[] = [];
+        const environments: SandboxEnvironments = {
+          image: async (tenantId, id) => {
+            reads.push([id]);
+            return tenantId === TENANT && id in images ? images[id]! : null;
+          },
+          variables: async (tenantId, id) => {
+            variableReads.push(id);
+            return tenantId === TENANT ? { ...variables[id] } : {};
           },
         };
-        return { images, reads, environments };
+        return { images, variables, reads, variableReads, environments };
       }
 
       it("claims with the image its Environment serves when the Turn begins: a rebuild reaches new Sandboxes, a running one keeps its own", async () => {
@@ -447,6 +458,93 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         const optedOut = await h.session({ sandbox: { enabled: false } }, undefined, "env_unbuilt");
         expect(await h.acquire(optedOut, await h.claim(optedOut))).toBeNull();
         expect(store.reads).toHaveLength(2);
+      });
+
+      /** What `printenv` prints of `names` in the Turn's Sandbox, one value per line. */
+      const printenv = async (executor: { exec(command: string[]): AsyncIterable<{ text: string }> }, ...names: string[]) => {
+        let out = "";
+        for await (const chunk of executor.exec(["printenv", ...names])) out += chunk.text;
+        return out.split("\n").slice(0, -1);
+      };
+      const CANARY = "sk-canary-" + "9f3c".repeat(8);
+
+      it("runs every command with the platform defaults < the Environment's variables < the Workspace variables, and creates the Sandbox with neither", async () => {
+        const store = served({ env_vars: digest(2) }, {
+          env_vars: { PIP_INDEX_URL: "https://pypi.example/simple", API_TOKEN: CANARY, HOME: "/elsewhere" },
+        });
+        const h = await setup({
+          sandboxImage: CONFIGURED, environments: store.environments,
+          // The deployment's create-time injection, which a Session in an Environment never gets.
+          defaultSandboxEnv: { BASE_SECRET: "base-" + CANARY }, managedSandboxEnvByAgentId: { [agent.id]: { MANAGED: CANARY } },
+        });
+        const session = await h.session({ sandbox: { enabled: true, env: { AGENT_ENV: CANARY } } }, undefined, "env_vars");
+        const seen = await h.turn(session, (executor) => printenv(executor!, "PIP_INDEX_URL", "NPM_CONFIG_REGISTRY", "API_TOKEN", "HOME", "WORKSPACE_DIR"));
+        expect(seen).toEqual(["https://pypi.example/simple", PLATFORM_DEFAULT_ENV.NPM_CONFIG_REGISTRY, CANARY, WORKSPACE_ENV.HOME, WORKSPACE_ENV.WORKSPACE_DIR]);
+        // The creation, and so the Sandbox CR, carries the Workspace paths and nothing of the Environment's.
+        const created = h.client.createOptsOf(h.client.created[0]);
+        expect(created.env).toEqual(WORKSPACE_ENV);
+        expect(JSON.stringify(created)).not.toContain(CANARY);
+        expect(store.variableReads).toEqual(["env_vars"]);
+      });
+
+      it("applies a changed variable from the next command of a running Sandbox", async () => {
+        const store = served({ env_vars: digest(2) }, { env_vars: { MODE: "first" } });
+        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const session = await h.session({}, undefined, "env_vars");
+        const fence = await h.claim(session);
+        const lease = (await h.acquire(session, fence))!;
+        expect(await printenv(lease.executor!, "MODE")).toEqual(["first"]);
+        store.variables.env_vars = { MODE: "second" };
+        expect(await printenv(lease.executor!, "MODE")).toEqual(["second"]);
+        delete store.variables.env_vars;
+        expect(await printenv(lease.executor!, "MODE")).toEqual([]);
+        expect(h.client.created).toHaveLength(1);
+        await h.ack(session, fence);
+        await lease.release({ settled: true });
+      });
+
+      it("keeps injected values over the image's profile defaults, which apply to names it does not inject", async () => {
+        const store = served({ env_vars: digest(2) }, { env_vars: { REGION: "from-environment" } });
+        // The init script wrote `export REGION="${REGION:-image-default}"` and `export TOOL_HOME="${TOOL_HOME:-/opt/tool}"`.
+        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments },
+          { profile: { REGION: "image-default", TOOL_HOME: "/opt/tool" } });
+        const session = await h.session({}, undefined, "env_vars");
+        expect(await h.turn(session, (executor) => printenv(executor!, "REGION", "TOOL_HOME"))).toEqual(["from-environment", "/opt/tool"]);
+      });
+
+      it("runs Host-internal commands without the Environment's variables, and fails a command whose variables cannot be read without running it", async () => {
+        const store = served({ env_vars: digest(2) }, { env_vars: { API_TOKEN: CANARY } });
+        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const session = await h.session({}, undefined, "env_vars");
+        const skills = skillSetOf([await h.bundles.add("reviewer", [text("SKILL.md", "Review")])]);
+        await h.turn(session, async (executor) => { await executor!.writeFile("x.txt", "x"); await printenv(executor!, "API_TOKEN"); }, { skills });
+        const install = h.client.execs.filter((run) => run.user === "root");
+        expect(install).not.toHaveLength(0);
+        expect(JSON.stringify(install)).not.toContain(CANARY);
+        expect(h.client.execs.filter((run) => JSON.stringify(run).includes(CANARY)).map((run) => run.command)).toEqual([["printenv", "API_TOKEN"]]);
+        // A command never carries its variables in argv.
+        expect(h.client.execs.every((run) => !run.command.join(" ").includes(CANARY))).toBe(true);
+
+        const failing = served({ env_vars: digest(2) });
+        failing.environments.variables = async () => { throw new Error(`database said ${CANARY}`); };
+        const g = await setup({ sandboxImage: CONFIGURED, environments: failing.environments });
+        const other = await g.session({}, undefined, "env_vars");
+        const fence = await g.claim(other);
+        const lease = (await g.acquire(other, fence))!;
+        const failure = await printenv(lease.executor!, "API_TOKEN").catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(CommandVariablesUnavailable);
+        expect(String((failure as Error).message)).not.toContain(CANARY);
+        expect(g.client.execs.filter((run) => run.command[0] === "printenv")).toEqual([]);
+        await g.ack(other, fence);
+        await lease.release({ settled: true });
+      });
+
+      it("keeps a Session without an Environment's create-time variables, and gives its commands none", async () => {
+        const h = await setup({ sandboxImage: CONFIGURED, defaultSandboxEnv: { VFS_TOKEN: "default" } });
+        const session = await h.session({ sandbox: { enabled: true, env: { OWN: "1" } } });
+        await h.turn(session, (executor) => printenv(executor!, "VFS_TOKEN"));
+        expect(h.client.createOptsOf(h.client.created[0]).env).toEqual({ VFS_TOKEN: "default", OWN: "1", ...WORKSPACE_ENV });
+        expect(h.client.execs.find((run) => run.command[0] === "printenv")).not.toHaveProperty("env");
       });
     });
 
