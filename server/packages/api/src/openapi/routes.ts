@@ -1,5 +1,6 @@
 import { ThinkingOptionsSchema } from "../lib/thinking-options.js";
 import { modelProviderRoutes } from "./model-providers.js";
+import { environmentOpenApiRoutes } from "./environments.js";
 import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
 import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import {
@@ -155,6 +156,7 @@ export type RegisteredOpenApiRoute = RouteConfig & {
 
 export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   ...modelProviderRoutes,
+  ...environmentOpenApiRoutes,
   protectedRoute({
     method: "get", path: "/v1/shares/{id}", operationId: "resolveSessionShare",
     summary: "Resolve a live Session share", tags: ["Sessions"],

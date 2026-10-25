@@ -24,6 +24,10 @@
       "description": "Tenant-owned Pi model providers and connection testing."
     },
     {
+      "name": "Environments",
+      "description": "What a Sandbox runs: a Base Image, an init script and variables, built once into an image. Built-in Environments are read-only and can be copied."
+    },
+    {
       "name": "System",
       "description": "Service health and metadata."
     },
@@ -106,6 +110,170 @@
       }
     },
     "schemas": {
+      "EnvironmentList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentSummary"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "EnvironmentSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "env_video_production"
+          },
+          "ownerType": {
+            "$ref": "#/components/schemas/EnvironmentOwnerType"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "baseImage": {
+            "$ref": "#/components/schemas/EnvironmentBaseImage"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EnvironmentStatus"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image digest that serves Sandboxes; null until a build first succeeds."
+          },
+          "lastBuild": {
+            "$ref": "#/components/schemas/EnvironmentBuildSummary"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "ownerType",
+          "name",
+          "description",
+          "baseImage",
+          "status",
+          "image",
+          "lastBuild",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "EnvironmentOwnerType": {
+        "type": "string",
+        "enum": [
+          "platform",
+          "tenant"
+        ],
+        "description": "platform: a Built-in Environment, visible to every Tenant and read-only; tenant: the Tenant's own."
+      },
+      "EnvironmentBaseImage": {
+        "type": "string",
+        "enum": [
+          "oma-base",
+          "oma-media"
+        ],
+        "description": "oma-base: Node 22, the Pi tool runtime, rg/fd and Aliyun mirrors; oma-media adds FFmpeg and CJK fonts."
+      },
+      "EnvironmentStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "building",
+          "failed",
+          "ready"
+        ],
+        "description": "pending until the builder starts the latest build, building while it runs, then ready or failed. A failed rebuild keeps the previous image serving."
+      },
+      "EnvironmentBuildSummary": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "superseded"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "createdAt",
+          "startedAt",
+          "finishedAt",
+          "errorCode",
+          "errorMessage"
+        ]
+      },
       "Error": {
         "type": "object",
         "properties": {
@@ -118,6 +286,303 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "Environment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "env_video_production"
+          },
+          "ownerType": {
+            "$ref": "#/components/schemas/EnvironmentOwnerType"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "baseImage": {
+            "$ref": "#/components/schemas/EnvironmentBaseImage"
+          },
+          "initScript": {
+            "type": "string",
+            "description": "Bash, run once per build as root in /home/user."
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentVariable"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/EnvironmentStatus"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image digest that serves Sandboxes; null until a build first succeeds."
+          },
+          "manifest": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {},
+            "description": "Package and binary versions of image."
+          },
+          "lastBuild": {
+            "$ref": "#/components/schemas/EnvironmentBuildSummary"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "ownerType",
+          "name",
+          "description",
+          "baseImage",
+          "initScript",
+          "env",
+          "status",
+          "image",
+          "manifest",
+          "lastBuild",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "EnvironmentVariable": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "A shell variable name, ^[A-Za-z_][A-Za-z0-9_]*$. System-reserved names are rejected with environment_env_reserved."
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 32768
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "A shell variable name, ^[A-Za-z_][A-Za-z0-9_]*$. System-reserved names are rejected with environment_env_reserved."
+              },
+              "secretRef": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "platform",
+                      "environment"
+                    ]
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "source",
+                  "key"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "secretRef"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "A plain value, or a reference to a secret whose value is never returned: source environment is a Tenant secret stored encrypted on this Environment under key; source platform is a deployment secret, only obtained by copying a Built-in Environment."
+      },
+      "CreateEnvironmentInput": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Copy this visible Environment (a built-in or the Tenant's own): its Base Image, script and variables, including secret values and platform secret references. Other fields override the copy; name defaults to \"<name>-copy\"."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Required unless copying. Unique among the Tenant's Environments."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "baseImage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentBaseImage"
+              },
+              {
+                "description": "Required unless copying."
+              }
+            ]
+          },
+          "initScript": {
+            "type": "string",
+            "description": "Bash script, at most 256 KiB (environment_init_script_too_large)."
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentVariableInput"
+            },
+            "maxItems": 500,
+            "description": "The complete variable set; it replaces the previous one. All plain and secret values together are at most 32 KiB (environment_env_too_large)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentVariableInput": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "A shell variable name, ^[A-Za-z_][A-Za-z0-9_]*$. System-reserved names are rejected with environment_env_reserved."
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 32768
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "A shell variable name, ^[A-Za-z_][A-Za-z0-9_]*$. System-reserved names are rejected with environment_env_reserved."
+              },
+              "secretRef": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "platform",
+                      "environment"
+                    ]
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "source",
+                  "key"
+                ],
+                "additionalProperties": false
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 32768,
+                "description": "Source environment only: the secret's new value, stored encrypted and never returned. Omit it to keep the value the Environment (or, when copying, the source) already stores under key."
+              }
+            },
+            "required": [
+              "name",
+              "secretRef"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "UpdateEnvironmentInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "baseImage": {
+            "$ref": "#/components/schemas/EnvironmentBaseImage"
+          },
+          "initScript": {
+            "type": "string",
+            "description": "Bash script, at most 256 KiB (environment_init_script_too_large)."
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentVariableInput"
+            },
+            "maxItems": 500,
+            "description": "The complete variable set; it replaces the previous one. All plain and secret values together are at most 32 KiB (environment_env_too_large)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeletedResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
         ]
       },
       "ManagedMcpCatalog": {
@@ -484,21 +949,6 @@
             "$ref": "#/components/schemas/AgentSandboxConfig"
           }
         }
-      },
-      "DeletedResource": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "id"
-        ]
       },
       "LoopList": {
         "type": "object",
@@ -4100,6 +4550,370 @@
                   "required": [
                     "error"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/environments": {
+      "get": {
+        "operationId": "listEnvironments",
+        "summary": "List Environments",
+        "description": "Built-in Environments first, then the Tenant's own, each by name. Deleted Environments are omitted. Not paginated.",
+        "tags": [
+          "Environments"
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible Environments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createEnvironment",
+        "summary": "Create or copy an Environment",
+        "description": "Creates a Tenant Environment, or copies a visible one with from. It starts pending with a queued build; nothing runs in the API.",
+        "tags": [
+          "Environments"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEnvironmentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Environment created, pending its first build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Environment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Environment: validation_error, environment_env_invalid, environment_env_reserved, environment_env_empty_value, environment_env_too_large (all values over 32 KiB), environment_init_script_too_large (over 256 KiB), environment_secret_ref_forbidden (a platform secret not carried from the Environment or its copy source) or environment_secret_missing (a Tenant secret reference without a value to keep)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment to copy not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used by another of the Tenant's Environments (environment_name_conflict)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Secret storage requires OMA_PROVIDER_ENCRYPTION_KEY (environment_secrets_unavailable)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/environments/{id}": {
+      "get": {
+        "operationId": "getEnvironment",
+        "summary": "Get an Environment",
+        "description": "Secret values are never returned; a secret variable shows only its name and reference.",
+        "tags": [
+          "Environments"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Environment found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Environment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateEnvironment",
+        "summary": "Update an Environment",
+        "description": "Changing baseImage or initScript queues a build and supersedes the unfinished one; Sandboxes keep the current image until it succeeds. Changing name, description or env takes effect at once and never builds. env replaces the whole set; a Tenant secret sent without value keeps its stored value.",
+        "tags": [
+          "Environments"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEnvironmentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Environment updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Environment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Environment: validation_error, environment_env_invalid, environment_env_reserved, environment_env_empty_value, environment_env_too_large (all values over 32 KiB), environment_init_script_too_large (over 256 KiB), environment_secret_ref_forbidden (a platform secret not carried from the Environment or its copy source) or environment_secret_missing (a Tenant secret reference without a value to keep)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A Built-in Environment is read-only (environment_read_only), or share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used by another of the Tenant's Environments (environment_name_conflict)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Secret storage requires OMA_PROVIDER_ENCRYPTION_KEY (environment_secrets_unavailable)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteEnvironment",
+        "summary": "Delete an Environment",
+        "description": "Soft delete: the Environment disappears from lists and reads, and its unfinished build is superseded; its image is kept for Sandboxes already using it.",
+        "tags": [
+          "Environments"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Environment deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A Built-in Environment is read-only (environment_read_only), or share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An Agent uses the Environment (environment_in_use)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

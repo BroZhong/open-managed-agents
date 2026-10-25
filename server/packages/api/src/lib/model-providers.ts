@@ -1,10 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  randomUUID,
-} from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { HTTPException } from "hono/http-exception";
 import type {
   ModelProviderStore,
@@ -24,6 +18,7 @@ import {
   providerBaseUrl,
   providerFetch,
 } from "./provider-fetch.js";
+import { SecretBox } from "./secret-box.js";
 
 class ProviderError extends HTTPException {
   constructor(status: 400 | 404 | 422 | 503, options: { message: string }) {
@@ -43,9 +38,10 @@ export function publicProvider(record: ModelProviderRecord) {
 }
 
 export class ModelProviderService {
+  private readonly secrets: SecretBox;
   constructor(
     readonly store: ModelProviderStore,
-    private readonly encryptionKey: string | undefined,
+    encryptionKey: string | undefined,
     private readonly probe: typeof testCustomProvider = async (...args) =>
       (
         await import("@open-managed-agents/adapter-pi-agent")
@@ -56,7 +52,12 @@ export class ModelProviderService {
       (
         await import("@open-managed-agents/adapter-pi-agent")
       ).discoverCustomProviderModels(...args),
-  ) {}
+  ) {
+    this.secrets = new SecretBox(encryptionKey, () => new ProviderError(503, {
+      message:
+        "Model provider storage requires OMA_PROVIDER_ENCRYPTION_KEY (32 bytes encoded as hex).",
+    }));
+  }
   async capabilityReferences(api: CustomProviderProtocol, model?: string) {
     const { capabilityReferences } = await import("@open-managed-agents/adapter-pi-agent");
     return capabilityReferences(api, model);
@@ -69,53 +70,18 @@ export class ModelProviderService {
       throw new ProviderError(422, { message: "Model capability configuration is unavailable or incompatible with this protocol. Select a valid capability reference or clear it." });
     }
   }
-  private key() {
-    if (!this.encryptionKey || !/^[a-f\d]{64}$/i.test(this.encryptionKey)) {
-      throw new ProviderError(503, {
-        message:
-          "Model provider storage requires OMA_PROVIDER_ENCRYPTION_KEY (32 bytes encoded as hex).",
-      });
-    }
-    return Buffer.from(this.encryptionKey, "hex");
-  }
-  private seal(value: string, scope: string) {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.key(), iv);
-    cipher.setAAD(Buffer.from(scope));
-    const ciphertext = Buffer.concat([
-      cipher.update(value, "utf8"),
-      cipher.final(),
-    ]);
-    return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString(
-      "base64url",
-    );
-  }
-  private open(value: string, scope: string) {
-    const bytes = Buffer.from(value, "base64url");
-    const cipher = createDecipheriv(
-      "aes-256-gcm",
-      this.key(),
-      bytes.subarray(0, 12),
-    );
-    cipher.setAAD(Buffer.from(scope));
-    cipher.setAuthTag(bytes.subarray(12, 28));
-    return Buffer.concat([
-      cipher.update(bytes.subarray(28)),
-      cipher.final(),
-    ]).toString("utf8");
-  }
   private async definition(
     tenantId: string,
     input: ProviderInput,
   ): Promise<CustomProviderDefinition> {
-    this.key();
+    this.secrets.assertAvailable();
     const existing = input.id ? await this.store.get(tenantId, input.id) : null;
     if (input.id && !existing)
       throw new ProviderError(404, { message: "Provider not found" });
     const apiKey =
       input.apiKey ||
       (existing
-        ? this.open(existing.encryptedApiKey, `${tenantId}:${existing.id}`)
+        ? this.secrets.open(existing.encryptedApiKey, `${tenantId}:${existing.id}`)
         : "");
     if (!apiKey)
       throw new ProviderError(400, { message: "API key is required" });
@@ -220,7 +186,7 @@ export class ModelProviderService {
     const testedAt = new Date().toISOString();
     return {
       testedAt,
-      verificationToken: this.seal(
+      verificationToken: this.secrets.seal(
         JSON.stringify({
           fingerprint: this.fingerprint(definition),
           testedAt,
@@ -239,7 +205,7 @@ export class ModelProviderService {
     let testedAt: string;
     try {
       const proof = JSON.parse(
-        this.open(verificationToken, `verification:${tenantId}`),
+        this.secrets.open(verificationToken, `verification:${tenantId}`),
       );
       if (
         proof.expires < Date.now() ||
@@ -260,7 +226,7 @@ export class ModelProviderService {
       id,
       tenantId,
       testedAt,
-      encryptedApiKey: this.seal(apiKey, `${tenantId}:${id}`),
+      encryptedApiKey: this.secrets.seal(apiKey, `${tenantId}:${id}`),
     };
     await this.store.save(record);
     return publicProvider(record);
@@ -305,7 +271,7 @@ export class ModelProviderService {
         runtime,
         {
           ...config,
-          apiKey: this.open(encryptedApiKey, `${tenantId}:${record.id}`),
+          apiKey: this.secrets.open(encryptedApiKey, `${tenantId}:${record.id}`),
         },
         providerFetch(record.baseUrl),
       );

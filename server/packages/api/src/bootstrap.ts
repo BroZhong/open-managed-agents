@@ -8,6 +8,7 @@ import { skillBundleStorageConfigFromEnv, workspaceStorageConfigFromEnv } from "
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { runnerThinkingOptions } from "./lib/thinking-options.js";
 import { ModelProviderService } from "./lib/model-providers.js";
+import { EnvironmentService } from "./lib/environments.js";
 
 export type HostRole = "api" | "runner" | "combined";
 
@@ -66,6 +67,7 @@ export async function startHost(role: HostRole): Promise<void> {
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
     modelProviderService: modelProviders,
+    environmentService: new EnvironmentService(stores.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY),
     thinkingOptions: (tenant, model) => modelProviders.thinkingOptions(tenant, model, managedOptions),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => signals.publish({ sessionId, kind: "check" }),

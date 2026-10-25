@@ -55,6 +55,7 @@ export function createOpenApiDocument(
     security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
     tags: [
       { name: "Model Providers", description: "Tenant-owned Pi model providers and connection testing." },
+      { name: "Environments", description: "What a Sandbox runs: a Base Image, an init script and variables, built once into an image. Built-in Environments are read-only and can be copied." },
       { name: "System", description: "Service health and metadata." },
       {
         name: "Authentication",

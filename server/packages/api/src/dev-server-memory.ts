@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { ModelProviderService } from "./lib/model-providers.js";
+import { EnvironmentService } from "./lib/environments.js";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { serve } from "@hono/node-server";
 import { createMemoryStores } from "@oma-server/store-memory";
@@ -28,7 +29,8 @@ let configuredPiAgentAdapter: Adapter = memoryPiAgentAdapter;
 
 async function main() {
   const stores = createMemoryStores();
-  const modelProviderService = new ModelProviderService(stores.modelProviderStore, randomBytes(32).toString("hex"));
+  const secretKey = randomBytes(32).toString("hex");
+  const modelProviderService = new ModelProviderService(stores.modelProviderStore, secretKey);
   configuredPiAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviderService.configureRuntime(stores.sessionStore) });
   const eventStreamHub = new InProcessEventStreamHub();
 
@@ -76,6 +78,7 @@ async function main() {
 
   const app = createApp({
     modelProviderService,
+    environmentService: new EnvironmentService(stores.environmentStore, secretKey),
     thinkingOptions: (tenant, model) => modelProviderService.thinkingOptions(tenant, model, async raw => (await import("@open-managed-agents/adapter-pi-agent")).managedThinkingOptions(raw)),
     sessionShareStore: stores.sessionShareStore,
     delegationStore: stores.delegationStore,
