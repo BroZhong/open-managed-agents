@@ -391,7 +391,7 @@ $R finish                              # deletes the run directory from the API 
 | #292 acceptance | Evidence |
 | --- | --- |
 | Old column dropped; pending rows reconciled | `migration post`; `migration after-sweep`; `unresolved` 0 in the report after a period (Creating(epoch) rows without a Sandbox reconcile on first use) |
-| 200 + rolling restart: no binding Creating past its deadline, no Turn ending with `sandbox_unavailable` | `check` (also: every Turn completed and used its Sandbox; prepare p50/p95/max, tool error codes, takeovers, `environment.state`) |
+| 200 + rolling restart: no binding Creating past its deadline, no Turn ending with `sandbox_unavailable` | `check` (also: every Turn completed and used its Sandbox; prepare p50/p95/max, tool error codes, takeovers, `sandbox.state`) |
 | No orphan after one sweep | `report-rows` on the report after one period: no `kill` or `adopt` row of this run |
 | kill -9 during create: tools again within 180 s of the takeover | `kill-start`, `mark kill`, `kill-finish` (also within 180 s + 60 s of the intent) |
 | `sandbox_sweep` periodic and equal to the read-only report | `sweep-logs`: consecutive rounds 5–15 min apart, the first round after the report equals its planned counters |

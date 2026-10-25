@@ -14,8 +14,8 @@ build requiring `sandbox_activities` after this migration. The migration removes
 `idle_since`, the old activity table and its trigger. `reclaiming` remains the
 explicit termination ticket. `creating_since` (migration 0024, which replaced
 `creation_pending`) records a creation intent; see Recovery. Migration 0025
-adds what the Session API reports of the environment; see "The environment in
-the Session API".
+adds what the Session API reports of the Sandbox; see "The Sandbox in the
+Session API".
 The new trigger serializes queue acceptance with binding decisions; startup checks
 that it is installed. API/Runner split migrations remain required.
 
@@ -54,12 +54,12 @@ by an idle scanner. Ordinary background processes do not extend deadlines.
 
 A timeout update can complete remotely after the caller received an error; a DB
 lock cannot fence it. If a late idle update pauses a new Turn early, recovery
-restores the environment for a subsequent tool and reports the original operation
+restores the Sandbox for a subsequent tool and reports the original operation
 as uncertain. No implicit command replay or exactly-once guarantee is provided.
 
-## Environment failures in a Turn's events
+## Sandbox unavailability in a Turn's events
 
-A Turn prepares its environment beside the model, never before it
+A Turn prepares its Sandbox beside the model, never before it
 ([ADR-0023](adr/0023-sandbox-binding-reconciliation.md), #287). For a Ready
 binding, the Turn starts connecting to its Sandbox, verifying the Workspace
 mount and deciding the Skill Install while the model's first request runs; the
@@ -77,7 +77,7 @@ gone, or the binding moved on; the first tool call prepares again), `failed`
 Interrupt, a terminated Session, a lost Runner whose span the takeover ends, or
 the Turn's end). A Cold binding's pure-chat Turn writes none.
 
-An environment failure is a tool error, not the end of the Turn. The tool call
+A Sandbox unavailability is a tool error, not the end of the Turn. The tool call
 did not run. Its native result (`agent.context_entry` whose `entry.message` has
 role `toolResult` and `isError: true`) carries `details.code`
 `sandbox_unavailable` and `details.reason`: `rejected` (the gateway refused the
@@ -92,31 +92,32 @@ such code. ADR-0023 also names `sandbox_creating`; no call fails with it,
 because a call waits out a Creating binding until its intent deadline and then
 reconciles it.
 
-**How to tell from events whether a Turn failed because of its environment:**
+**How to tell from events whether a Turn failed because of its Sandbox:**
 it did exactly when the Turn has a `session.error` whose `error.code` is
 `sandbox_unavailable`. The Turn writes it once, after its answer and before
-`session.turn_completed`, when a tool call of the Turn failed with an
-environment failure and no preparation ended `ready` after it, counting every
+`session.turn_completed`, when a tool call of the Turn met a Sandbox
+unavailability and no preparation ended `ready` after it, counting every
 attempt of the Turn: a takeover starts from the tool results and spans its
 predecessors wrote. A failed preparation no tool call waited for, such as the
 Turn-start connect of a pure-chat Turn, shows in its span only. A Turn with
-environment tool errors but no such `session.error` recovered within the
-Turn. The error keeps the answer, like `workspace_storage_error`. A
+`sandbox_unavailable` tool errors but no such `session.error` recovered within
+the Turn. The error keeps the answer, like `workspace_storage_error`. A
 `session.error` is never written in the middle of a Turn, because a takeover's
-plan treats any `session.error` in a Turn as its end; a Runner lost after an
-environment failure therefore leaves a Turn its takeover continues. The same
+plan treats any `session.error` in a Turn as its end; a Runner lost after a
+Sandbox unavailability therefore leaves a Turn its takeover continues. The same
 code also ends a Turn of a sandboxed Agent on a Runner with no Sandbox
 configured, before its Adapter runs. Skill Install failures keep their own
 code, `skills_install_failed` (ADR-0022).
 
-## The environment in the Session API
+## The Sandbox in the Session API
 
-`GET /v1/sessions/{id}` returns `environment: {state, since, last_error}`
-(#290), read from the Session's binding without its lock, so it answers at
-once while a Turn prepares or the binding is reclaimed. A Child Session reports
+`GET /v1/sessions/{id}` returns `sandbox: {state, since, last_error}` (#290;
+named `environment` until ADR-0024 renamed it, with no alias), read from the
+Session's binding without its lock, so it answers at once while a Turn
+prepares or the binding is reclaimed. A Child Session reports
 the binding it shares with its root. The Session list does not carry it.
 
-- `state` is `unavailable` while the binding records an environment failure;
+- `state` is `unavailable` while the binding records a Sandbox unavailability;
   otherwise `ready` while it records a Sandbox, `creating` while it records a
   creation intent (also an Unresolved one past its deadline, until the next
   tool call reconciles it), and `cold` when it records neither.
@@ -157,7 +158,7 @@ tool call. Any other outcome (a 5xx, the gateway's claim timeout included, a
 create timeout or lost connection, a lost Runner, a lost binding write) leaves
 the intent. A Turn that finds it (a Child Session sharing the binding, a Turn
 resumed after a takeover) waits: it reads the row again when the creator's
-`environment` hint arrives on the Redis control channel and every 2 seconds
+`sandbox` hint arrives on the Redis control channel and every 2 seconds
 regardless, so it continues at once when the creator records the Sandbox and
 within 2 seconds without Redis. A Turn starting while the binding is reclaimed
 waits the same way for the reclaimer's hint. Past `creating_since` + 180

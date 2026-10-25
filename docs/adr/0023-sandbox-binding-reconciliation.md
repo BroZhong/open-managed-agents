@@ -12,6 +12,10 @@ its statements that there is no adoption phase, no OMA resource sweeper and no
 recurring Sandbox scan. Revises ADR-0019's runtime budgets. See "Superseded and
 revised decisions".
 
+Revised by [ADR-0024](0024-environments.md): the Session field and the Redis
+signal kind `environment` below are renamed `sandbox`, with no alias, and an
+"environment failure" is now called a Sandbox unavailability.
+
 ## Context
 
 A binding (`delegation_environments`, one per root Session, shared by its Child
