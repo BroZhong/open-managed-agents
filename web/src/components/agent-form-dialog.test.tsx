@@ -176,8 +176,10 @@ it.each([false, true])("persists slider preference and supports resetting it (re
 });
 
 describe("the Agent's Environment (ADR-0024)", () => {
-  const environment = (id: string, name: string, status: "pending" | "building" | "failed" | "ready", ownerType: "platform" | "tenant" = "tenant") =>
-    ({ id, name, status, ownerType, description: "", baseImage: "oma-base" as const, image: null, lastBuild: null, createdAt: "", updatedAt: "" });
+  const IMAGE = "registry.example/welltop/oma-environments@sha256:" + "a".repeat(64);
+  const environment = (id: string, name: string, status: "pending" | "building" | "failed" | "ready", ownerType: "platform" | "tenant" = "tenant",
+    image: string | null = status === "pending" ? null : IMAGE) =>
+    ({ id, name, status, ownerType, description: "", baseImage: "oma-base" as const, image, lastBuild: null, createdAt: "", updatedAt: "" });
   // As GET /v1/environments lists them: built-ins first.
   const listed = [
     environment("env_video_production", "video-production", "ready", "platform"),
@@ -185,6 +187,7 @@ describe("the Agent's Environment (ADR-0024)", () => {
     environment("env_tools", "tools", "ready"),
     environment("env_unbuilt", "unbuilt", "pending"),
     environment("env_broken", "broken", "failed"),
+    environment("env_never", "never", "failed", "tenant", null),
   ];
   function renderDialog(agent?: Agent, environments = listed) {
     const fetchMock = vi.fn(async () => Response.json({ id: agent?.id ?? "created" }));
@@ -212,21 +215,30 @@ describe("the Agent's Environment (ADR-0024)", () => {
   const agent: Agent = { id: "agent_bound", tenantId: "t", name: "Bound", model: "openai-codex/gpt-5.5", system: "s", runtime: "pi-agent",
     sandbox: { enabled: true }, environmentId: "env_tools", createdAt: "", updatedAt: "" };
 
-  it("offers only ready Environments, built-ins first, video-production by default, and binds the chosen one to a new Agent", async () => {
+  it("offers the Environments that serve an image, built-ins first, a build status as a hint, video-production by default", async () => {
     const { saved } = renderDialog();
-    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · 平台内置");
-    expect(options()).toEqual(["video-production · 平台内置", "tools"]);
-    fireEvent.click(screen.getByRole("button", { name: "tools" }));
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · Built-in");
+    expect(options()).toEqual(["video-production · Built-in", "old-platform · Built-in (Building)", "tools", "broken (Build failed)"]);
+    fireEvent.click(screen.getByRole("button", { name: "broken (Build failed)" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Tools" } });
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
-    expect(await saved()).toMatchObject({ name: "Tools", environmentId: "env_tools" });
+    expect(await saved()).toMatchObject({ name: "Tools", environmentId: "env_broken" });
   });
 
   it("creates an Agent in the default by sending none, which the Host binds while it still builds", async () => {
     const { saved } = renderDialog(undefined, [
       environment("env_video_production", "video-production", "building", "platform"), environment("env_tools", "tools", "ready"),
     ]);
-    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · 平台内置 (default, 构建中)");
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · Built-in (Building)");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Video" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    expect(await saved()).not.toHaveProperty("environmentId");
+  });
+
+  it("says video-production has not built yet when it serves no image, and leaves the refusal to the Host", async () => {
+    const { saved } = renderDialog(undefined, [environment("env_video_production", "video-production", "pending", "platform"), environment("env_tools", "tools", "ready")]);
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production (not built yet)");
+    expect(options()).toEqual(["tools"]);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Video" } });
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     expect(await saved()).not.toHaveProperty("environmentId");
@@ -240,16 +252,16 @@ describe("the Agent's Environment (ADR-0024)", () => {
     cleanup();
     const rebound = renderDialog(agent);
     options();
-    fireEvent.click(screen.getByRole("button", { name: "video-production · 平台内置" }));
+    fireEvent.click(screen.getByRole("button", { name: "video-production · Built-in" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
     expect((await rebound.saved()).environmentId).toBe("env_video_production");
   });
 
-  it("keeps showing an Agent's Environment that is rebuilding, without offering others that are not ready", async () => {
-    const { saved } = renderDialog({ ...agent, environmentId: "env_unbuilt" });
-    expect(screen.getByLabelText("Environment").textContent).toBe("unbuilt (current, 待构建)");
-    expect(options()).not.toContain("broken");
+  it("keeps showing an Agent's Environment the list does not offer", async () => {
+    const { saved } = renderDialog({ ...agent, environmentId: "env_never" });
+    expect(screen.getByLabelText("Environment").textContent).toBe("never (current)");
+    expect(options()).not.toContain("unbuilt");
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
-    expect(await saved()).toMatchObject({ environmentId: "env_unbuilt" });
+    expect(await saved()).toMatchObject({ environmentId: "env_never" });
   });
 });

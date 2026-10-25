@@ -76,48 +76,48 @@ it("lists built-ins first with their tag and every Environment's build status", 
   renderAt("/environments");
   const cards = await screen.findAllByRole("region");
   expect(cards.map((card) => within(card).getByRole("link").textContent)).toEqual(["video-production", "data"]);
-  expect(within(cards[0]).getByText("平台内置")).toBeTruthy();
-  expect(within(cards[0]).getByText("就绪")).toBeTruthy();
-  expect(within(cards[1]).queryByText("平台内置")).toBeNull();
-  expect(within(cards[1]).getByText("待构建")).toBeTruthy();
-  expect(within(cards[0]).queryByRole("button", { name: "删除 video-production" })).toBeNull();
-  expect(within(cards[1]).getByRole("button", { name: "删除 data" })).toBeTruthy();
+  expect(within(cards[0]).getByText("Built-in")).toBeTruthy();
+  expect(within(cards[0]).getByText("Ready")).toBeTruthy();
+  expect(within(cards[1]).queryByText("Built-in")).toBeNull();
+  expect(within(cards[1]).getByText("Pending build")).toBeTruthy();
+  expect(within(cards[0]).queryByRole("button", { name: "Delete video-production" })).toBeNull();
+  expect(within(cards[1]).getByRole("button", { name: "Delete data" })).toBeTruthy();
 });
 
 it("creates an Environment with plain variables and a secret, then shows it pending", async () => {
   const fetch = host();
   renderAt("/environments");
-  fireEvent.click(await screen.findByRole("button", { name: "新建环境" }));
-  fireEvent.change(screen.getByLabelText("名称"), { target: { value: "scraper" } });
-  fireEvent.change(screen.getByLabelText("初始化脚本"), { target: { value: "pip install httpx\n" } });
+  fireEvent.click(await screen.findByRole("button", { name: "New Environment" }));
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "scraper" } });
+  fireEvent.change(screen.getByLabelText("Init script"), { target: { value: "pip install httpx\n" } });
   fireEvent.click(screen.getByRole("button", { name: "Base Image" }));
-  fireEvent.click(screen.getByRole("button", { name: "oma-media（含 FFmpeg 与中文字体）" }));
-  fireEvent.click(screen.getByRole("button", { name: "添加变量" }));
-  fireEvent.change(screen.getByLabelText("变量名"), { target: { value: "FOO" } });
-  fireEvent.change(screen.getByLabelText("FOO 的值"), { target: { value: "bar" } });
-  fireEvent.click(screen.getByRole("button", { name: "添加密钥" }));
-  fireEvent.change(screen.getAllByLabelText("变量名")[1], { target: { value: "API_KEY" } });
-  const secret = screen.getByLabelText("API_KEY 的值") as HTMLInputElement;
+  fireEvent.click(screen.getByRole("button", { name: "oma-media (with FFmpeg and CJK fonts)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+  fireEvent.change(screen.getByLabelText("Variable name"), { target: { value: "FOO" } });
+  fireEvent.change(screen.getByLabelText("Value of FOO"), { target: { value: "bar" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add secret" }));
+  fireEvent.change(screen.getAllByLabelText("Variable name")[1], { target: { value: "API_KEY" } });
+  const secret = screen.getByLabelText("Value of API_KEY") as HTMLInputElement;
   expect(secret.type).toBe("password");
   fireEvent.change(secret, { target: { value: SECRET } });
-  fireEvent.click(screen.getByRole("button", { name: "创建" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
   expect(await screen.findByRole("heading", { name: "scraper" })).toBeTruthy();
   expect(sentBodies(fetch, "POST")[0].body).toEqual({
     name: "scraper", description: "", baseImage: "oma-media", initScript: "pip install httpx\n",
     env: [{ name: "FOO", value: "bar" }, { name: "API_KEY", secretRef: { source: "environment", key: "API_KEY" }, value: SECRET }],
   });
-  expect(screen.getByText("待构建")).toBeTruthy();
+  expect(screen.getByText("Pending build")).toBeTruthy();
 });
 
 it("shows secrets by name only and keeps a stored secret when its field is left blank", async () => {
   const fetch = host();
   renderAt("/environments/env_own");
-  expect(await screen.findByText("密钥 ••••")).toBeTruthy();
+  expect(await screen.findByText("Secret ••••")).toBeTruthy();
   expect(screen.getByText("pip install requests")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-  expect((screen.getByLabelText("TOKEN 的值") as HTMLInputElement).value).toBe("");
-  fireEvent.change(screen.getByLabelText("A 的值"), { target: { value: "2" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect((screen.getByLabelText("Value of TOKEN") as HTMLInputElement).value).toBe("");
+  fireEvent.change(screen.getByLabelText("Value of A"), { target: { value: "2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(sentBodies(fetch, "POST")).toHaveLength(1));
   expect(sentBodies(fetch, "POST")[0]).toEqual({
     url: "http://localhost:3000/v1/environments/env_own",
@@ -126,7 +126,7 @@ it("shows secrets by name only and keeps a stored secret when its field is left 
       env: [{ name: "A", value: "2" }, { name: "TOKEN", secretRef: { source: "environment", key: "TOKEN" } }],
     },
   });
-  expect(await screen.findByRole("button", { name: "编辑" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
 });
 
 it("keeps built-ins read-only, offers a copy and surfaces API errors", async () => {
@@ -135,28 +135,28 @@ it("keeps built-ins read-only, offers a copy and surfaces API errors", async () 
       ? Response.json({ error: "An Environment named \"video\" already exists.", code: "environment_name_conflict" }, { status: 409 })
       : undefined);
   renderAt("/environments/env_video_production");
-  expect(await screen.findByText("平台提供 ••••")).toBeTruthy();
-  expect(screen.getByText("平台内置")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "删除环境" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "复制为自定义环境" }));
+  expect(await screen.findByText("Provided by platform ••••")).toBeTruthy();
+  expect(screen.getByText("Built-in")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete Environment" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Copy to a custom Environment" }));
   expect(await screen.findByRole("heading", { name: "video-production-copy" })).toBeTruthy();
   expect(sentBodies(fetch, "POST")[0].body).toEqual({ from: "env_video_production" });
 
   cleanup();
   renderAt("/environments/env_own");
-  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
-  fireEvent.change(screen.getByLabelText("名称"), { target: { value: "video" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "video" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect((await screen.findByRole("alert")).textContent).toContain("already exists");
 });
 
 it("deletes an Environment after confirmation", async () => {
   const fetch = host();
   renderAt("/environments/env_own");
-  fireEvent.click(await screen.findByRole("button", { name: "删除环境" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete Environment" }));
   expect(sentBodies(fetch, "DELETE")).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Delete" }));
   await waitFor(() => expect(sentBodies(fetch, "DELETE").map((call) => call.url)).toEqual(["http://localhost:3000/v1/environments/env_own"]));
-  expect(await screen.findByRole("button", { name: "新建环境" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "New Environment" })).toBeTruthy();
 });

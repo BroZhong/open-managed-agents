@@ -70,19 +70,19 @@ it("follows the latest build's log every 2 s from its offset until it ends, then
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const fetch = host();
   renderDetail();
-  const panel = await screen.findByRole("region", { name: "构建" });
-  await waitFor(() => expect(within(panel).getByLabelText("构建日志").textContent).toBe("==> Pulling the Base Image\n"));
-  expect(within(panel).getByText("构建中")).toBeTruthy();
-  expect(screen.getByText("新的 Sandbox 仍使用此镜像，直到新构建成功。")).toBeTruthy();
+  const panel = await screen.findByRole("region", { name: "Build" });
+  await waitFor(() => expect(within(panel).getByLabelText("Build log").textContent).toBe("==> Pulling the Base Image\n"));
+  expect(within(panel).getByText("Building")).toBeTruthy();
+  expect(screen.getByText("New Sandboxes keep using this image until a new build succeeds.")).toBeTruthy();
 
   await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-  await waitFor(() => expect(within(panel).getByLabelText("构建日志").textContent).toBe(
+  await waitFor(() => expect(within(panel).getByLabelText("Build log").textContent).toBe(
     "==> Pulling the Base Image\n[oma] init script failed at line 2: false (exit status 1)\n"));
-  expect(within(panel).getByText("失败")).toBeTruthy();
+  expect(within(panel).getByText("Failed")).toBeTruthy();
   expect(within(panel).getByRole("alert").textContent).toBe("The init script failed at line 2: false (exit status 1)");
   expect(logCalls(fetch)).toEqual(["?build_id=envb_2&offset=0", "?build_id=envb_2&offset=27"]);
   await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-  await waitFor(() => expect(screen.getByText("构建失败")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("Build failed")).toBeTruthy());
   await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
   expect(logCalls(fetch)).toHaveLength(2);
   expect(screen.getByText(OLD_IMAGE)).toBeTruthy();
@@ -91,32 +91,32 @@ it("follows the latest build's log every 2 s from its offset until it ends, then
 it("rebuilds and follows the new build; an API error is surfaced", async () => {
   const fetch = host();
   renderDetail();
-  fireEvent.click(await screen.findByRole("button", { name: "重新构建" }));
-  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("已开始重新构建"));
+  fireEvent.click(await screen.findByRole("button", { name: "Rebuild" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Rebuild started"));
   expect(fetch.mock.calls.some(([url, init]) => String(url).endsWith("/v1/environments/env_own/build") && init?.method === "POST")).toBe(true);
   await waitFor(() => expect(logCalls(fetch)).toContain("?build_id=envb_3&offset=0"));
-  expect(await screen.findByText("排队中")).toBeTruthy();
+  expect(await screen.findByText("Queued")).toBeTruthy();
 
   cleanup();
   host({ rebuild: () => Response.json({ error: "Built-in Environments are read-only; copy it to customize it.", code: "environment_read_only" }, { status: 403 }) });
   renderDetail();
-  fireEvent.click(await screen.findByRole("button", { name: "重新构建" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Rebuild" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Built-in Environments are read-only; copy it to customize it."));
 });
 
 it("lists the preinstalled software by kind, searchable", async () => {
   host();
   renderDetail();
-  const manifest = await screen.findByRole("region", { name: "预装清单" });
-  expect(within(manifest).getByRole("button", { name: "命令 2" }).getAttribute("aria-pressed")).toBe("true");
+  const manifest = await screen.findByRole("region", { name: "Preinstalled" });
+  expect(within(manifest).getByRole("button", { name: "Commands 2" }).getAttribute("aria-pressed")).toBe("true");
   expect(within(manifest).getByText("ffmpeg version 9.0.1")).toBeTruthy();
   fireEvent.click(within(manifest).getByRole("button", { name: "Python 2" }));
   expect(within(manifest).getByText("google-genai")).toBeTruthy();
-  fireEvent.change(within(manifest).getByLabelText("搜索预装软件"), { target: { value: "pill" } });
+  fireEvent.change(within(manifest).getByLabelText("Search preinstalled software"), { target: { value: "pill" } });
   expect(within(manifest).queryByText("google-genai")).toBeNull();
   expect(within(manifest).getByText("Pillow")).toBeTruthy();
   fireEvent.click(within(manifest).getByRole("button", { name: "npm 2" }));
-  expect(within(manifest).getByText("没有匹配的条目。")).toBeTruthy();
-  expect(within(manifest).getByRole("button", { name: "系统包 2" })).toBeTruthy();
+  expect(within(manifest).getByText("No matching entries.")).toBeTruthy();
+  expect(within(manifest).getByRole("button", { name: "System packages 2" })).toBeTruthy();
   expect(manifestItems({ pip: "not a list", npm: null, binaries: { tini: "0.19.0" } })).toEqual([{ kind: "binary", name: "tini", version: "0.19.0", where: undefined }]);
 });

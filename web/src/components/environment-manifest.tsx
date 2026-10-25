@@ -4,10 +4,10 @@ import { cn } from "@/lib/utils";
 import { manifestItems, type ManifestItem } from "@/lib/environment-manifest";
 
 const KINDS: Array<{ kind: ManifestItem["kind"]; label: string }> = [
-  { kind: "binary", label: "命令" },
+  { kind: "binary", label: "Commands" },
   { kind: "pip", label: "Python" },
   { kind: "npm", label: "npm" },
-  { kind: "dpkg", label: "系统包" },
+  { kind: "dpkg", label: "System packages" },
 ];
 
 /** What the Environment's image has preinstalled, searchable by name. */
@@ -17,9 +17,9 @@ export function EnvironmentManifest({ manifest }: { manifest: Record<string, unk
   const [query, setQuery] = useState("");
   const shown = items.filter((item) => item.kind === kind && item.name.toLowerCase().includes(query.trim().toLowerCase()));
   return (
-    <section className="space-y-3" aria-label="预装清单">
-      <h2 className="text-sm font-semibold">预装清单</h2>
-      {!manifest ? <p className="text-sm text-neutral-500">镜像构建成功后显示。</p> : (
+    <section className="space-y-3" aria-label="Preinstalled">
+      <h2 className="text-sm font-semibold">Preinstalled</h2>
+      {!manifest ? <p className="text-sm text-neutral-500">Shown once an image has built.</p> : (
         <>
           <div className="flex flex-wrap items-center gap-2">
             {KINDS.map((option) => (
@@ -33,13 +33,13 @@ export function EnvironmentManifest({ manifest }: { manifest: Record<string, unk
                 {option.label} {items.filter((item) => item.kind === option.kind).length}
               </button>
             ))}
-            <Input aria-label="搜索预装软件" placeholder="搜索名称" value={query} onChange={(event) => setQuery(event.target.value)} className="ml-auto max-w-xs" />
+            <Input aria-label="Search preinstalled software" placeholder="Search by name" value={query} onChange={(event) => setQuery(event.target.value)} className="ml-auto max-w-xs" />
           </div>
-          {shown.length === 0 ? <p className="text-sm text-neutral-500">没有匹配的条目。</p> : (
+          {shown.length === 0 ? <p className="text-sm text-neutral-500">No matching entries.</p> : (
             <div className="max-h-[420px] overflow-auto rounded-xl border border-neutral-200">
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 bg-neutral-50 text-neutral-500">
-                  <tr><th className="px-3 py-2 font-medium">名称</th><th className="px-3 py-2 font-medium">版本</th><th className="px-3 py-2 font-medium">位置</th></tr>
+                  <tr><th className="px-3 py-2 font-medium">Name</th><th className="px-3 py-2 font-medium">Version</th><th className="px-3 py-2 font-medium">Location</th></tr>
                 </thead>
                 <tbody>
                   {shown.map((item, index) => (

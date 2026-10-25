@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 
 export type EnvironmentBaseImage = "oma-base" | "oma-media";
@@ -150,4 +152,20 @@ export function useDeleteEnvironment() {
       void queryClient.invalidateQueries({ queryKey: ["environments"], exact: true });
     },
   });
+}
+
+/** Copy an Environment into the Tenant's own, then open the copy. */
+export function useCopyEnvironment() {
+  const create = useCreateEnvironment();
+  const navigate = useNavigate();
+  return {
+    pending: create.isPending,
+    copy: (environment: Pick<EnvironmentSummary, "id">) => create.mutate({ from: environment.id }, {
+      onSuccess: (copied) => {
+        toast.success(`Copied as ${copied.name}`);
+        navigate(`/environments/${copied.id}`);
+      },
+      onError: (error) => toast.error(error.message),
+    }),
+  };
 }

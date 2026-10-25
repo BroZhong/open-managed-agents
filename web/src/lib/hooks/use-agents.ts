@@ -43,7 +43,7 @@ export interface AgentMutationBody {
   skills?: string[];
   mcpServers?: ManagedMcpServerRef[];
   sandbox?: Agent["sandbox"];
-  /** A ready Environment to bind; none binds video-production. */
+  /** An Environment that serves an image to bind; none binds video-production. */
   environmentId?: string;
 }
 

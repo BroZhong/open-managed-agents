@@ -1,5 +1,6 @@
 import { useModelProviders } from "@/lib/hooks/use-model-providers";
 import { useEnvironments, type EnvironmentSummary } from "@/lib/hooks/use-environments";
+import { environmentStatusLabel } from "@/lib/environment-status";
 import { useModelThinkingOptions, type ThinkingLevel } from "@/lib/hooks/use-thinking-options";
 import { AgentThinkingPicker } from "@/components/agent-thinking-picker";
 import { useState } from "react";
@@ -20,29 +21,27 @@ import {
   PI_MODELS,
 } from "@/lib/agent-runtime";
 
-const ENVIRONMENT_STATUS: Record<EnvironmentSummary["status"], string> = {
-  pending: "待构建", building: "构建中", failed: "构建失败", ready: "就绪",
-};
 /** The built-in a Sandboxed Agent runs in unless it names another (ADR-0024). */
 export const DEFAULT_ENVIRONMENT_ID = "env_video_production";
 
 /**
- * The Environments an Agent can be bound to (ADR-0024): the ready ones,
- * built-ins first, and, whatever their status, the Agent's own binding,
- * which an edit keeps, and the default, which the Host binds as it is.
+ * The Environments an Agent can be bound to (ADR-0024): those that serve an
+ * image, whatever a rebuild in progress or a failed one, built-ins first,
+ * with a build status that is not Ready as a hint; and the Agent's own
+ * binding should the list not show it.
  */
 function environmentChoices(environments: EnvironmentSummary[], current?: string) {
   const rank = (environment: EnvironmentSummary) => (environment.ownerType === "platform" ? 0 : 1);
-  const label = (environment: EnvironmentSummary) => environment.ownerType === "platform" ? `${environment.name} · 平台内置` : environment.name;
-  const choices = environments.filter((environment) => environment.status === "ready")
+  const label = (environment: EnvironmentSummary) => [
+    environment.ownerType === "platform" ? `${environment.name} · Built-in` : environment.name,
+    environment.status === "ready" ? "" : ` (${environmentStatusLabel(environment.status)})`,
+  ].join("");
+  const choices = environments.filter((environment) => environment.image !== null)
     .sort((a, b) => rank(a) - rank(b))
     .map((environment) => ({ value: environment.id, label: label(environment) }));
-  for (const kept of new Set([current ?? DEFAULT_ENVIRONMENT_ID, DEFAULT_ENVIRONMENT_ID])) {
-    if (choices.some((choice) => choice.value === kept)) continue;
-    const listed = environments.find((environment) => environment.id === kept);
-    if (!listed && kept === DEFAULT_ENVIRONMENT_ID && kept !== current) continue;
-    const role = kept === current ? "current" : "default";
-    choices.push({ value: kept, label: `${listed ? label(listed) : kept} (${role}${listed ? `, ${ENVIRONMENT_STATUS[listed.status]}` : ""})` });
+  if (current && !choices.some((choice) => choice.value === current)) {
+    const listed = environments.find((environment) => environment.id === current);
+    choices.push({ value: current, label: `${listed?.name ?? current} (current)` });
   }
   return choices;
 }
@@ -228,6 +227,7 @@ export function AgentFormDialog({
           <Select
             id="agent-environment"
             label="Environment"
+            placeholder="video-production (not built yet)"
             value={environmentId}
             onChange={(e) => setEnvironmentId(e.target.value)}
           >

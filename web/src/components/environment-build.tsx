@@ -2,22 +2,13 @@ import { useEffect, useRef } from "react";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { BuildStatusBadge } from "@/components/environment-badges";
 import {
   buildFinished,
   useEnvironmentBuildLog,
   useRebuildEnvironment,
   type Environment,
-  type EnvironmentBuildSummary,
 } from "@/lib/hooks/use-environments";
-
-const BUILD_STATUS: Record<EnvironmentBuildSummary["status"], { label: string; className: string }> = {
-  pending: { label: "排队中", className: "bg-amber-50 text-amber-700" },
-  running: { label: "构建中", className: "bg-blue-50 text-blue-700" },
-  succeeded: { label: "成功", className: "bg-green-50 text-green-700" },
-  failed: { label: "失败", className: "bg-red-50 text-red-700" },
-  superseded: { label: "已被新的修改取代", className: "bg-neutral-100 text-neutral-600" },
-};
 
 const time = (value: string | null) => (value ? new Date(value).toLocaleString() : "—");
 
@@ -39,44 +30,40 @@ export function EnvironmentBuildPanel({ environment }: { environment: Environmen
   const status = log.data && log.data.build.id === build?.id ? log.data.build : build;
   const running = status ? !buildFinished(status.status) : false;
   return (
-    <section className="space-y-3" aria-label="构建">
+    <section className="space-y-3" aria-label="Build">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold">构建</h2>
-        {status && (
-          <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", BUILD_STATUS[status.status].className)}>
-            {BUILD_STATUS[status.status].label}
-          </span>
-        )}
+        <h2 className="text-sm font-semibold">Build</h2>
+        {status && <BuildStatusBadge status={status.status} />}
         {environment.ownerType === "tenant" && (
           <Button
             variant="outline"
             className="ml-auto"
             disabled={rebuild.isPending}
             onClick={() => rebuild.mutate(undefined, {
-              onSuccess: () => toast.success("已开始重新构建"),
+              onSuccess: () => toast.success("Rebuild started"),
               onError: (failure) => toast.error(failure.message),
             })}
           >
-            <RefreshCw className="h-4 w-4" />重新构建
+            <RefreshCw className="h-4 w-4" />Rebuild
           </Button>
         )}
       </div>
-      {!status ? <p className="text-sm text-neutral-500">还没有构建。</p> : (
+      {!status ? <p className="text-sm text-neutral-500">No build yet.</p> : (
         <>
           <p className="text-xs text-neutral-500">
-            {status.id} · 创建 {time(status.createdAt)} · 开始 {time(status.startedAt)} · 结束 {time(status.finishedAt)}
+            {status.id} · created {time(status.createdAt)} · started {time(status.startedAt)} · finished {time(status.finishedAt)}
           </p>
           {status.errorMessage && <p role="alert" className="text-sm text-red-600">{status.errorMessage}</p>}
-          {log.error && <p role="alert" className="text-sm text-red-600">构建日志读取失败：{log.error.message}</p>}
-          {log.data?.truncated && <p className="text-xs text-neutral-500">日志只保留最后 1 MiB，更早的输出已省略。</p>}
+          {log.error && <p role="alert" className="text-sm text-red-600">The build log could not be read: {log.error.message}</p>}
+          {log.data?.truncated && <p className="text-xs text-neutral-500">Only the last 1 MiB of the log is kept; earlier output is omitted.</p>}
           <pre
             ref={view}
-            aria-label="构建日志"
+            aria-label="Build log"
             className="max-h-[480px] min-h-24 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-neutral-950 p-4 font-mono text-xs text-neutral-100"
           >
-            {text || (running ? "等待构建输出…" : "没有日志。")}
+            {text || (running ? "Waiting for build output…" : "No log.")}
           </pre>
-          {running && <p className="text-xs text-neutral-500">每 2 秒刷新，直到构建结束。</p>}
+          {running && <p className="text-xs text-neutral-500">Refreshed every 2 s until the build ends.</p>}
         </>
       )}
     </section>

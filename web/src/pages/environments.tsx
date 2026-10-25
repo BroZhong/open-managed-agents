@@ -1,15 +1,14 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Boxes, Copy, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EnvironmentForm } from "@/components/environment-form";
 import { BuiltInTag, EnvironmentStatusBadge } from "@/components/environment-badges";
+import { DeleteEnvironmentDialog } from "@/components/environment-actions";
 import {
+  useCopyEnvironment,
   useCreateEnvironment,
-  useDeleteEnvironment,
   useEnvironments,
   type EnvironmentSummary,
 } from "@/lib/hooks/use-environments";
@@ -17,25 +16,17 @@ import {
 export default function EnvironmentsPage() {
   const environments = useEnvironments();
   const create = useCreateEnvironment();
-  const remove = useDeleteEnvironment();
+  const copying = useCopyEnvironment();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<EnvironmentSummary | null>(null);
-  const copy = (environment: EnvironmentSummary) =>
-    create.mutate({ from: environment.id }, {
-      onSuccess: (copied) => {
-        toast.success(`已复制为 ${copied.name}`);
-        navigate(`/environments/${copied.id}`);
-      },
-      onError: (error) => toast.error(error.message),
-    });
   return (
     <div>
-      <PageHeader title="Environment" description="Sandbox 运行的环境：Base Image、初始化脚本和环境变量，构建一次成镜像。">
+      <PageHeader title="Environments" description="What Sandboxes run: a Base Image, an init script and variables, built once into an image.">
         {!creating && (
           <Button onClick={() => { create.reset(); setCreating(true); }}>
             <Plus className="h-4 w-4" />
-            新建环境
+            New Environment
           </Button>
         )}
       </PageHeader>
@@ -44,17 +35,17 @@ export default function EnvironmentsPage() {
           <EnvironmentForm
             pending={create.isPending}
             error={create.error}
-            submitLabel="创建"
+            submitLabel="Create"
             onCancel={() => setCreating(false)}
             onSubmit={(input) => create.mutate(input, { onSuccess: (created) => navigate(`/environments/${created.id}`) })}
           />
         )}
-        {environments.isLoading && <p role="status">加载中…</p>}
+        {environments.isLoading && <p role="status">Loading…</p>}
         {environments.error && <p role="alert" className="text-sm text-red-600">{environments.error.message}</p>}
         {environments.data?.length === 0 && (
           <div className="rounded-2xl border border-dashed border-neutral-200 px-6 py-16 text-center">
             <Boxes className="mx-auto mb-3 h-8 w-8 text-neutral-400" />
-            <p>还没有环境。</p>
+            <p>No Environments yet.</p>
           </div>
         )}
         <div className="grid gap-4 lg:grid-cols-2">
@@ -70,32 +61,23 @@ export default function EnvironmentsPage() {
                   <p className="mt-1 text-xs text-neutral-500">{environment.baseImage}</p>
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <Button variant="ghost" size="icon" aria-label={`复制 ${environment.name}`} title="复制为自定义环境" disabled={create.isPending} onClick={() => copy(environment)}>
+                  <Button variant="ghost" size="icon" aria-label={`Copy ${environment.name}`} title="Copy to a custom Environment" disabled={copying.pending} onClick={() => copying.copy(environment)}>
                     <Copy className="h-4 w-4" />
                   </Button>
                   {environment.ownerType === "tenant" && (
-                    <Button variant="ghost" size="icon" aria-label={`删除 ${environment.name}`} onClick={() => setDeleting(environment)}>
+                    <Button variant="ghost" size="icon" aria-label={`Delete ${environment.name}`} onClick={() => setDeleting(environment)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
               </div>
               {environment.description && <p className="mt-3 text-sm text-neutral-600">{environment.description}</p>}
-              <p className="mt-3 text-xs text-neutral-500">更新于 {new Date(environment.updatedAt).toLocaleString()}</p>
+              <p className="mt-3 text-xs text-neutral-500">Updated {new Date(environment.updatedAt).toLocaleString()}</p>
             </section>
           ))}
         </div>
       </div>
-      <ConfirmDialog
-        open={deleting !== null}
-        onOpenChange={(open) => { if (!open) setDeleting(null); }}
-        title="删除环境"
-        description={`删除 ${deleting?.name ?? ""}？已在使用其镜像的 Sandbox 不受影响。`}
-        confirmLabel="Delete"
-        onConfirm={() => {
-          if (deleting) remove.mutate(deleting.id, { onError: (error) => toast.error(error.message) });
-        }}
-      />
+      <DeleteEnvironmentDialog environment={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
 }
