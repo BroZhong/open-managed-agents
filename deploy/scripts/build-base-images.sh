@@ -125,7 +125,7 @@ mirror_image() {
   fi
   [[ "${dry_run}" == true ]] && return 0
   local mirrored
-  mirrored="$(docker buildx imagetools inspect "${target}" --format '{{json .Manifest}}' | sed -n 's/.*"digest":"\(sha256:[0-9a-f]*\)".*/\1/p' | head -1)"
+  mirrored="$(docker buildx imagetools inspect "${target}" | awk '/^Digest:/ && !digest { digest = $2 } END { print digest }')"
   if [[ "${mirrored}" != "${digest}" ]]; then
     echo "${target} is ${mirrored:-unknown}, not ${digest}: update BUILDAH_IMAGE in deploy/app/image-builder.yaml" >&2
     return 1
