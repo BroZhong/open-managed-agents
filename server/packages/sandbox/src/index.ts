@@ -113,3 +113,5 @@ export {
 export { skillsInstallFailedText, type TurnExecutorGuard } from "./turn-executor.js";
 
 export { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";
+
+export { ENVIRONMENT_VARIABLE_NAME, PLATFORM_DEFAULT_ENV, isReservedEnvironmentVariable } from "./environment-variables.js";
