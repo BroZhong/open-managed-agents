@@ -2,7 +2,7 @@
   "imageVersion": "0.1.0",
   "platform": "linux/amd64",
   "repository": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox",
-  "baseImage": "PENDING: the oma-base digest from ../oma-base/image.lock.json",
+  "baseImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:007d0b4c13559f976ceb1dced5b1687fbbd0d88c6a0fb4563eae4692e07d6ac8",
   "ffmpeg": {
     "version": "9.0.1",
     "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
@@ -11,7 +11,25 @@
     "signingKey": "https://ffmpeg.org/ffmpeg-devel.asc",
     "signingFingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8"
   },
-  "encoders": ["libopenh264", "libx264", "libx265", "libvpx-vp9", "libaom-av1", "libmp3lame", "libopus", "libvorbis", "libwebp", "aac"],
-  "filters": ["subtitles", "ass", "drawtext"],
-  "fonts": ["fonts-noto-cjk", "fonts-dejavu-core"]
+  "encoders": [
+    "libopenh264",
+    "libx264",
+    "libx265",
+    "libvpx-vp9",
+    "libaom-av1",
+    "libmp3lame",
+    "libopus",
+    "libvorbis",
+    "libwebp",
+    "aac"
+  ],
+  "filters": [
+    "subtitles",
+    "ass",
+    "drawtext"
+  ],
+  "fonts": [
+    "fonts-noto-cjk",
+    "fonts-dejavu-core"
+  ]
 }

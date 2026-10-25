@@ -56,7 +56,8 @@ image, pushed = sys.argv[1], sys.argv[2] == "1"
 info = json.loads(subprocess.check_output(["docker", "image", "inspect", image]))[0]
 repository = image.rsplit(":", 1)[0]
 digests = [d for d in info.get("RepoDigests", []) if d.startswith(repository + "@")]
-result = {"image": image, "imageId": info["Id"], "uncompressedBytes": info["Size"],
+unpacked = subprocess.check_output(["docker", "image", "ls", image, "--format", "{{.Size}}"], text=True).strip()
+result = {"image": image, "imageId": info["Id"], "unpackedSize": unpacked,
           "layers": len(info["RootFS"]["Layers"]), "labels": info["Config"].get("Labels") or {}}
 if pushed and digests:
     result["ref"] = digests[0]
@@ -74,7 +75,7 @@ import json, sys
 from datetime import date
 meta = json.load(open("build-metadata.json"))
 print(json.dumps({"tag": meta["image"], "ref": meta["ref"], "mediaType": meta.get("mediaType"),
-                  "compressedBytes": meta.get("compressedBytes"), "uncompressedBytes": meta["uncompressedBytes"],
+                  "compressedBytes": meta.get("compressedBytes"), "unpackedSize": meta["unpackedSize"],
                   "layers": meta["layers"], "revision": sys.argv[1], "verifiedAt": date.today().isoformat()}, indent=2))
 PY
   cat image.lock.json
