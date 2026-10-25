@@ -98,7 +98,7 @@
 ## 测试
 
 - `server/packages/sandbox`：279 通过（10 跳过）；`session-router`：453 通过；`api`：1816 通过（20 跳过）；真实 PG（`turn-sandboxes`、`binding-reconciliation`、`sandbox-sweeper`）：101 通过（5 跳过）。
-- `node --test deploy/*.test.mjs`：29 通过（1 跳过）。
+- `node --test deploy/*.test.mjs`：35 通过（1 跳过），含 #305 的内置 Environment 检查。
 - `pnpm --dir server typecheck`、各包 `tsc --noEmit`（含测试）、`pnpm --dir adapter typecheck` 通过。
 
 ## 复现
