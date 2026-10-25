@@ -66,7 +66,7 @@ class Runner {
   dead = false;
   readonly sandboxes: DefaultTurnSandboxes;
   constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: SandboxSignals, readonly loss?: LossPoint,
-    deps: Pick<TurnSandboxesDeps, "sandboxImage" | "environments"> = {}) {
+    deps: Pick<TurnSandboxesDeps, "environments"> = {}) {
     const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", sandboxSignals: hints,
       lifecycle: stores.lifecycle && this.alive(stores.lifecycle) });
     this.sandboxes = new DefaultTurnSandboxes({ manager, bindings: this.bindings(stores.delegationStore),
@@ -154,7 +154,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
   describe(name, () => {
     if (options.teardown) afterAll(options.teardown);
 
-    async function setup(deps: Pick<TurnSandboxesDeps, "sandboxImage" | "environments"> = {}) {
+    async function setup(deps: Pick<TurnSandboxesDeps, "environments"> = {}) {
       const stores = await createStores();
       const gatewayClock = databaseClock(new Date("2026-10-22T13:19:30Z"));
       const gateway = new FakeSandboxClient({ clock: gatewayClock.now });

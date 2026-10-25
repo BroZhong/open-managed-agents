@@ -29,7 +29,7 @@ function watch<T>(promise: Promise<T>) {
 
 const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" };
 const agent: Agent = { id: "agent_sbx", tenantId: TENANT, name: "Sandboxed", model: "model", system: "", runtime: "pi-agent",
-  sandbox: { enabled: true, image: "ubuntu:22.04" }, createdAt: new Date(), updatedAt: new Date() };
+  sandbox: { enabled: true }, createdAt: new Date(), updatedAt: new Date() };
 
 /**
  * The Turn side of the Sandbox protocol (ADR-0023, #281): a Turn attempt
@@ -361,28 +361,8 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(finish).toHaveBeenCalledTimes(2);
     });
 
-    it("builds the Sandbox from the Session's Workspace, the configured image and the Agent's env, under deployment policy", async () => {
-      const image = "registry.example/welltop/oma-sandbox@sha256:" + "3".repeat(64);
-      const h = await setup({
-        sandboxImage: image,
-        defaultSandboxEnv: { VFS_TOKEN: "default", SHARED: "yes" },
-        managedSandboxEnvByAgentId: { [agent.id]: { OPENGROVE_WW_ACCESS_TOKEN: "managed" }, agent_other: { OTHER: "no" } },
-      });
-      // The Agent's legacy template choice no longer selects anything (ADR-0024).
-      const session = await h.session({ sandbox: { enabled: true, image: "custom:1", env: { VFS_TOKEN: "agent", OPENGROVE_WW_ACCESS_TOKEN: "agent", OWN: "1" } } });
-      await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
-      const created = h.client.createOptsOf(h.client.created[0]);
-      expect(created.image).toBe(image);
-      expect(created.env).toMatchObject({ VFS_TOKEN: "agent", SHARED: "yes", OWN: "1", OPENGROVE_WW_ACCESS_TOKEN: "managed", HOME: "/home/user" });
-      expect(created.env).not.toHaveProperty("OTHER");
-      expect(h.client.workspaceContents(`${TENANT}/ws_1/`).get("saved.txt")?.content).toBe("x");
-      // A Session without an Environment records none for its Sandbox.
-      expect(await h.origin(session.id)).toEqual({ sandboxId: h.client.created[0], environmentId: null, image });
-    });
-
     describe("a Session in an Environment (ADR-0024)", () => {
       const digest = (n: number) => "registry.example/welltop/oma-environments@sha256:" + String(n).repeat(64);
-      const CONFIGURED = digest(1);
       /**
        * The Environments as the Host resolves them: their serving images, read
        * when a Turn begins (a rebuild replaces one), and their resolved
@@ -406,7 +386,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
 
       it("claims with the image its Environment serves when the Turn begins: a rebuild reaches new Sandboxes, a running one keeps its own", async () => {
         const store = served({ env_video: digest(2) });
-        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const h = await setup({ environments: store.environments });
         const prepares: SandboxPrepareOutcome[] = [];
         const sandboxPrepares = { started: () => {}, ended: (outcome: SandboxPrepareOutcome) => { prepares.push(outcome); } };
         const first = await h.session({}, undefined, "env_video");
@@ -442,16 +422,17 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         expect(store.reads.every((ids) => ids.length === 1 && ids[0] === "env_video")).toBe(true);
       });
 
-      it("never claims with the configured image for a Session whose Environment serves none, and reads none without one", async () => {
+      it("claims with no image for a Session whose Environment serves none, and reads none without one", async () => {
         const store = served({ env_unbuilt: null });
-        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const h = await setup({ environments: store.environments });
         for (const environmentId of ["env_unbuilt", "env_unknown"]) {
           const session = await h.session({}, undefined, environmentId);
           await h.turn(session, (executor) => executor!.writeFile("x.txt", "x"));
         }
         // The gateway rejects a create without an image (ADR-0024); the fake records the request.
         expect(h.client.created.map((id) => h.client.createOptsOf(id).image)).toEqual([undefined, undefined]);
-        const plain = await h.session();
+        // A Session of an Agent without an Environment (one that ran without a Sandbox) reads none.
+        const plain = await h.session({ environmentId: undefined });
         await h.turn(plain, async () => {});
         expect(store.reads).toEqual([["env_unbuilt"], ["env_unknown"]]);
         // An opted-out Agent reads nothing either.
@@ -472,12 +453,8 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         const store = served({ env_vars: digest(2) }, {
           env_vars: { PIP_INDEX_URL: "https://pypi.example/simple", API_TOKEN: CANARY, HOME: "/elsewhere" },
         });
-        const h = await setup({
-          sandboxImage: CONFIGURED, environments: store.environments,
-          // The deployment's create-time injection, which a Session in an Environment never gets.
-          defaultSandboxEnv: { BASE_SECRET: "base-" + CANARY }, managedSandboxEnvByAgentId: { [agent.id]: { MANAGED: CANARY } },
-        });
-        const session = await h.session({ sandbox: { enabled: true, env: { AGENT_ENV: CANARY } } }, undefined, "env_vars");
+        const h = await setup({ environments: store.environments });
+        const session = await h.session({}, undefined, "env_vars");
         const seen = await h.turn(session, (executor) => printenv(executor!, "PIP_INDEX_URL", "NPM_CONFIG_REGISTRY", "API_TOKEN", "HOME", "WORKSPACE_DIR"));
         expect(seen).toEqual(["https://pypi.example/simple", PLATFORM_DEFAULT_ENV.NPM_CONFIG_REGISTRY, CANARY, WORKSPACE_ENV.HOME, WORKSPACE_ENV.WORKSPACE_DIR]);
         // The creation, and so the Sandbox CR, carries the Workspace paths and nothing of the Environment's.
@@ -489,7 +466,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
 
       it("applies a changed variable from the next command of a running Sandbox", async () => {
         const store = served({ env_vars: digest(2) }, { env_vars: { MODE: "first" } });
-        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const h = await setup({ environments: store.environments });
         const session = await h.session({}, undefined, "env_vars");
         const fence = await h.claim(session);
         const lease = (await h.acquire(session, fence))!;
@@ -506,7 +483,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       it("keeps injected values over the image's profile defaults, which apply to names it does not inject", async () => {
         const store = served({ env_vars: digest(2) }, { env_vars: { REGION: "from-environment" } });
         // The init script wrote `export REGION="${REGION:-image-default}"` and `export TOOL_HOME="${TOOL_HOME:-/opt/tool}"`.
-        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments },
+        const h = await setup({ environments: store.environments },
           { profile: { REGION: "image-default", TOOL_HOME: "/opt/tool" } });
         const session = await h.session({}, undefined, "env_vars");
         expect(await h.turn(session, (executor) => printenv(executor!, "REGION", "TOOL_HOME"))).toEqual(["from-environment", "/opt/tool"]);
@@ -514,7 +491,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
 
       it("runs Host-internal commands without the Environment's variables, and fails a command whose variables cannot be read without running it", async () => {
         const store = served({ env_vars: digest(2) }, { env_vars: { API_TOKEN: CANARY } });
-        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const h = await setup({ environments: store.environments });
         const session = await h.session({}, undefined, "env_vars");
         const skills = skillSetOf([await h.bundles.add("reviewer", [text("SKILL.md", "Review")])]);
         await h.turn(session, async (executor) => { await executor!.writeFile("x.txt", "x"); await printenv(executor!, "API_TOKEN"); }, { skills });
@@ -527,7 +504,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
 
         const failing = served({ env_vars: digest(2) });
         failing.environments.variables = async () => { throw new Error(`database said ${CANARY}`); };
-        const g = await setup({ sandboxImage: CONFIGURED, environments: failing.environments });
+        const g = await setup({ environments: failing.environments });
         const other = await g.session({}, undefined, "env_vars");
         const fence = await g.claim(other);
         const lease = (await g.acquire(other, fence))!;
@@ -539,12 +516,13 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         await lease.release({ settled: true });
       });
 
-      it("keeps a Session without an Environment's create-time variables, and gives its commands none", async () => {
-        const h = await setup({ sandboxImage: CONFIGURED, defaultSandboxEnv: { VFS_TOKEN: "default" } });
-        const session = await h.session({ sandbox: { enabled: true, env: { OWN: "1" } } });
-        await h.turn(session, (executor) => printenv(executor!, "VFS_TOKEN"));
-        expect(h.client.createOptsOf(h.client.created[0]).env).toEqual({ VFS_TOKEN: "default", OWN: "1", ...WORKSPACE_ENV });
-        expect(h.client.execs.find((run) => run.command[0] === "printenv")).not.toHaveProperty("env");
+      it("runs a Session that froze no Environment, created while its Agent ran without a Sandbox, in its Agent's now", async () => {
+        const store = served({ env_vars: digest(2) }, { env_vars: { MODE: "agent's" } });
+        const h = await setup({ environments: store.environments });
+        const session = await h.session({ environmentId: "env_vars" });
+        expect(await h.turn(session, (executor) => printenv(executor!, "MODE"))).toEqual(["agent's"]);
+        expect(h.client.createOptsOf(h.client.created[0]).image).toBe(digest(2));
+        expect(await h.origin(session.id)).toMatchObject({ environmentId: "env_vars", image: digest(2) });
       });
     });
 

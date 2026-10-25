@@ -1,5 +1,5 @@
 import type { OSSArtifactStoreOptions, OSSSkillBundleStoreOptions } from "@oma-server/store";
-import { isDigestPinnedImage, type SandboxEnvironment, type WorkspaceMountSpec } from "@oma-server/sandbox";
+import type { SandboxEnvironment, WorkspaceMountSpec } from "@oma-server/sandbox";
 
 type HostEnv = Readonly<Record<string, string | undefined>>;
 function required(env: HostEnv, name: string): string {
@@ -40,18 +40,6 @@ export function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
   return value;
 }
 
-/**
- * The image a Session without an Environment claims its Sandboxes with
- * (ADR-0024): the Warm Pool's own image for a plain claim, byte for byte,
- * since the gateway compares the references as strings; any other is swapped
- * in place. A Session with an Environment claims with that Environment's.
- */
-function sandboxImageFromEnv(env: HostEnv): string {
-  const image = env.SANDBOX_IMAGE?.trim();
-  if (!isDigestPinnedImage(image)) throw new Error("SANDBOX_IMAGE must be an image pinned by digest (<repository>@sha256:<hex>)");
-  return image;
-}
-
 export function workspaceConfigFromEnv(env: HostEnv) {
   const oss = workspaceStorageConfigFromEnv(env);
   const bucket = oss.bucket;
@@ -71,6 +59,5 @@ export function workspaceConfigFromEnv(env: HostEnv) {
       // The Warm Pool (SandboxSet) every Sandbox is claimed from (ADR-0024).
       pool: required(env, "SANDBOX_TEMPLATE"),
     },
-    sandboxImage: sandboxImageFromEnv(env),
   };
 }

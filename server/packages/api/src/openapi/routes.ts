@@ -270,7 +270,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     request: { body: jsonBody(CreateAgentInputSchema) },
     responses: {
       201: jsonResponse(AgentSchema, "Agent created"),
-      400: errorResponse("Invalid Agent configuration"),
+      400: errorResponse("Invalid Agent configuration, a removed sandbox field (sandbox_image_removed, sandbox_env_removed), or no Environment for a Sandboxed Agent (environment_required)"),
       404: errorResponse("Environment not found (environment_not_found)"),
       409: errorResponse("The Environment is not ready (environment_not_ready)"),
     },
@@ -320,7 +320,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     request: { params: idParams, body: jsonBody(UpdateAgentInputSchema) },
     responses: {
       200: jsonResponse(AgentSchema, "Agent updated"),
-      400: errorResponse("Invalid Agent configuration"),
+      400: errorResponse("Invalid Agent configuration, a removed sandbox field (sandbox_image_removed, sandbox_env_removed), or no Environment for a Sandboxed Agent (environment_required)"),
       404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
       409: errorResponse("The Environment is not ready (environment_not_ready)"),
     },

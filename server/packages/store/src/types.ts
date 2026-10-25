@@ -34,17 +34,13 @@ export interface LegacyHttpMcpServerConfig {
 
 export type AgentMcpServerConfig = ManagedMcpServerRef | LegacyHttpMcpServerConfig;
 
+/**
+ * Whether the Agent's Turns run in a Sandbox. What the Sandbox runs is its
+ * Environment (`Agent.environmentId`, ADR-0024): the image and variables
+ * that `sandbox.image` and `sandbox.env` used to set.
+ */
 export interface AgentSandboxConfig {
   enabled: boolean;
-  image?: string;
-  /**
-   * Environment variables injected into the Agent's sandbox at create time
-   * (e.g. a `VFS_TOKEN` a CLI in the sandbox needs). These are baked into the
-   * sandbox by the ToolExecutor and never enter the model context or event log
-   * — unlike anything passed through a turn's prompt. Per-Agent, so two Agents
-   * on the same template get isolated secrets.
-   */
-  env?: Record<string, string>;
 }
 
 export interface Agent {
@@ -67,8 +63,8 @@ export interface Agent {
   sandbox?: AgentSandboxConfig;
   /**
    * The Environment (ADR-0024) a new Session of the Agent runs in unless it
-   * names another. Only a ready one can be bound; absent, its Sandboxes run
-   * the Host's configured image.
+   * names another. Every Sandboxed Agent has one (`video-production` unless
+   * it names another); only a ready one can be bound.
    */
   environmentId?: string;
   createdAt: Date;
@@ -117,7 +113,7 @@ export interface Session {
    * The Environment its Sandboxes are created from, frozen at creation
    * (ADR-0024): the one the creation named, otherwise its Agent's then. A
    * Child Session has its parent's; a Loop's Session its Agent's at trigger
-   * time. Absent: the Host's configured image.
+   * time. Absent only for a Session whose Agent ran without a Sandbox.
    */
   environmentId?: string;
   /** Set only for Sessions automatically created by a Loop trigger. */

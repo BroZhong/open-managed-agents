@@ -1,5 +1,6 @@
 import { HTTPException } from "hono/http-exception";
 import {
+  DEFAULT_ENVIRONMENT_ID,
   EnvironmentNameConflictError,
   environmentBuildLogKey,
   newEnvironmentId,
@@ -199,6 +200,15 @@ export class EnvironmentService {
         `Environment ${env.name} is ${env.status}; only a ready Environment can be bound to an Agent or chosen for a Session.`);
     }
     return env;
+  }
+
+  /**
+   * The Environment a Sandboxed Agent that names none is bound to
+   * (ADR-0024): the built-in video-production, ready or still building;
+   * undefined on a Host that does not have it.
+   */
+  async defaultFor(tenantId: string): Promise<string | undefined> {
+    return (await this.store.get(tenantId, DEFAULT_ENVIRONMENT_ID))?.id;
   }
 
   /**

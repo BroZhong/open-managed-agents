@@ -92,7 +92,7 @@ const sandboxedAgent: Agent = {
   model: "claude-3",
   system: "helpful",
   runtime: "pi-agent",
-  sandbox: { enabled: true, image: "ubuntu:22.04" },
+  sandbox: { enabled: true },
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -136,10 +136,6 @@ function createDeps(opts: {
   agentStore?: AgentStore;
   withManager?: boolean;
   interruptedAdapterDrainTimeoutMs?: number;
-  defaultSandboxEnv?: Record<string, string>;
-  managedSandboxEnvByAgentId?: Readonly<
-    Record<string, Readonly<Record<string, string>>>
-  >;
 }) {
   const { eventLogStore, pendingEventStore, sessionStore, delegationStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
@@ -168,8 +164,6 @@ function createDeps(opts: {
         pvName: "agentry-workspace-oss",
         credentialProviderName: "agentry-oss-rw",
       },
-      defaultSandboxEnv: opts.defaultSandboxEnv,
-      managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
     }),
     skillStore: opts.skillStore,
     agentStore: opts.agentStore,
@@ -371,197 +365,6 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     await router.handleNewEvent(session.id, sandboxedAgent);
 
     expect(sandboxClient.created).toHaveLength(1);
-  });
-
-  it("injects the Agent's sandbox.env into the created sandbox", async () => {
-    const workspaceClient = new FakeSandboxClient();
-    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
-    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
-      sandboxClient: workspaceClient,
-    });
-    const envAgent: Agent = {
-      ...sandboxedAgent,
-      sandbox: { enabled: true, image: "ubuntu:22.04", env: { VFS_TOKEN: "tok-123" } },
-    };
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: envAgent.id,
-      agent: envAgent,
-      workspaceId: "ws_1",
-    });
-    await enqueue(pendingEventStore, session.id, "read the file");
-
-    await router.handleNewEvent(session.id, envAgent);
-
-    expect(sandboxClient.created).toHaveLength(1);
-    const id = sandboxClient.created[0];
-    // The per-Agent env must reach the sandbox's create options.
-    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
-      VFS_TOKEN: "tok-123",
-    });
-  });
-
-  it("merges defaultSandboxEnv into the sandbox; the Agent's own env wins per key", async () => {
-    const workspaceClient = new FakeSandboxClient();
-    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
-    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
-      sandboxClient: workspaceClient,
-      // Deployment-wide defaults: a shared VFS_TOKEN plus an extra shared key.
-      defaultSandboxEnv: { VFS_TOKEN: "default-tok", SHARED: "yes" },
-    });
-    const envAgent: Agent = {
-      ...sandboxedAgent,
-      // The Agent overrides VFS_TOKEN and adds its own key; SHARED is inherited.
-      sandbox: { enabled: true, image: "ubuntu:22.04", env: { VFS_TOKEN: "agent-tok", OWN: "1" } },
-    };
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: envAgent.id,
-      agent: envAgent,
-      workspaceId: "ws_1",
-    });
-    await enqueue(pendingEventStore, session.id, "read the file");
-
-    await router.handleNewEvent(session.id, envAgent);
-
-    const id = sandboxClient.created[0];
-    const env = sandboxClient.createOptsOf(id).env;
-    expect(env).toMatchObject({
-      VFS_TOKEN: "agent-tok", // Agent wins over the default
-      SHARED: "yes", // inherited from the deployment default
-      OWN: "1", // the Agent's own extra key
-    });
-  });
-
-  it("injects defaultSandboxEnv even when the Agent sets no sandbox.env", async () => {
-    const workspaceClient = new FakeSandboxClient();
-    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
-    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
-      sandboxClient: workspaceClient,
-      defaultSandboxEnv: { VFS_TOKEN: "default-tok" },
-    });
-    // sandboxedAgent has no sandbox.env of its own.
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: sandboxedAgent.id,
-      agent: sandboxedAgent,
-      workspaceId: "ws_1",
-    });
-    await enqueue(pendingEventStore, session.id, "read the file");
-
-    await router.handleNewEvent(session.id, sandboxedAgent);
-
-    const id = sandboxClient.created[0];
-    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
-      VFS_TOKEN: "default-tok",
-    });
-  });
-
-  it("passes shared base credentials to native sandbox creation for existing and future Agents", async () => {
-    const workspaceClient = new FakeSandboxClient();
-    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
-    const baseEnv = {
-      OSS_READ_ACCESS_KEY_ID: "base-oss-id",
-      OSS_READ_ACCESS_KEY_SECRET: "base-oss-secret",
-      OPENGROVE_WW_ACCESS_TOKEN: "base-ww-token",
-    };
-    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
-      sandboxClient: workspaceClient,
-      defaultSandboxEnv: baseEnv,
-    });
-
-    for (const agentId of ["agent_existing_without_env", "agent_created_later"]) {
-      const agent: Agent = { ...sandboxedAgent, id: agentId, sandbox: { enabled: true } };
-      const session = await sessionStore.create({
-        tenantId: "tenant_1", agentId, agent, workspaceId: "ws_1",
-      });
-      await enqueue(pendingEventStore, session.id, "read the file");
-      await router.handleNewEvent(session.id, agent);
-      expect((await sessionStore.getById(session.id))?.agent.sandbox?.env).toBeUndefined();
-    }
-
-    expect(sandboxClient.created).toHaveLength(2);
-    for (const id of sandboxClient.created) {
-      expect(sandboxClient.createOptsOf(id).env).toMatchObject(baseEnv);
-    }
-  });
-
-  it("keeps deployment-managed sandbox env authoritative over Agent overrides", async () => {
-    const workspaceClient = new FakeSandboxClient();
-    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
-    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
-      sandboxClient: workspaceClient,
-      defaultSandboxEnv: { VFS_TOKEN: "default-vfs" },
-      managedSandboxEnvByAgentId: {
-        [sandboxedAgent.id]: {
-          OPENGROVE_WW_BASE_URL: "https://managed.example.test",
-          OPENGROVE_WW_ACCESS_TOKEN: "managed-token",
-        },
-      },
-    });
-    const envAgent: Agent = {
-      ...sandboxedAgent,
-      sandbox: {
-        enabled: true,
-        env: {
-          VFS_TOKEN: "agent-vfs",
-          OPENGROVE_WW_BASE_URL: "https://agent.example.test",
-          OPENGROVE_WW_ACCESS_TOKEN: "agent-token",
-        },
-      },
-    };
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: envAgent.id,
-      agent: envAgent,
-      workspaceId: "ws_1",
-    });
-    await enqueue(pendingEventStore, session.id, "read the file");
-
-    await router.handleNewEvent(session.id, envAgent);
-
-    const id = sandboxClient.created[0];
-    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
-      VFS_TOKEN: "agent-vfs",
-      OPENGROVE_WW_BASE_URL: "https://managed.example.test",
-      OPENGROVE_WW_ACCESS_TOKEN: "managed-token",
-    });
-  });
-
-  it("does not inject one Agent's managed sandbox env into another Agent", async () => {
-    const workspaceClient = new FakeSandboxClient();
-    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
-    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
-      sandboxClient: workspaceClient,
-      defaultSandboxEnv: { VFS_TOKEN: "default-vfs" },
-      managedSandboxEnvByAgentId: {
-        agent_allowed: {
-          OPENGROVE_WW_BASE_URL: "https://managed.example.test",
-          OPENGROVE_WW_ACCESS_TOKEN: "managed-token",
-        },
-      },
-    });
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: sandboxedAgent.id,
-      agent: sandboxedAgent,
-      workspaceId: "ws_1",
-    });
-    await enqueue(pendingEventStore, session.id, "read the file");
-
-    await router.handleNewEvent(session.id, sandboxedAgent);
-
-    const id = sandboxClient.created[0];
-    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
-      VFS_TOKEN: "default-vfs",
-    });
-    expect(sandboxClient.createOptsOf(id).env).not.toHaveProperty("OPENGROVE_WW_ACCESS_TOKEN");
   });
 
   it("reads an existing Workspace file through its verified mount", async () => {

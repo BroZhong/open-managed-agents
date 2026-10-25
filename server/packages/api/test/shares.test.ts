@@ -10,7 +10,7 @@ async function setup() {
   const key = await stores.apiKeyStore.create("owner", "test");
   const headers = { "x-api-key": key.rawKey, "content-type": "application/json" };
   const app = createApp(stores);
-  const agent = await stores.agentStore.create({ tenantId: "owner", name: "Writer", model: "test", system: "PRIVATE_SYSTEM", runtime: "mock", sandbox: { env: { SECRET: "PRIVATE_ENV" } } });
+  const agent = await stores.agentStore.create({ tenantId: "owner", name: "Writer", model: "test", system: "PRIVATE_SYSTEM", runtime: "mock", sandbox: { enabled: true } });
   const response = await app.request("/v1/sessions", { method: "POST", headers, body: JSON.stringify({ agent: agent.id }) });
   const session = await response.json();
   return { app, stores, headers, session };

@@ -4,6 +4,12 @@ import type { EnvironmentBaseImage } from "./interfaces/environment-store.js";
 
 export const ENVIRONMENT_BASE_IMAGES = ["oma-base", "oma-media"] as const satisfies readonly EnvironmentBaseImage[];
 
+/**
+ * The built-in Environment a Sandboxed Agent runs in unless it names another
+ * (ADR-0024): video-production, which `sandbox/environments/` defines.
+ */
+export const DEFAULT_ENVIRONMENT_ID = "env_video_production";
+
 /** A new Tenant Environment id. Built-in Environments keep their fixed ids. */
 export const newEnvironmentId = () => `env_${nanoid()}`;
 export const newEnvironmentBuildId = () => `envb_${nanoid()}`;

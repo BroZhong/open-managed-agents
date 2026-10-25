@@ -69,8 +69,7 @@ describe("a Session's commands in its Environment, edited through the API (ADR-0
     await stores.environmentStore.buildNow(env.id, IMAGE);
     const client = new FakeSandboxClient();
     const sandboxes = new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: client, environment: "test" }),
-      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, environments: resolver,
-      defaultSandboxEnv: { BASE_SECRET: CANARY } });
+      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, environments: resolver });
     const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "pi-agent", sandbox: { enabled: true }, environmentId: env.id });
     const workspace = await stores.workspaceStore.create({ tenantId: "t1" });
     const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: workspace.id, environmentId: env.id });
@@ -88,7 +87,7 @@ describe("a Session's commands in its Environment, edited through the API (ADR-0
     expect(await printenv("MODE")).toEqual(["second"]);
     expect(await printenv("API_TOKEN")).toEqual([]);
     expect(client.created).toHaveLength(1);
-    // The creation carried neither the Environment's secret nor the deployment's base Secret.
+    // The creation carried none of the Environment's secrets.
     expect(JSON.stringify(client.createOptsOf(client.created[0]!))).not.toContain(CANARY);
   });
 });

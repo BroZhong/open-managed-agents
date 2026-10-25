@@ -55,20 +55,51 @@ describe("Agents bound to an Environment (ADR-0024)", () => {
   beforeEach(() => { vi.unstubAllEnvs(); vi.stubEnv("AUTH_DISABLED", "false"); });
   afterEach(() => { vi.unstubAllEnvs(); });
 
-  it("binds a ready Environment at creation or update, keeps it across edits and clears it with null", async () => {
+  it("binds a ready Environment at creation or update and keeps it across edits", async () => {
     const { call, builtIn, own } = await setup();
-    const created = await call("POST", "/v1/agents", { ...agentBody, environmentId: builtIn.id });
+    const created = await call("POST", "/v1/agents", { ...agentBody, environmentId: own.id });
     expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ environmentId: builtIn.id });
-    expect((await call("GET", `/v1/agents/${created.body.id}`)).body).toMatchObject({ environmentId: builtIn.id });
-    const rebound = await call("POST", `/v1/agents/${created.body.id}`, { environmentId: own.id });
-    expect(rebound).toMatchObject({ status: 200, body: { environmentId: own.id } });
-    expect((await call("POST", `/v1/agents/${created.body.id}`, { name: "Renamed" })).body).toMatchObject({ name: "Renamed", environmentId: own.id });
-    const cleared = await call("POST", `/v1/agents/${created.body.id}`, { environmentId: null });
-    expect(cleared.status).toBe(200);
-    expect(cleared.body).not.toHaveProperty("environmentId");
-    const unbound = await call("POST", "/v1/agents", agentBody);
+    expect(created.body).toMatchObject({ environmentId: own.id });
+    expect((await call("GET", `/v1/agents/${created.body.id}`)).body).toMatchObject({ environmentId: own.id });
+    const rebound = await call("POST", `/v1/agents/${created.body.id}`, { environmentId: builtIn.id });
+    expect(rebound).toMatchObject({ status: 200, body: { environmentId: builtIn.id } });
+    expect((await call("POST", `/v1/agents/${created.body.id}`, { name: "Renamed" })).body).toMatchObject({ name: "Renamed", environmentId: builtIn.id });
+  });
+
+  it("binds a Sandboxed Agent that names none to video-production, and refuses to leave it without one", async () => {
+    const { call, builtIn } = await setup();
+    for (const sandbox of [undefined, { enabled: true }]) {
+      const created = await call("POST", "/v1/agents", { ...agentBody, ...(sandbox ? { sandbox } : {}) });
+      expect(created).toMatchObject({ status: 201, body: { environmentId: builtIn.id } });
+      expect(await call("POST", `/v1/agents/${created.body.id}`, { environmentId: null }))
+        .toMatchObject({ status: 400, body: { code: "environment_required" } });
+    }
+    expect(await call("POST", "/v1/agents", { ...agentBody, environmentId: null })).toMatchObject({ status: 400, body: { code: "environment_required" } });
+    // An Agent without a Sandbox has none unless it names one, and may drop it.
+    const plain = await call("POST", "/v1/agents", { ...agentBody, sandbox: { enabled: false } });
+    expect(plain.status).toBe(201);
+    expect(plain.body).not.toHaveProperty("environmentId");
+    expect((await call("POST", `/v1/agents/${plain.body.id}`, { environmentId: builtIn.id })).body).toMatchObject({ environmentId: builtIn.id });
+    const unbound = await call("POST", `/v1/agents/${plain.body.id}`, { environmentId: null });
+    expect(unbound.status).toBe(200);
     expect(unbound.body).not.toHaveProperty("environmentId");
+    // Turning its Sandbox on binds the default.
+    expect((await call("POST", `/v1/agents/${plain.body.id}`, { sandbox: { enabled: true } })).body).toMatchObject({ environmentId: builtIn.id });
+  });
+
+  it("refuses sandbox.image and sandbox.env, which Environments replaced, with their codes", async () => {
+    const { call } = await setup();
+    const agent = (await call("POST", "/v1/agents", agentBody)).body;
+    for (const [sandbox, code] of [
+      [{ enabled: true, image: "auto-story-v2" }, "sandbox_image_removed"],
+      [{ enabled: true, env: { VFS_TOKEN: "private-sentinel" } }, "sandbox_env_removed"],
+    ] as const) {
+      const created = await call("POST", "/v1/agents", { ...agentBody, sandbox });
+      expect(created).toMatchObject({ status: 400, body: { code } });
+      expect(JSON.stringify(created.body)).not.toContain("private-sentinel");
+      expect(await call("POST", `/v1/agents/${agent.id}`, { sandbox })).toMatchObject({ status: 400, body: { code } });
+    }
+    expect((await call("GET", `/v1/agents/${agent.id}`)).body.sandbox).toBeUndefined();
   });
 
   it("refuses an Environment that is not ready (409), not visible to the Tenant or deleted (404), or not an id (400)", async () => {
@@ -81,7 +112,7 @@ describe("Agents bound to an Environment (ADR-0024)", () => {
     expect(await call("POST", `/v1/agents/${agent.id}`, { environmentId: pending.id })).toMatchObject({ status: 409, body: { code: "environment_not_ready" } });
     expect(await call("DELETE", `/v1/environments/${own.id}`)).toMatchObject({ status: 200 });
     expect(await call("POST", `/v1/agents/${agent.id}`, { environmentId: own.id })).toMatchObject({ status: 404, body: { code: "environment_not_found" } });
-    expect((await call("GET", `/v1/agents/${agent.id}`)).body).not.toHaveProperty("environmentId");
+    expect((await call("GET", `/v1/agents/${agent.id}`)).body).toMatchObject({ environmentId: "env_video_production" });
   });
 
   it("keeps an Agent's Environment while it rebuilds: an edit that resends it is not a new binding", async () => {
@@ -96,7 +127,7 @@ describe("Agents bound to an Environment (ADR-0024)", () => {
     const { call, own } = await setup();
     const agent = (await call("POST", "/v1/agents", { ...agentBody, environmentId: own.id })).body;
     expect(await call("DELETE", `/v1/environments/${own.id}`)).toMatchObject({ status: 409, body: { code: "environment_in_use" } });
-    await call("POST", `/v1/agents/${agent.id}`, { environmentId: null });
+    await call("POST", `/v1/agents/${agent.id}`, { environmentId: "env_video_production" });
     expect(await call("DELETE", `/v1/environments/${own.id}`)).toMatchObject({ status: 200, body: { type: "environment_deleted" } });
   });
 
@@ -148,9 +179,9 @@ describe("Sessions frozen to an Environment (ADR-0024)", () => {
     expect((await call("GET", "/v1/sessions")).body.data).toHaveLength(2);
   });
 
-  it("runs a Session of an unbound Agent in no Environment", async () => {
+  it("runs a Session of an Agent without a Sandbox in no Environment", async () => {
     const { call } = await setup();
-    const agent = (await call("POST", "/v1/agents", agentBody)).body;
+    const agent = (await call("POST", "/v1/agents", { ...agentBody, sandbox: { enabled: false } })).body;
     const created = await call("POST", "/v1/sessions", { agent: agent.id });
     expect(created).toMatchObject({ status: 201, body: { environment: null } });
     expect((await call("GET", `/v1/sessions/${created.body.id}`)).body.environment).toBeNull();

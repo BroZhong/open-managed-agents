@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { skillBundleStorageConfigFromEnv, workspaceConfigFromEnv } from "../src/lib/workspace-config.js";
 
-const IMAGE = "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:" + "5".repeat(64);
 const env = {
   WORKSPACE_OSS_REGION: "oss-cn-shanghai", WORKSPACE_OSS_BUCKET: "agentry",
   WORKSPACE_OSS_ACCESS_KEY_ID: "test-id", WORKSPACE_OSS_ACCESS_KEY_SECRET: "test-secret",
   E2B_DOMAIN: "sandbox.agentry.welltop.tech", E2B_API_KEY: "test-e2b", SANDBOX_ENABLED: "true", OMA_ENVIRONMENT: "test",
-  SANDBOX_TEMPLATE: "oma-test-sandbox", SANDBOX_IMAGE: IMAGE,
+  SANDBOX_TEMPLATE: "oma-test-sandbox",
 };
 
 describe("OSS Workspace startup configuration", () => {
@@ -21,15 +20,11 @@ describe("OSS Workspace startup configuration", () => {
     expect(config.mount).toEqual({ bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" });
     // Request budgets derive from the gateway's claim timeout in code (ADR-0023), not from configuration.
     expect(config.sandbox).toEqual({ domain: "sandbox.agentry.welltop.tech", apiKey: "test-e2b", pool: "oma-test-sandbox" });
-    expect(config.sandboxImage).toBe(IMAGE);
+    expect(config).not.toHaveProperty("sandboxImage");
   });
-  it("claims every Sandbox from the configured Warm Pool with a digest-pinned image, or fails startup (ADR-0024)", () => {
+  it("claims every Sandbox from the configured Warm Pool, or fails startup; the image is each Session's Environment's (ADR-0024)", () => {
     expect(workspaceConfigFromEnv({ ...env, SANDBOX_TEMPLATE: " auto-story-v2 " }).sandbox.pool).toBe("auto-story-v2");
     expect(() => workspaceConfigFromEnv({ ...env, SANDBOX_TEMPLATE: "" })).toThrow("SANDBOX_TEMPLATE");
-    for (const image of [undefined, "", "auto-story-v2", "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-base-0.1.0",
-      "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:abc"]) {
-      expect(() => workspaceConfigFromEnv({ ...env, SANDBOX_IMAGE: image })).toThrow("SANDBOX_IMAGE must be an image pinned by digest");
-    }
   });
   it("labels Sandboxes with the Runner's environment and fails startup without a valid one (ADR-0023)", () => {
     expect(workspaceConfigFromEnv(env).environment).toBe("test");

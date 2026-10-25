@@ -32,7 +32,7 @@ type Write = ReturnType<typeof journalWriter>;
 type Script = (input: AdapterInput, write: Write, attempt: number) => Promise<void>;
 
 /** Runners sharing one store and one gateway, each with its own Sandbox Manager; a lost Runner never renews or claims again. */
-async function harness(script: Script, claims: { poolImage?: string; sandboxImage?: string; environmentImage?: string;
+async function harness(script: Script, claims: { poolImage?: string; environmentImage?: string;
   environmentVariables?: Record<string, string> } = {}) {
   const stores = createMemoryStores();
   // The Session's Environment, built, when the test names its image (ADR-0024).
@@ -63,7 +63,7 @@ async function harness(script: Script, claims: { poolImage?: string; sandboxImag
   const runner = (ownerId = "runner-a") => new SessionRouter({
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: gateway, environment: "test" }),
-      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, sandboxImage: claims.sandboxImage,
+      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
       // The Host's resolution, here of plain values only (the Runner's opens secrets too).
       environments: {
         image: async (tenantId, id) => (await stores.environmentStore.getForSandbox(tenantId, id))?.image ?? null,
@@ -122,18 +122,18 @@ describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
   const POOL = "registry.example/welltop/oma-sandbox@sha256:" + "6".repeat(64);
   const OTHER = "registry.example/welltop/oma-environments@sha256:" + "7".repeat(64);
 
-  it.each([[POOL, false], [OTHER, true]])("claims with the configured image %s (swapped %s); a later Turn's connect claims nothing", async (image, swapped) => {
+  it.each([[POOL, false], [OTHER, true]])("claims with the Environment's image %s (swapped %s); a later Turn's connect claims nothing", async (image, swapped) => {
     const h = await harness(async (input, write) => {
       await tool(input, write, `call_${input.turnId}`);
       await answer(write);
-    }, { poolImage: POOL, sandboxImage: image });
+    }, { poolImage: POOL, environmentImage: image });
     await h.turn("write a note");
     await h.turn("write another");
     expect(h.gateway.createOptsOf(h.gateway.created[0]).image).toBe(image);
     expect(h.gateway.created).toHaveLength(1);
     expect(spansOf(await h.log()).filter(([type]) => type === "span.sandbox_prepare_end")).toEqual([
       ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
-        image, swapped, claimMs: 0, durationMs: expect.any(Number) }],
+        environmentId: "env_tools", image, swapped, claimMs: 0, durationMs: expect.any(Number) }],
       ["span.sandbox_prepare_end", { turnId: expect.not.stringMatching(/^turn_1_/), prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
         durationMs: expect.any(Number) }],
     ]);
@@ -146,7 +146,7 @@ describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
       await write(event("agent.tool_use", { toolUseId: "call_deploy", name: "bash", input: { command: "deploy-tool --dry-run" } }));
       for await (const _ of input.toolExecutor!.exec(["deploy-tool", "--dry-run"])) { /* drain */ }
       await answer(write);
-    }, { sandboxImage: POOL, environmentImage: OTHER, environmentVariables: { API_TOKEN: CANARY } });
+    }, { environmentImage: OTHER, environmentVariables: { API_TOKEN: CANARY } });
     await h.turn("deploy");
     const [sandboxId] = h.gateway.created;
     const command = h.gateway.execs.find((run) => run.command[0] === "deploy-tool")!;
@@ -161,7 +161,7 @@ describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
     const h = await harness(async (input, write) => {
       await tool(input, write, `call_${input.turnId}`);
       await answer(write);
-    }, { poolImage: POOL, sandboxImage: POOL, environmentImage: OTHER });
+    }, { poolImage: POOL, environmentImage: OTHER });
     await h.turn("write a note");
     const [sandboxId] = h.gateway.created;
     expect(h.gateway.createOptsOf(sandboxId).image).toBe(OTHER);

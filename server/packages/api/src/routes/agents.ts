@@ -20,39 +20,53 @@ type Env = {
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-function validateSandbox(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return "sandbox must be an object";
+/**
+ * `sandbox` holds whether the Agent runs in a Sandbox, nothing else: what it
+ * runs is the Agent's Environment (ADR-0024), which replaced `sandbox.image`
+ * and `sandbox.env`.
+ */
+function validateSandbox(value: unknown): { error: string; code: string } | undefined {
+  const invalid = (error: string) => ({ error, code: "validation_error" });
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalid("sandbox must be an object");
   const sandbox = value as Record<string, unknown>;
-  if (sandbox.enabled !== undefined && typeof sandbox.enabled !== "boolean") return "sandbox.enabled must be a boolean";
-  if (sandbox.image !== undefined && (typeof sandbox.image !== "string" || !sandbox.image.trim())) return "sandbox.image must be a non-empty string";
-  if (sandbox.env !== undefined) {
-    if (!sandbox.env || typeof sandbox.env !== "object" || Array.isArray(sandbox.env)) return "sandbox.env must be an object";
-    if (Object.entries(sandbox.env).some(([name, value]) =>
-      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || typeof value !== "string" || value.includes("\0"))) {
-      return "sandbox.env must contain valid environment names and string values";
-    }
+  if (sandbox.image !== undefined) {
+    return { error: "sandbox.image was removed: bind an Environment with environmentId instead", code: "sandbox_image_removed" };
   }
+  if (sandbox.env !== undefined) {
+    return { error: "sandbox.env was removed: set the variables on an Environment and bind it with environmentId instead", code: "sandbox_env_removed" };
+  }
+  if (sandbox.enabled !== undefined && typeof sandbox.enabled !== "boolean") return invalid("sandbox.enabled must be a boolean");
 }
 
+const sandboxed = (sandbox: unknown) => (sandbox as { enabled?: unknown } | undefined)?.enabled !== false;
+
 /**
- * Agents, each optionally bound to an Environment its new Sessions run in
- * (ADR-0024). Without `environments` none can be bound.
+ * Agents, each bound to the Environment its new Sessions run in (ADR-0024).
+ * A Sandboxed Agent always has one: naming none binds the default,
+ * video-production. Without `environments` none can be bound.
  */
-export function agentRoutes(agentStore: AgentStore, environments?: Pick<EnvironmentService, "ready">): OpenAPIHono<Env> {
+export function agentRoutes(agentStore: AgentStore, environments?: Pick<EnvironmentService, "ready" | "defaultFor">): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
   /**
-   * The Environment `environmentId` binds: a ready one the Tenant can see,
-   * or null to bind none. `current`, the Agent's binding, is kept as it is
-   * whatever it is building: an edit that resends it binds nothing new.
+   * The Environment an Agent is bound to by a write that sends
+   * `requested` (undefined when it sends none): a ready one the Tenant can
+   * see; `current`, the Agent's binding, kept as it is whatever it is
+   * building, so an edit that resends it binds nothing new; the default for a
+   * Sandboxed Agent that has none; null (an Agent without a Sandbox only)
+   * unbinds. Undefined: no change.
    */
-  const bindable = async (tenantId: string, environmentId: unknown, current?: string): Promise<string | null> => {
-    if (environmentId === null) return null;
-    if (typeof environmentId !== "string" || !environmentId) {
+  const binding = async (tenantId: string, requested: unknown, inSandbox: boolean, current?: string): Promise<string | null | undefined> => {
+    if (requested === undefined) return inSandbox && !current ? await environments?.defaultFor(tenantId) : undefined;
+    if (requested === null) {
+      if (inSandbox) throw new EnvironmentError(400, "environment_required", "A Sandboxed Agent runs in an Environment: name one, or send none for video-production");
+      return null;
+    }
+    if (typeof requested !== "string" || !requested) {
       throw new EnvironmentError(400, "validation_error", "environmentId must be an Environment id or null");
     }
-    if (environmentId === current) return environmentId;
+    if (requested === current) return requested;
     if (!environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
-    return (await environments.ready(tenantId, environmentId)).id;
+    return (await environments.ready(tenantId, requested)).id;
   };
 
   // POST /v1/agents — Create agent
@@ -104,10 +118,10 @@ export function agentRoutes(agentStore: AgentStore, environments?: Pick<Environm
       return c.json({ error: "skills must be an array" }, 400);
     }
     if (sandbox !== undefined) {
-      const error = validateSandbox(sandbox);
-      if (error) return c.json({ error }, 400);
+      const invalid = validateSandbox(sandbox);
+      if (invalid) return c.json(invalid, 400);
     }
-    const bound = environmentId === undefined ? null : await bindable(tenant.tenantId, environmentId);
+    const bound = await binding(tenant.tenantId, environmentId, sandboxed(sandbox));
 
     const agent = await agentStore.create({
       tenantId: tenant.tenantId,
@@ -219,8 +233,8 @@ export function agentRoutes(agentStore: AgentStore, environments?: Pick<Environm
 
     const updateInput: Record<string, unknown> = {};
     if (body.sandbox !== undefined) {
-      const error = validateSandbox(body.sandbox);
-      if (error) return c.json({ error }, 400);
+      const invalid = validateSandbox(body.sandbox);
+      if (invalid) return c.json(invalid, 400);
     }
     if (body.name !== undefined) updateInput.name = body.name;
     if (body.description !== undefined) updateInput.description = body.description;
@@ -237,9 +251,8 @@ export function agentRoutes(agentStore: AgentStore, environments?: Pick<Environm
     if (body.mcpServers !== undefined) updateInput.mcpServers = body.mcpServers;
     if (body.skills !== undefined) updateInput.skills = body.skills;
     if (body.sandbox !== undefined) updateInput.sandbox = body.sandbox;
-    if (body.environmentId !== undefined) {
-      updateInput.environmentId = await bindable(tenant.tenantId, body.environmentId, existing.environmentId);
-    }
+    const bound = await binding(tenant.tenantId, body.environmentId, sandboxed(body.sandbox ?? existing.sandbox), existing.environmentId);
+    if (bound !== undefined) updateInput.environmentId = bound;
 
     const updated = await agentStore.update(id, updateInput);
     if (!updated) {

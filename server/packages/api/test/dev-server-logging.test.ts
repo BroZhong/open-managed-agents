@@ -62,14 +62,4 @@ describe("development server startup logging", () => {
     20_000,
   );
 
-  it("does not expose Host-managed sandbox credentials", async () => {
-    const secret = "ww-token-must-not-be-logged";
-    const output = await captureStartupLog("true", {
-      DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://ww.example.test",
-      DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN: secret,
-      DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_story",
-    });
-
-    expect(output).not.toContain(secret);
-  }, 20_000);
 });

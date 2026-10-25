@@ -7,7 +7,6 @@ import { createMemoryStores, InMemoryEnvironmentBuildLogStore } from "@oma-serve
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
-import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
@@ -39,9 +38,6 @@ async function main() {
 
   // In-memory development has no real OSS mount. Use the full server with
   // Workspace OSS configuration to exercise sandbox-backed execution.
-  // Keep Host env validation identical to the full server even though the
-  // in-memory entrypoint has no Sandbox to hand the policy to.
-  sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     delegationStore: stores.delegationStore,

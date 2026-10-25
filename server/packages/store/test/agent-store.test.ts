@@ -76,14 +76,14 @@ describe("PgAgentStore", () => {
       tools: [{ name: "grep", inputSchema: { type: "object" } }],
       mcpServers: [{ name: "srv", url: "https://example.com" }],
       skills: ["s1", "s2"],
-      sandbox: { enabled: true, image: "img" },
+      sandbox: { enabled: true },
     });
 
     const found = await store.getById(agent.id);
     expect(found!.tools).toEqual([{ name: "grep", inputSchema: { type: "object" } }]);
     expect(found!.mcpServers).toEqual([{ name: "srv", url: "https://example.com" }]);
     expect(found!.skills).toEqual(["s1", "s2"]);
-    expect(found!.sandbox).toEqual({ enabled: true, image: "img" });
+    expect(found!.sandbox).toEqual({ enabled: true });
   });
 
   it("should get an agent by id", async () => {

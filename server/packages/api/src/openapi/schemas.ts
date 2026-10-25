@@ -67,10 +67,10 @@ export const ManagedMcpCatalogSchema = z
 export const AgentSandboxConfigSchema = z
   .object({
     enabled: z.boolean(),
-    image: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
   })
-  .openapi("AgentSandboxConfig");
+  .openapi("AgentSandboxConfig", {
+    description: "Whether the Agent's Turns run in a Sandbox. What the Sandbox runs is the Agent's Environment (environmentId): sandbox.image and sandbox.env were removed and are refused with 400 sandbox_image_removed / sandbox_env_removed.",
+  });
 
 export const AgentSchema = z
   .object({
@@ -88,7 +88,7 @@ export const AgentSchema = z
     sandbox: AgentSandboxConfigSchema.optional(),
     environmentId: z.string().optional().openapi({
       example: "env_video_production",
-      description: "The Environment the Agent's new Sessions run in unless a Session names another. Absent: none; its Sandboxes run the Host's configured image.",
+      description: "The Environment the Agent's new Sessions run in unless a Session names another. Every Sandboxed Agent has one; absent only for an Agent without a Sandbox.",
     }),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
@@ -134,7 +134,7 @@ export const CreateAgentInputSchema = z
       .nullable()
       .optional()
       .openapi({
-        description: "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready); null binds none. Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in.",
+        description: "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in.",
       }),
   })
   .openapi("CreateAgentInput");

@@ -7,7 +7,6 @@ import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
 import { runtimeAdapters } from "./lib/runtime-adapters.js";
 import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { sandboxBaseEnvFromKubernetes } from "./lib/sandbox-base-secret.js";
-import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
 import { sandboxSignals } from "./lib/sandbox-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
@@ -27,7 +26,8 @@ export async function startExecution(deps: PgStores & {
     setGlobalDispatcher(new ProxyAgent(proxyUrl));
   }
   const workspaceConfig = deps.local ? undefined : workspaceConfigFromEnv(process.env);
-  const sandboxEnvPolicy = deps.local ? {} : sandboxEnvPolicyFromHost(process.env, await sandboxBaseEnvFromKubernetes(process.env));
+  // The platform values Environments' platform secret references resolve to (ADR-0024).
+  const platformSecrets = deps.local ? {} : await sandboxBaseEnvFromKubernetes(process.env);
   const modelProviders = new ModelProviderService(deps.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
   const piAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviders.configureRuntime(deps.sessionStore) });
   // The packaged mock emits model spans and text chunks; lifecycle events stay
@@ -58,13 +58,9 @@ export async function startExecution(deps: PgStores & {
   // The Turn side of the Sandbox protocol (ADR-0023): the Router only acquires
   // and releases leases; bindings, resource uses and activity live behind it.
   const sandboxes = sandboxManager && workspaceMount ? new DefaultTurnSandboxes({
-    manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount, ...sandboxEnvPolicy,
-    // A Session's Environment supplies its image and its commands' variables,
-    // platform secret references resolved from the deployment's platform values;
-    // Sessions without one keep the configured image and create-time env (ADR-0024).
-    sandboxImage: workspaceConfig?.sandboxImage,
-    environments: new SandboxEnvironmentResolver(deps.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY,
-      sandboxEnvPolicy.defaultSandboxEnv ?? {}),
+    manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount,
+    // A Session's Environment supplies its image and its commands' variables (ADR-0024).
+    environments: new SandboxEnvironmentResolver(deps.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY, platformSecrets),
     onError: reportDrainFailure,
   }) : undefined;
   const router = new SessionRouter({
