@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, SandboxCreateRejected } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FAKE_ENVIRONMENT_IMAGE, FakeSandboxClient, SandboxCreateRejected } from "@oma-server/sandbox";
 import { presentEvent, type StoredEvent } from "@oma-server/store";
 import { ExecutorUnavailableError, type Adapter, type AdapterInput, type SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -31,20 +31,23 @@ const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvNa
 type Write = ReturnType<typeof journalWriter>;
 type Script = (input: AdapterInput, write: Write, attempt: number) => Promise<void>;
 
+/** What every preparation span of the harness's Session names (ADR-0024): its Environment and the image a claim would use. */
+const IN_ENVIRONMENT = { environmentId: "env_tools", image: FAKE_ENVIRONMENT_IMAGE };
+
 /** Runners sharing one store and one gateway, each with its own Sandbox Manager; a lost Runner never renews or claims again. */
 async function harness(script: Script, claims: { poolImage?: string; environmentImage?: string;
   environmentVariables?: Record<string, string> } = {}) {
   const stores = createMemoryStores();
-  // The Session's Environment, built, when the test names its image (ADR-0024).
-  const environment = claims.environmentImage === undefined ? undefined : await stores.environmentStore.create({
+  // The Session's Environment, built with the test's image (ADR-0024).
+  const environment = await stores.environmentStore.create({
     id: "env_tools", owner: { ownerType: "tenant", tenantId: "tenant" }, name: "tools", description: "", baseImage: "oma-base",
     initScript: "", env: [], encryptedSecrets: {} });
-  if (environment) await stores.environmentStore.buildNow(environment.id, claims.environmentImage!);
+  await stores.environmentStore.buildNow(environment.id, claims.environmentImage ?? FAKE_ENVIRONMENT_IMAGE);
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test",
-    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: environment?.id });
+    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: environment.id });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id,
-    environmentId: environment?.id });
+    environmentId: environment.id });
   const gateway = new FakeSandboxClient({ poolImage: claims.poolImage });
   const attempts: AdapterInput[] = [];
   const adapter: Adapter = { async run(input) {
@@ -134,8 +137,9 @@ describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
     expect(spansOf(await h.log()).filter(([type]) => type === "span.sandbox_prepare_end")).toEqual([
       ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
         environmentId: "env_tools", image, swapped, claimMs: 0, durationMs: expect.any(Number) }],
+      // A later Turn's connect reports the bound Sandbox's recorded Environment and image, and no claim.
       ["span.sandbox_prepare_end", { turnId: expect.not.stringMatching(/^turn_1_/), prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
-        durationMs: expect.any(Number) }],
+        environmentId: "env_tools", image, durationMs: expect.any(Number) }],
     ]);
     expect(h.errors).toEqual([]);
   });
@@ -200,10 +204,10 @@ describe("a Sandbox unavailability is a tool error (ADR-0023)", () => {
     expect((await h.ofType("session.error"))[0].data).toEqual({ turnId: "turn_1_a1", error: { code: "sandbox_unavailable",
       message: expect.stringContaining("The answer is retained") } });
     expect(spansOf(log)).toEqual([
-      ["span.sandbox_prepare_start", { turnId: "turn_1_a1", prepareId: "1.1" }],
-      ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.1", outcome: "failed", code: "sandbox_unavailable", reason: "rejected", durationMs: expect.any(Number) }],
-      ["span.sandbox_prepare_start", { turnId: "turn_1_a1", prepareId: "1.2" }],
-      ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.2", outcome: "failed", code: "sandbox_unavailable", reason: "rejected", durationMs: expect.any(Number) }],
+      ["span.sandbox_prepare_start", { turnId: "turn_1_a1", prepareId: "1.1", ...IN_ENVIRONMENT }],
+      ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.1", ...IN_ENVIRONMENT, outcome: "failed", code: "sandbox_unavailable", reason: "rejected", durationMs: expect.any(Number) }],
+      ["span.sandbox_prepare_start", { turnId: "turn_1_a1", prepareId: "1.2", ...IN_ENVIRONMENT }],
+      ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.2", ...IN_ENVIRONMENT, outcome: "failed", code: "sandbox_unavailable", reason: "rejected", durationMs: expect.any(Number) }],
     ]);
     expect((await h.stores.sessionStore.getById(h.session.id))?.status).toBe("idle");
     expect(h.errors).toEqual([]);
@@ -263,7 +267,7 @@ describe("a Sandbox unavailability is a tool error (ADR-0023)", () => {
     expect(h.gateway.created).toHaveLength(1);
     const spans = spansOf(await h.log()).slice(2);
     expect(spans).toEqual([
-      ["span.sandbox_prepare_start", { turnId: expect.any(String), prepareId: "1.1" }],
+      ["span.sandbox_prepare_start", { turnId: expect.any(String), prepareId: "1.1", ...IN_ENVIRONMENT }],
       ["span.sandbox_prepare_end", expect.objectContaining({ prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0] })],
     ]);
   });
@@ -312,8 +316,8 @@ describe("a failed preparation no tool call waited for", () => {
     let log = await h.log();
     const chat = log.slice(log.map((stored) => stored.type).lastIndexOf("session.status_running"));
     expect(spansOf(chat)).toEqual([
-      ["span.sandbox_prepare_start", { turnId: expect.any(String), prepareId: "1.1" }],
-      ["span.sandbox_prepare_end", { turnId: expect.any(String), prepareId: "1.1", outcome: "failed", code: "sandbox_unavailable", reason: "unreachable", durationMs: expect.any(Number) }],
+      ["span.sandbox_prepare_start", { turnId: expect.any(String), prepareId: "1.1", ...IN_ENVIRONMENT }],
+      ["span.sandbox_prepare_end", { turnId: expect.any(String), prepareId: "1.1", ...IN_ENVIRONMENT, outcome: "failed", code: "sandbox_unavailable", reason: "unreachable", durationMs: expect.any(Number) }],
     ]);
     expect(errorCodes(log)).toEqual([]);
     expect(chat.map((stored) => stored.type).filter((type) => type.startsWith("session.") || type === "agent.message"))
@@ -401,7 +405,7 @@ describe("a Runner lost after a Sandbox unavailability", () => {
     expect(types).toEqual(["span.sandbox_prepare_start", "session.turn_resumed", "span.sandbox_prepare_end",
       "span.sandbox_prepare_start", "span.sandbox_prepare_end"]);
     const [, lostEnd, , end] = spansOf(turn).map(([, data]) => data);
-    expect(lostEnd).toEqual({ turnId: expect.any(String), prepareId: "1.1", outcome: "aborted", reason: PREPARE_ATTEMPT_STOPPED });
+    expect(lostEnd).toEqual({ turnId: expect.any(String), prepareId: "1.1", ...IN_ENVIRONMENT, outcome: "aborted", reason: PREPARE_ATTEMPT_STOPPED });
     expect(end).toMatchObject({ prepareId: "2.1", outcome: "ready" });
     expect(errorCodes(log)).toEqual([]);
     expect(results(log).map(({ isError }) => isError)).toEqual([false, false]);

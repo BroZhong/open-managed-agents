@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { killBindingSandboxes, killSandboxes } from "../src/sandbox-kill.js";
 import { SANDBOX_BINDING_LABEL } from "../src/sandbox-sweep.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
 const ofBinding = (client: FakeSandboxClient, bindingId: string) =>
-  client.create({ metadata: { [SANDBOX_BINDING_LABEL]: bindingId } }).then(({ id }) => id);
+  client.create({ image: FAKE_ENVIRONMENT_IMAGE, metadata: { [SANDBOX_BINDING_LABEL]: bindingId } }).then(({ id }) => id);
 
 describe("killing Sandboxes and confirming them missing", () => {
   it("kills each Sandbox once, attempts every one past a failure, and counts one already missing as killed", async () => {
@@ -27,7 +28,7 @@ describe("killing Sandboxes and confirming them missing", () => {
     const paused = await ofBinding(client, "root");
     client.pause(paused);
     const other = await ofBinding(client, "root-2");
-    const unlabelled = (await client.create()).id;
+    const unlabelled = (await client.create({ image: FAKE_ENVIRONMENT_IMAGE })).id;
     const list = vi.spyOn(client, "listSandboxes");
     const destroy = vi.spyOn(client, "destroy");
     expect(await killBindingSandboxes(client, "root", recorded)).toEqual([recorded, extra, paused]);

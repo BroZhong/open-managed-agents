@@ -15,6 +15,7 @@ import type { SandboxLifecycleStore } from '@oma-server/store';
 import { createMemoryStores } from "@oma-server/store-memory";
 import { Bundles, text } from "./skill-bundles.js";
 import { databaseClock, durableBinding } from "./bindings.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
 const mount = {
   bucket: "agentry",
@@ -28,6 +29,7 @@ function specFor(extra: Partial<EnvSpec> = {}): EnvSpec {
     tenantId: "tenant_1",
     workspaceId: "ws_1",
     workspaceMount: mount,
+    image: FAKE_ENVIRONMENT_IMAGE,
     ...extra,
   };
 }
@@ -604,7 +606,8 @@ describe("each preparation of the Turn's Sandbox is observed (ADR-0023, #287)", 
     await session.prepare(undefined, { sandboxPrepares: observer });
     expect(seen).toEqual([]);
     await Promise.all([session.writeFile("a", "A"), session.writeFile("b", "B")]);
-    expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0] }]);
+    expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0], image: FAKE_ENVIRONMENT_IMAGE,
+      claim: { image: FAKE_ENVIRONMENT_IMAGE, claimMs: 0 } }]);
   });
 
   it("connects a Ready binding's Sandbox at Turn start, and defers to the first operation once its Sandbox is gone", async () => {
@@ -614,7 +617,8 @@ describe("each preparation of the Turn's Sandbox is observed (ADR-0023, #287)", 
     const [first] = client.created;
     const ready = prepares();
     await manager.open(specFor(), binding).prepare(undefined, { sandboxPrepares: ready.observer });
-    expect(ready.seen).toEqual(["started", { outcome: "ready", sandboxId: first }]);
+    // The binding's record of what its Sandbox was created with.
+    expect(ready.seen).toEqual(["started", { outcome: "ready", sandboxId: first, image: FAKE_ENVIRONMENT_IMAGE }]);
 
     client.reclaim(first);
     const gone = prepares();
@@ -622,10 +626,11 @@ describe("each preparation of the Turn's Sandbox is observed (ADR-0023, #287)", 
     await session.prepare(undefined, { sandboxPrepares: gone.observer });
     expect(gone.seen).toEqual(["started", { outcome: "deferred" }]);
     expect(await session.readFile("saved.txt")).toBe("kept");
-    expect(gone.seen.slice(2)).toEqual(["started", { outcome: "ready", sandboxId: client.created[1] }]);
+    expect(gone.seen.slice(2)).toEqual(["started", { outcome: "ready", sandboxId: client.created[1], image: FAKE_ENVIRONMENT_IMAGE,
+      claim: { image: FAKE_ENVIRONMENT_IMAGE, claimMs: 0 } }]);
   });
 
-  describe("a preparation that claimed the Sandbox reports the claim (ADR-0024)", () => {
+  describe("a preparation reports the Environment and image of the Sandbox it reached, and its claim when it claimed (ADR-0024)", () => {
     const POOL = "registry.example/welltop/oma-sandbox@sha256:" + "1".repeat(64);
     const OTHER = "registry.example/welltop/oma-environments@sha256:" + "2".repeat(64);
     function claiming() {
@@ -636,21 +641,38 @@ describe("each preparation of the Turn's Sandbox is observed (ADR-0023, #287)", 
 
     it.each([[POOL, false], [OTHER, true]])("claims with the spec's image %s and reports swapped %s", async (image, swapped) => {
       const { client, manager } = claiming();
-      const session = manager.open(specFor({ image }), durableBinding());
+      const session = manager.open(specFor({ environmentId: "env_video", image }), durableBinding());
       const { seen, observer } = prepares();
+      const started = vi.spyOn(observer, "started");
       await session.prepare(undefined, { sandboxPrepares: observer });
       await session.writeFile("a", "A");
       expect(client.createOptsOf(client.created[0]).image).toBe(image);
-      expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0], claim: { image, swapped, claimMs: 0 } }]);
+      expect(started).toHaveBeenCalledExactlyOnceWith({ environmentId: "env_video", image });
+      expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0], environmentId: "env_video", image,
+        claim: { image, swapped, claimMs: 0 } }]);
     });
 
-    it("a Turn-start connect to the binding's Sandbox claims nothing and reports no claim", async () => {
+    it("a Turn-start connect to the binding's Sandbox claims nothing, and reports the image the binding recorded for it", async () => {
       const { client, manager } = claiming();
       const binding = durableBinding();
-      await manager.open(specFor({ image: OTHER }), binding).writeFile("saved.txt", "kept");
+      await manager.open(specFor({ environmentId: "env_video", image: OTHER }), binding).writeFile("saved.txt", "kept");
       const { seen, observer } = prepares();
-      await manager.open(specFor({ image: OTHER }), binding).prepare(undefined, { sandboxPrepares: observer });
-      expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0] }]);
+      // The Environment was rebuilt since: a claim would use POOL, the bound Sandbox runs OTHER.
+      await manager.open(specFor({ environmentId: "env_video", image: POOL }), binding).prepare(undefined, { sandboxPrepares: observer });
+      expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0], environmentId: "env_video", image: OTHER }]);
+    });
+
+    it("fails an operation that needs a Sandbox without committing an intent when the Environment serves no image, or there is none", async () => {
+      const { client, manager } = claiming();
+      for (const [spec, reason] of [[specFor({ environmentId: "env_unbuilt", image: undefined }), "environment_has_no_image"],
+        [specFor({ image: undefined }), "no_environment"]] as const) {
+        const binding = durableBinding();
+        const failure = await manager.open(spec, binding).writeFile("a", "A").catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(SandboxUnavailable);
+        expect(failure).toMatchObject({ code: "sandbox_unavailable", reason });
+        expect(binding.row()).toMatchObject({ sandboxId: null, creatingSince: null });
+      }
+      expect(client.created).toEqual([]);
     });
   });
 

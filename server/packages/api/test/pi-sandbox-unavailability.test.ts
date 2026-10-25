@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, SandboxCreateRejected } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, SandboxCreateRejected, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { workspaceObjectPrefix, type StoredEvent } from "@oma-server/store";
@@ -51,14 +51,14 @@ afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await rm(agent
 async function setup(model: typeof fetch) {
   const pi = new PiAgentAdapter({ configureModelRuntime: (_input, runtime) => registerCustomProvider(runtime, provider, model) });
   const stores = createMemoryStores();
-  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${provider.id}/scripted-model`, system: "", runtime: "pi-agent", sandbox: { enabled: true } });
+  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${provider.id}/scripted-model`, system: "", runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const sandbox = new FakeSandboxClient();
   const manager = new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" });
   const errors: unknown[] = [];
   const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => pi,
-    sandboxes: new DefaultTurnSandboxes({ manager, bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
+    sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(), manager, bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
       onError: ({ error }) => errors.push(error) }),
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20, onDrainError: ({ error }) => errors.push(error) });
   const send = async (text: string) => {
@@ -118,7 +118,7 @@ it("sends a Pi Turn's first model request before the Sandbox's connect returns",
   };
   const h = await setup(model);
   // The binding is Ready: a tool of an earlier Turn created its Sandbox.
-  await h.manager.open({ tenantId: "tenant", workspaceId: h.session.workspaceId,
+  await h.manager.open({ tenantId: "tenant", workspaceId: h.session.workspaceId, image: FAKE_ENVIRONMENT_IMAGE,
     workspaceMount: { ...workspaceMount, prefix: workspaceObjectPrefix("tenant", h.session.workspaceId) } },
   { id: h.session.id, withLock: (work) => h.stores.delegationStore.withBindingLock(h.session.id, work) }).writeFile("saved.txt", "kept");
   let connected!: () => void;

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, isSkillInstallCommand, type SandboxExecChunk, type SandboxExecOptions, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, isSkillInstallCommand, type SandboxExecChunk, type SandboxExecOptions, type SandboxManager, type SandboxSession, fakeEnvironments } from "@oma-server/sandbox";
 import type { SandboxActivity } from "@oma-server/store";
 import { SANDBOX_WORKSPACE_ROOT, type Adapter, type ExecExitResult } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -139,14 +139,14 @@ async function harness<S extends { manager: SandboxManager } = ReturnType<typeof
 ) {
   const stores = createMemoryStores();
   const sandbox = options.sandbox ?? localSandbox() as unknown as S;
-  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true } });
+  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const errors: unknown[] = [];
   // A Delegation Store makes the Router fence the Sandbox executor, as in production.
   const router = new SessionRouter({
     ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-    sandboxes: new DefaultTurnSandboxes({ manager: sandbox.manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
+    sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(), manager: sandbox.manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       onError: ({ error }) => errors.push(error) }),
     pendingClaimLeaseMs: options.leaseMs ?? 30000,

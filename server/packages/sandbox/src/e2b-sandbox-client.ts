@@ -228,11 +228,10 @@ export class E2BSandboxClient implements SandboxClient {
       ((id, timeoutMs) => Sandbox.setTimeout(id, timeoutMs, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.setTimeout }));
   }
 
-  async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
+  async create(opts: SandboxCreateOptions): Promise<SandboxHandle> {
     const { image } = opts;
-    // The gateway answers an invalid image with 400 too; a missing one would
-    // silently run the pool's image. Either is a definite rejection that
-    // claimed nothing (the Host's configuration is validated at startup).
+    // The gateway answers an invalid image with 400 too: a definite
+    // rejection that claimed nothing (builds push images by digest).
     if (!isDigestPinnedImage(image)) throw new SandboxCreateRejected(400);
     const started = this.clock();
     const sandbox = await this.createSandbox(this.pool, {

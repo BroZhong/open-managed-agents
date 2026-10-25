@@ -5,7 +5,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnDelta, type TurnStreamStore } from "@oma-server/redis";
-import { DefaultTurnSandboxes, SandboxUnavailable, type SandboxManager, type SandboxPrepareObserver, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultTurnSandboxes, SandboxUnavailable, type SandboxManager, type SandboxPrepareObserver, type SandboxSession, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent, type DelegationCommand, type DelegationExecution, type PendingEventClaim, type PendingEventClaimEnd, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, ExecOptions, ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -465,7 +465,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
   shutDownAfter: Array<number | undefined> = []): Promise<Outcome> {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${PROVIDER}/${MODELS[0]}`, system: "",
-    runtime: "pi-agent", sandbox: { enabled: true } });
+    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const enqueue = (text: string) => stores.pendingEventStore.enqueue(session.id,
@@ -577,7 +577,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     const turnStreamStore = scenario.redisDown?.(index) ? redisDown : turnStreams;
     const runnerStores = runner.stores({ ...stores, turnStreamStore });
     router = new SessionRouter({ ...runnerStores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-      sandboxes: new DefaultTurnSandboxes({
+      sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(),
         manager: sandbox(runner, async (call) => {
           const toolCall = { ...call, runner: index };
           // It does not run: no call of it is executed.

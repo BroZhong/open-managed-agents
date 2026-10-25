@@ -59,6 +59,12 @@ export interface SandboxSweepStore {
    * One autocommitted statement; it creates no row and takes no lock.
    */
   unsettled(intentDeadlineSeconds: number, limit: number): Promise<UnsettledBinding[]>;
+  /**
+   * The Environment a binding's Sandboxes are created from (ADR-0024): the
+   * one its root Session froze, else that Session's Agent's; null when
+   * neither names one. Read for a Sandbox the sweeper adopts.
+   */
+  bindingEnvironment(bindingId: string): Promise<string | null>;
 }
 export interface SandboxLifecycleStore {
   /** false means committed explicit deletion must finish before admission. */

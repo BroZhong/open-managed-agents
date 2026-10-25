@@ -36,17 +36,29 @@ describe("a Turn attempt's Sandbox preparation spans (ADR-0023)", () => {
     ]);
   });
 
-  it("records the Warm Pool claim of a preparation that created the Sandbox: Environment, image digest, swap and its duration (ADR-0024)", () => {
+  it("records the Environment and image of every preparation, and the claim's swap and duration only when it claimed (ADR-0024)", () => {
     const { prepares, written } = spans();
     const image = "registry.example/welltop/oma-sandbox@sha256:" + "4".repeat(64);
-    prepares.started();
-    prepares.ended({ outcome: "ready", sandboxId: "sbx-1", claim: { environmentId: "env_video", image, swapped: true, claimMs: 4012 } });
-    prepares.started();
-    prepares.ended({ outcome: "ready", sandboxId: "sbx-2", claim: { image, claimMs: 230 } });
-    expect(written.filter(({ event }) => event.type === "span.sandbox_prepare_end").map(({ event }) => event.data)).toEqual([
+    const recorded = "registry.example/welltop/oma-sandbox@sha256:" + "5".repeat(64);
+    const context = { environmentId: "env_video", image };
+    // A fresh claim.
+    prepares.started(context);
+    prepares.ended({ outcome: "ready", sandboxId: "sbx-1", environmentId: "env_video", image, claim: { image, swapped: true, claimMs: 4012 } });
+    // A reconnect to the bound Sandbox, created with an older image.
+    prepares.started(context);
+    prepares.ended({ outcome: "ready", sandboxId: "sbx-1", environmentId: "env_video", image: recorded });
+    // One whose binding recorded no image, and one that failed.
+    prepares.started(context);
+    prepares.ended({ outcome: "ready", sandboxId: "sbx-2", environmentId: "env_video" });
+    prepares.started(context);
+    prepares.ended({ outcome: "failed", error: new SandboxUnavailable("unreachable") });
+    const data = (type: string) => written.filter(({ event }) => event.type === type).map(({ event }) => event.data);
+    expect(data("span.sandbox_prepare_start")).toEqual(["3.1", "3.2", "3.3", "3.4"].map((prepareId) => ({ turnId: "t", prepareId, environmentId: "env_video", image })));
+    expect(data("span.sandbox_prepare_end")).toEqual([
       { turnId: "t", prepareId: "3.1", outcome: "ready", sandboxId: "sbx-1", environmentId: "env_video", image, swapped: true, claimMs: 4012, durationMs: expect.any(Number) },
-      // A Session without an Environment.
-      { turnId: "t", prepareId: "3.2", outcome: "ready", sandboxId: "sbx-2", image, claimMs: 230, durationMs: expect.any(Number) },
+      { turnId: "t", prepareId: "3.2", outcome: "ready", sandboxId: "sbx-1", environmentId: "env_video", image: recorded, durationMs: expect.any(Number) },
+      { turnId: "t", prepareId: "3.3", outcome: "ready", sandboxId: "sbx-2", environmentId: "env_video", durationMs: expect.any(Number) },
+      { turnId: "t", prepareId: "3.4", outcome: "failed", environmentId: "env_video", image, code: "sandbox_unavailable", reason: "unreachable", durationMs: expect.any(Number) },
     ]);
   });
 

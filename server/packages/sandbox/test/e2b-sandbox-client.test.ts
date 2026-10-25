@@ -411,7 +411,7 @@ describe("E2BSandboxClient", () => {
       ["a digest without repository", "@sha256:" + "a".repeat(64)],
     ])("rejects %s as a definite 400 without calling the gateway", async (_label, image) => {
       const { client, factoryCalls } = makeClient();
-      const failure = await client.create({ image }).catch((error: unknown) => error);
+      const failure = await client.create({ image: image as string }).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(SandboxCreateRejected);
       expect(failure).toMatchObject({ status: 400 });
       expect(factoryCalls).toEqual([]);

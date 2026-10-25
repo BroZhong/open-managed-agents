@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Agent, DelegationStore, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
 import { CommandVariablesUnavailable, DefaultSandboxManager, SandboxUnavailable, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
 import { FakeSandboxClient, type FakeSandboxClientOptions } from "../src/fake-sandbox-client.js";
+import { FAKE_ENVIRONMENT_IMAGE, fakeEnvironments } from "../src/fake-environments.js";
 import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { SANDBOX_IDLE_SECONDS } from "../src/sandbox-client.js";
 import { DefaultTurnSandboxes, type SandboxEnvironments, type SandboxLeaseRequest, type TurnSandboxesDeps } from "../src/turn-sandboxes.js";
@@ -29,7 +30,7 @@ function watch<T>(promise: Promise<T>) {
 
 const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" };
 const agent: Agent = { id: "agent_sbx", tenantId: TENANT, name: "Sandboxed", model: "model", system: "", runtime: "pi-agent",
-  sandbox: { enabled: true }, createdAt: new Date(), updatedAt: new Date() };
+  sandbox: { enabled: true }, environmentId: "env_test", createdAt: new Date(), updatedAt: new Date() };
 
 /**
  * The Turn side of the Sandbox protocol (ADR-0023, #281): a Turn attempt
@@ -51,7 +52,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const open = vi.spyOn(manager, "open");
       const errors: Array<{ sessionId: string; error: unknown }> = [];
       const sandboxes = new DefaultTurnSandboxes({ manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
-        workspaceMount, onError: (failure) => errors.push(failure), ...deps });
+        workspaceMount, environments: fakeEnvironments(), onError: (failure) => errors.push(failure), ...deps });
       /** A Session; a Child of `parent` has its Environment, as the delegation store gives it. */
       const session = (overrides: Partial<Agent> = {}, parent?: Session, environmentId?: string) => stores.sessionStore.create({
         tenantId: TENANT, agentId: agent.id, agent: { ...agent, ...overrides }, workspaceId: "ws_1",
@@ -88,7 +89,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
 
     /** A Sandbox claimed for the binding that nothing recorded, as a lost create leaves one. */
     const claimedFor = async (h: Awaited<ReturnType<typeof setup>>, bindingId: string) =>
-      (await h.client.create({ metadata: { "oma.dev/binding": bindingId, "oma.dev/environment": "test" } })).id;
+      (await h.client.create({ image: FAKE_ENVIRONMENT_IMAGE, metadata: { "oma.dev/binding": bindingId, "oma.dev/environment": "test" } })).id;
 
     /** Admission and its end are observed, as the native lifecycle store's are. */
     function trackActivity(manager: DefaultSandboxManager) {
@@ -197,7 +198,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(await h.users(session.id)).toBe(true);
       h.client.setMountFailure(id);
       expect(await lease.executor.readFile("saved.txt")).toBe("x");
-      expect(prepares).toEqual([{ outcome: "failed", error: failure }, { outcome: "ready", sandboxId: id }]);
+      expect(prepares).toEqual([{ outcome: "failed", error: failure }, { outcome: "ready", sandboxId: id, environmentId: "env_test", image: FAKE_ENVIRONMENT_IMAGE }]);
       expect(heard).toEqual(["preparation failed", "operation failed: mount", "preparation ready"]);
       expect(sandboxPrepares.started).toHaveBeenCalledTimes(2);
       expect(h.client.created).toEqual([id]);
@@ -396,7 +397,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         expect(await h.origin(first.id)).toEqual({ sandboxId: original, environmentId: "env_video", image: digest(2) });
         // The claim the preparation reports, for span.sandbox_prepare_end, names the Environment.
         expect(prepares.filter((outcome) => outcome.outcome === "ready")).toEqual([
-          { outcome: "ready", sandboxId: original, claim: { environmentId: "env_video", image: digest(2), claimMs: expect.any(Number) } },
+          { outcome: "ready", sandboxId: original, environmentId: "env_video", image: digest(2), claim: { image: digest(2), claimMs: expect.any(Number) } },
         ]);
 
         // A rebuild succeeds: the running Sandbox keeps its image, and its Child shares it.
@@ -422,19 +423,22 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         expect(store.reads.every((ids) => ids.length === 1 && ids[0] === "env_video")).toBe(true);
       });
 
-      it("claims with no image for a Session whose Environment serves none, and reads none without one", async () => {
+      it("creates nothing for a Session whose Environment serves no image, or that has none: its operations fail with that reason", async () => {
         const store = served({ env_unbuilt: null });
         const h = await setup({ environments: store.environments });
+        const failure = async (session: Session) => h.turn(session, (executor) => executor!.writeFile("x.txt", "x").then(() => undefined, (error: unknown) => error));
         for (const environmentId of ["env_unbuilt", "env_unknown"]) {
-          const session = await h.session({}, undefined, environmentId);
-          await h.turn(session, (executor) => executor!.writeFile("x.txt", "x"));
+          const error = await failure(await h.session({}, undefined, environmentId));
+          expect(error).toBeInstanceOf(SandboxUnavailable);
+          expect(error).toMatchObject({ code: "sandbox_unavailable", reason: "environment_has_no_image" });
         }
-        // The gateway rejects a create without an image (ADR-0024); the fake records the request.
-        expect(h.client.created.map((id) => h.client.createOptsOf(id).image)).toEqual([undefined, undefined]);
-        // A Session of an Agent without an Environment (one that ran without a Sandbox) reads none.
+        // An Agent without an Environment, whose Session froze none: no Environment is read.
         const plain = await h.session({ environmentId: undefined });
-        await h.turn(plain, async () => {});
+        expect(await failure(plain)).toMatchObject({ code: "sandbox_unavailable", reason: "no_environment" });
+        expect(h.client.created).toEqual([]);
         expect(store.reads).toEqual([["env_unbuilt"], ["env_unknown"]]);
+        // Nothing was committed: the bindings stay Cold.
+        expect(await h.origin(plain.id)).toEqual({ sandboxId: null, environmentId: null, image: null });
         // An opted-out Agent reads nothing either.
         const optedOut = await h.session({ sandbox: { enabled: false } }, undefined, "env_unbuilt");
         expect(await h.acquire(optedOut, await h.claim(optedOut))).toBeNull();

@@ -101,6 +101,13 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
    * that ended with an uncertain execution, and ADR-0023 pauses that Sandbox
    * 30 minutes after the sweeper finds it, as any idle one.
    */
+  async bindingEnvironment(bindingId: string): Promise<string | null> {
+    // A binding is its root Session's id.
+    const { rows: [row] } = await this.pool.query<{ environment_id: string | null }>(
+      `SELECT COALESCE(s.environment_id, a.environment_id) AS environment_id
+       FROM sessions s LEFT JOIN agents a ON a.id = s.agent_id WHERE s.id = $1`, [bindingId]);
+    return row?.environment_id ?? null;
+  }
   async sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts> {
     const ids = [...new Set(bindingIds)];
     // A list of parameters rather than = ANY($1): pg-mem, which runs this

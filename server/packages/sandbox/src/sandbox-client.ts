@@ -113,9 +113,9 @@ export interface SandboxCreateOptions {
    * The image the Sandbox runs, pinned by digest (see
    * {@link isDigestPinnedImage}). A backend with a Warm Pool claims a warm
    * Sandbox and, unless the pool runs this exact image, swaps its container
-   * to it in place (ADR-0024). Required by the E2B backend.
+   * to it in place (ADR-0024).
    */
-  image?: string;
+  image: string;
   /** Environment variables baked into the sandbox runtime. */
   env?: Record<string, string>;
   /** Free-form labels/metadata (e.g. sessionId, workspaceId) for tracing. */

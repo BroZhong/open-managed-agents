@@ -1,4 +1,4 @@
-import type { SandboxPrepareObserver, SandboxPrepareOutcome } from "@oma-server/sandbox";
+import type { SandboxPrepareContext, SandboxPrepareObserver, SandboxPrepareOutcome } from "@oma-server/sandbox";
 import type { StoredEvent } from "@oma-server/store";
 import type { SpanSandboxPrepareEndEvent, SpanSandboxPrepareStartEvent } from "@open-managed-agents/adapter-core";
 import type { JournalEvent } from "./turn-journal.js";
@@ -50,9 +50,10 @@ export class SandboxPrepareSpans implements SandboxPrepareObserver {
     this.verdict = SandboxVerdict.of(deps.events);
   }
 
-  started(): void {
+  started(context: SandboxPrepareContext = {}): void {
     if (this.closed) return;
-    const start: SandboxPrepareStartData = { turnId: this.deps.turnId, prepareId: `${this.deps.generation}.${++this.prepares}` };
+    const start: SandboxPrepareStartData = { turnId: this.deps.turnId, prepareId: `${this.deps.generation}.${++this.prepares}`,
+      ...(context.environmentId ? { environmentId: context.environmentId } : {}), ...(context.image ? { image: context.image } : {}) };
     this.running = { start, startedAt: performance.now() };
     this.deps.write({ type: "span.sandbox_prepare_start", data: start }, sandboxPrepareKey(start.prepareId, "start"));
   }
@@ -87,19 +88,29 @@ export class SandboxPrepareSpans implements SandboxPrepareObserver {
     this.running = undefined;
   }
 
-  private end(fields: Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs">): void {
+  private end(fields: EndFields): void {
     const running = this.running;
     if (!running || this.closed) return;
     this.running = undefined;
-    const end: SandboxPrepareEndData = { ...running.start, ...fields, durationMs: Math.round(performance.now() - running.startedAt) };
+    // A ready end names the image of the Sandbox it reached, or none when unrecorded: never the one a claim would have used.
+    const { image, ...start } = running.start;
+    const end: SandboxPrepareEndData = { ...start, ...(fields.outcome === "ready" || !image ? {} : { image }), ...fields,
+      durationMs: Math.round(performance.now() - running.startedAt) };
     this.deps.write({ type: "span.sandbox_prepare_end", data: end }, sandboxPrepareKey(running.start.prepareId, "end"));
   }
 }
 
-function endOf(outcome: SandboxPrepareOutcome): Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs"> {
+type EndFields = Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs">;
+
+/** An end's own fields; the start's Environment and image carry over unless a ready end names its Sandbox's (ADR-0024). */
+function endOf(outcome: SandboxPrepareOutcome): EndFields {
   switch (outcome.outcome) {
-    // A preparation that claimed its Sandbox records the claim (ADR-0024).
-    case "ready": return { outcome: "ready", sandboxId: outcome.sandboxId, ...outcome.claim };
+    case "ready": {
+      const { sandboxId, environmentId, image, claim } = outcome;
+      return { outcome: "ready", sandboxId, ...(environmentId ? { environmentId } : {}), ...(image ? { image } : {}),
+        // Only a claim swaps or takes time to claim.
+        ...(claim ? { ...(claim.swapped === undefined ? {} : { swapped: claim.swapped }), claimMs: claim.claimMs } : {}) };
+    }
     case "deferred": return { outcome: "deferred" };
     case "failed": return { outcome: "failed", code: outcome.error.code, reason: outcome.error.reason };
     case "aborted": return { outcome: "aborted", reason: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) };

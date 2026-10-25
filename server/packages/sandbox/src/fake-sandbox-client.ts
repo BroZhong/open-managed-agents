@@ -261,7 +261,7 @@ export class FakeSandboxClient implements SandboxClient {
     sandbox.reclaimed = true;
   }
 
-  async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
+  async create(opts: SandboxCreateOptions): Promise<SandboxHandle> {
     await this.createFault?.("claim", opts);
     const id = this.generateId();
     const volume = JSON.parse(
@@ -297,7 +297,6 @@ export class FakeSandboxClient implements SandboxClient {
     });
     this.created.push(id);
     await this.createFault?.("respond", opts);
-    if (!opts.image) return { id };
     const swapped = this.poolImage === undefined ? {} : { swapped: opts.image !== this.poolImage };
     return { id, claim: { image: opts.image, claimMs: 0, ...swapped } };
   }
@@ -309,7 +308,7 @@ export class FakeSandboxClient implements SandboxClient {
       if (sandbox.destroyed || sandbox.reclaimed) continue;
       const state = sandbox.paused ? "paused" : "running";
       // The E2B client claims with the image as create metadata, which the gateway lists.
-      const metadata: Record<string, string> = { ...sandbox.createOpts.metadata, ...(sandbox.createOpts.image ? { [CLAIM_IMAGE_METADATA]: sandbox.createOpts.image } : {}) };
+      const metadata: Record<string, string> = { ...sandbox.createOpts.metadata, [CLAIM_IMAGE_METADATA]: sandbox.createOpts.image };
       if (!filter.states.includes(state) || Object.entries(filter.metadata).some(([key, value]) => metadata[key] !== value)) continue;
       listed.push({ sandboxId: sandbox.id, state, metadata, startedAt: sandbox.claimedAt, endAt: sandbox.endAt });
     }

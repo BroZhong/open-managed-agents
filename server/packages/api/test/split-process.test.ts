@@ -273,7 +273,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
 
   it.each(["sync", "async"])("delivers %s Child Session results between separate Runner processes", async mode => {
     await stop(runner);
-    const agent = await stores.agentStore.create({ tenantId: "test", name: "Delegate", runtime: "pi-agent", model: "pinned-model", system: "Test", sandbox: { enabled: true } });
+    const agent = await stores.agentStore.create({ tenantId: "test", name: "Delegate", runtime: "pi-agent", model: "pinned-model", system: "Test", sandbox: { enabled: true }, environmentId: "env_test" });
     const session = await request(api2, "sessions", { agent: agent.id });
     await input(api1, session.id);
     const parent = await fixture({ PARENT_SESSION_ID: session.id, DELEGATION_MODE: mode });

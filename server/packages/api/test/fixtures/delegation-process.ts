@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createPgPool, pgConfigFromEnv, createPgStores, PgSandboxLifecycleStore } from "@oma-server/store";
 import { createRedisClient, RedisSessionSignals, BestEffortTurnStreamStore, RedisTurnStreamStore } from "@oma-server/redis";
 import { RedisEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -50,7 +50,7 @@ const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local:
 if (process.env.PARENT_SESSION_ID) {
   // A deterministic existing owner. Only the other OS process scans for children.
   const router = new SessionRouter({ ...deps, resolveAdapter: () => adapter,
-    sandboxes: new DefaultTurnSandboxes({ manager: sandboxManager, bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount }),
+    sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(), manager: sandboxManager, bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount }),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => signals.publish({ sessionId, kind: "check" }) });
   // As RunnerDispatch does: the child's Runner hints this owner when the child ends.

@@ -3,12 +3,12 @@ import { createRedisClient, RedisSessionSignals, type RedisClient } from "@oma-s
 import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createMemoryStores } from "@oma-server/store-memory";
 import type { SandboxBindingRow, BindingLockResult } from "@oma-server/store";
-import { BINDING_REREAD_MS, DefaultSandboxManager, FakeSandboxClient, type EnvSpec, type SandboxBinding } from "@oma-server/sandbox";
+import { BINDING_REREAD_MS, DefaultSandboxManager, FakeSandboxClient, type EnvSpec, type SandboxBinding, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { sandboxSignals } from "../src/lib/sandbox-signals.js";
 
 // Opt-in: real Pub/Sub on a disposable Redis (REDIS_TEST_URL); never a shared instance.
 const url = process.env.REDIS_TEST_URL;
-const spec: EnvSpec = { tenantId: "t", workspaceId: "w", workspaceMount: {
+const spec: EnvSpec = { tenantId: "t", workspaceId: "w", image: FAKE_ENVIRONMENT_IMAGE, workspaceMount: {
   bucket: "agentry", prefix: "t/w/", agentName: "agent", pvName: "pv", credentialProviderName: "credentials",
 } };
 const until = async (check: () => boolean | Promise<boolean>) => {

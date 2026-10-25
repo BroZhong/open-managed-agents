@@ -18,7 +18,8 @@ async function storesOver(pool: Pool): Promise<SweeperStores> {
       const lifecycle = new PgSandboxLifecycleStore(pool);
       return { bindings: new PgDelegationStore(pool), facts: lifecycle, lifecycle };
     },
-    session: async () => (await stores.sessionStore.create({ tenantId: "tenant_1", agentId: agent.id, agent, workspaceId: "ws_1" })).id,
+    session: async (environmentId) => (await stores.sessionStore.create({ tenantId: "tenant_1", agentId: agent.id, agent, workspaceId: "ws_1",
+      ...(environmentId ? { environmentId } : {}) })).id,
     queue: async (sessionId) => { await stores.pendingEventStore.enqueue(sessionId, { type: "user.message", data: {}, sessionThreadId: "sthr_primary" }); },
     admit: async (sessionId) => {
       await stores.pendingEventStore.enqueue(sessionId, { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
@@ -41,6 +42,11 @@ async function storesOver(pool: Pool): Promise<SweeperStores> {
       const { rows: [row] } = await pool.query<{ sandbox_id: string | null; creating_since: Date | null }>(
         "SELECT sandbox_id, creating_since FROM delegation_environments WHERE id = $1", [bindingId]);
       return row ? { sandboxId: row.sandbox_id, creatingSince: row.creating_since } : null;
+    },
+    origin: async (bindingId) => {
+      const { rows: [row] } = await pool.query<{ environment_id: string | null; image: string | null }>(
+        "SELECT environment_id, image FROM delegation_environments WHERE id = $1", [bindingId]);
+      return row ? { environmentId: row.environment_id, image: row.image } : null;
     },
   };
 }

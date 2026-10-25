@@ -139,9 +139,9 @@ export interface TurnSandboxesDeps {
   /**
    * The Environments Sessions run in (ADR-0024): a Session claims its
    * Sandboxes with the image its Environment serves, and runs every command
-   * with its variables. Without them no Sandbox can be created.
+   * with its variables.
    */
-  environments?: SandboxEnvironments;
+  environments: SandboxEnvironments;
   /** Observe failures to record settlement off a Turn's path (a watched runtime's, a retry's) without unhandled rejections. */
   onError?: (failure: { sessionId: string; error: unknown }) => void;
 }
@@ -259,10 +259,11 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
    * (ADR-0024): the one the Environment serves now, deleted or not, so
    * Sandboxes created after a rebuild run the new image while running ones
    * keep theirs until reclaimed. None for an Environment that cannot be read
-   * or never served one: its create is rejected, never run on another image.
+   * or never served one: the Sandbox Manager then fails each operation that
+   * needs a Sandbox (`environment_has_no_image`), never claims another image.
    */
   private async imageFor(tenantId: string, environmentId: string): Promise<string | undefined> {
-    return await this.deps.environments?.image(tenantId, environmentId) ?? undefined;
+    return await this.deps.environments.image(tenantId, environmentId) ?? undefined;
   }
 
   /**
@@ -275,7 +276,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
    */
   private variablesFor(tenantId: string, environmentId: string): CommandVariables {
     const { environments } = this.deps;
-    return async () => ({ ...PLATFORM_DEFAULT_ENV, ...await environments?.variables(tenantId, environmentId), ...WORKSPACE_ENV });
+    return async () => ({ ...PLATFORM_DEFAULT_ENV, ...await environments.variables(tenantId, environmentId), ...WORKSPACE_ENV });
   }
 
   /**
@@ -304,7 +305,9 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
 /**
  * The Environment a Turn's Sandbox is created from (ADR-0024): the one its
  * Session froze at creation; for a Session created while its Agent ran
- * without a Sandbox, which froze none, the Agent's now.
+ * without a Sandbox, which froze none, the Agent's now. Every Sandboxed
+ * Agent has one since migration 0029; without either, operations that need
+ * a Sandbox fail with `no_environment`.
  */
 function environmentOf(session: Session, agent: Agent): string | undefined {
   return session.environmentId ?? agent.environmentId;

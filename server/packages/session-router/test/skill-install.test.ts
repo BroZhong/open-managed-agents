@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { packSkillBundle, type Skill, type SkillBundleInputFile, type SkillBundleStore } from "@oma-server/store";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, isSkillInstallCommand, skillSetOf, type SkillInstallBudget } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, isSkillInstallCommand, skillSetOf, type SkillInstallBudget, fakeEnvironments } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -47,14 +47,14 @@ async function harness(adapter: Adapter, options: { budget?: SkillInstallBudget;
   });
   const exec = vi.spyOn(sandbox, "exec");
   const installs = () => exec.mock.calls.filter(([, command]) => isSkillInstallCommand(command)).length;
-  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Writer", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true } });
+  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Writer", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const parent = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const errors: unknown[] = [];
   /** One Runner: its own Router and Sandbox Manager over the shared stores and Sandbox platform. */
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-    sandboxes: new DefaultTurnSandboxes({
+    sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(),
       manager: new DefaultSandboxManager({ sandboxClient: sandbox, skillBundleStore: bundles, skillInstallBudget: options.budget, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
       onError: ({ error }) => errors.push(error),

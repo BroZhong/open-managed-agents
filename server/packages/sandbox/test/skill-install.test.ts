@@ -16,13 +16,14 @@ import {
   type SkillInstallLedger,
   type SkillSetMember,
 } from "../src/skill-install.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
 /** A TrueType header followed by every byte value: survives only a byte-exact path. */
 const FONT = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x0c, ...Array.from({ length: 256 }, (_, index) => index)]);
 
 async function setUp() {
   const client = new FakeSandboxClient();
-  const { id } = await client.create();
+  const { id } = await client.create({ image: FAKE_ENVIRONMENT_IMAGE });
   const bundles = new Bundles();
   const exec = vi.spyOn(client, "exec");
   const installs = () => exec.mock.calls.filter(([, command]) => isSkillInstallCommand(command));

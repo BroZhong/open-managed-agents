@@ -348,7 +348,9 @@ export class SandboxSweeper {
     const { client, sandboxSignals } = this.deps;
     let outcome: Awaited<ReturnType<typeof reconcileBinding>>;
     try {
-      outcome = await reconcileBinding(client, signallingBinding(this.binding(bindingId), sandboxSignals), creatingSince);
+      // An adopted Sandbox records its Session's Environment, as one a Turn adopts does.
+      const environmentId = await this.deps.facts.bindingEnvironment(bindingId) ?? undefined;
+      outcome = await reconcileBinding(client, signallingBinding(this.binding(bindingId), sandboxSignals), creatingSince, environmentId);
     } catch (error) {
       if (error instanceof SandboxBindingChanged) line.skipped++;
       else this.failed(line, planned ? { sandboxId: planned.sandboxId, action: "adopt" } : { bindingId, action: "adopt" }, error);

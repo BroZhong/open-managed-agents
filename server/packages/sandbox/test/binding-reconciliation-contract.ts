@@ -3,7 +3,8 @@ import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { Agent, DelegationStore, SandboxBindingRow, BindingLockResult, PendingEventFence, Session, SessionStore } from "@oma-server/store";
 import { DefaultSandboxManager, SandboxSessionClosed, SandboxUnavailable } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import { CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SandboxCreateRejected, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
+import { FAKE_ENVIRONMENT_IMAGE, fakeEnvironments } from "../src/fake-environments.js";
+import { CLAIM_IMAGE_METADATA, CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SandboxCreateRejected, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
 import { EMPTY_SKILL_SET, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { DefaultTurnSandboxes, type SandboxLease, type TurnSandboxesDeps } from "../src/turn-sandboxes.js";
@@ -46,7 +47,7 @@ export type LossPoint =
 const GONE = new Promise<never>(() => {});
 const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" };
 const agent: Agent = { id: "agent_sbx", tenantId: TENANT, name: "Sandboxed", model: "model", system: "", runtime: "pi-agent",
-  sandbox: { enabled: true }, createdAt: new Date(), updatedAt: new Date() };
+  sandbox: { enabled: true }, environmentId: "env_test", createdAt: new Date(), updatedAt: new Date() };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A create that ran into its client timeout, as the SDK's request signal fails it. */
 const timedOut = () => new DOMException("The operation was aborted due to timeout", "TimeoutError");
@@ -66,7 +67,7 @@ class Runner {
   dead = false;
   readonly sandboxes: DefaultTurnSandboxes;
   constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: SandboxSignals, readonly loss?: LossPoint,
-    deps: Pick<TurnSandboxesDeps, "environments"> = {}) {
+    deps: Pick<TurnSandboxesDeps, "environments"> = { environments: fakeEnvironments() }) {
     const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", sandboxSignals: hints,
       lifecycle: stores.lifecycle && this.alive(stores.lifecycle) });
     this.sandboxes = new DefaultTurnSandboxes({ manager, bindings: this.bindings(stores.delegationStore),
@@ -110,7 +111,7 @@ class Runner {
   }
   private client(gateway: FakeSandboxClient): SandboxClient {
     const alive = this.alive(gateway);
-    const create = async (opts?: SandboxCreateOptions) => {
+    const create = async (opts: SandboxCreateOptions) => {
       if (this.dead) return GONE;
       if (this.loss === "during-create" || this.loss === "during-create-cancelled") {
         this.dead = true;
@@ -154,7 +155,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
   describe(name, () => {
     if (options.teardown) afterAll(options.teardown);
 
-    async function setup(deps: Pick<TurnSandboxesDeps, "environments"> = {}) {
+    async function setup(deps: Pick<TurnSandboxesDeps, "environments"> = { environments: fakeEnvironments() }) {
       const stores = await createStores();
       const gatewayClock = databaseClock(new Date("2026-10-22T13:19:30Z"));
       const gateway = new FakeSandboxClient({ clock: gatewayClock.now });
@@ -203,7 +204,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const listed = async (bindingId: string) => (await gateway.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: bindingId }, states: ["running", "paused"] }))
         .map((sandbox) => sandbox.sandboxId).sort();
       /** A Sandbox claimed for the binding as a lost create leaves it, with the labels and mount ensure creates it with. */
-      const claimed = async (bindingId: string) => (await gateway.create({ timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: {
+      const claimed = async (bindingId: string) => (await gateway.create({ image: FAKE_ENVIRONMENT_IMAGE, timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: {
         [SANDBOX_BINDING_LABEL]: bindingId, [SANDBOX_ENVIRONMENT_LABEL]: "test", "oma.dev/tenant": TENANT, "oma.dev/workspace": "ws_1",
         ...workspaceMountMetadata({ ...workspaceMount, prefix: `${TENANT}/ws_1/` }, SANDBOX_WORKSPACE_ROOT),
       } })).id;
@@ -280,11 +281,16 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const h = await setup();
       const session = await h.session();
       const orphan = await h.claimed(session.id);
+      // A gateway that lists no create metadata image, as one created before ADR-0024.
+      const list = FakeSandboxClient.prototype.listSandboxes.bind(h.gateway);
+      h.list.mockImplementation(async (filter) => (await list(filter))
+        .map(({ metadata: { [CLAIM_IMAGE_METADATA]: _image, ...metadata }, ...listed }) => ({ ...listed, metadata })));
       await h.stores.legacyPending(session.id);
       const { lease } = await h.turn(h.runner(), session);
       expect(await h.toolsWork(lease, session.id)).toBe(orphan);
+      // Its Agent's Environment, the Session having frozen none.
       expect(await h.stores.delegationStore.withBindingLock(session.id, async ({ environmentId, image }) => ({ value: { environmentId, image } })))
-        .toEqual({ environmentId: null, image: null });
+        .toEqual({ environmentId: "env_test", image: null });
     });
 
     it("recreates the Sandbox when the claim died with the Runner during create", async () => {

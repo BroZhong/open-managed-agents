@@ -47,14 +47,16 @@ export interface EnvSpec {
   workspaceId: string;
   workspaceMount: WorkspaceMountSpec;
   /**
-   * The Session's Environment (ADR-0024), absent without one. The binding
+   * The Session's Environment (ADR-0024), absent when neither the Session
+   * nor its Agent names one: no Sandbox can be created then. The binding
    * records it, with `image`, for each Sandbox created from this spec.
    */
   environmentId?: string;
   /**
-   * The image digest a Sandbox is claimed with (ADR-0024): the Environment's
-   * when the Turn began, otherwise the Host's configured one. Only creation
-   * reads it: a running Sandbox keeps the image it was created with.
+   * The image digest a Sandbox is claimed with (ADR-0024): the one the
+   * Environment served when the Turn began; absent when it serves none, and
+   * no Sandbox can be created. Only creation reads it: a running Sandbox
+   * keeps the image it was created with.
    */
   image?: string;
   env?: Record<string, string>;
@@ -114,13 +116,19 @@ export type SandboxUnavailableReason =
   /** The Sandbox's Workspace mount could not be verified. */
   | "mount"
   /** The Sandbox, the gateway or the binding could not be reached: connect, reconcile's list, the binding's row. */
-  | "unreachable";
+  | "unreachable"
+  /** A Sandbox is needed and the Session's Environment serves no image: it has never built successfully. */
+  | "environment_has_no_image"
+  /** A Sandbox is needed and neither the Session nor its Agent names an Environment. */
+  | "no_environment";
 
 const UNAVAILABLE: Record<SandboxUnavailableReason, string> = {
   rejected: "The gateway rejected the Sandbox creation. A later tool call can retry.",
   unknown: "Sandbox creation did not complete. A later tool call can retry.",
   mount: new WorkspaceMountUnavailable().message,
   unreachable: "The Session's Sandbox could not be reached. The tool was not executed; a later tool call can retry.",
+  environment_has_no_image: "The Session's Environment has never built successfully, so no Sandbox can be started. The tool was not executed; it can run once the Environment's build has produced an image.",
+  no_environment: "The Session runs in no Environment, so no Sandbox can be started. The tool was not executed; bind its Agent to an Environment.",
 };
 
 /**
@@ -180,6 +188,14 @@ function holdsIntent(binding: SandboxBindingRow, notBefore: Date): boolean {
     && since >= notBefore.getTime() && since < intentExpiresAt(notBefore);
 }
 
+/** The Sandbox a preparation reached and what it was created with. */
+interface PreparedSandbox {
+  sandboxId: string;
+  environmentId: string | null;
+  image: string | null;
+  claim?: SandboxClaim;
+}
+
 /** Creates independent Session resources; their OSS Workspace may be shared. */
 export interface SandboxManager {
   beginActivity?(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean>;
@@ -231,16 +247,24 @@ export interface SkillInstallObserver {
   ended(outcome: { report: SkillInstallReport } | { error: unknown }): void;
 }
 
-/** A Warm Pool claim of a preparation, with the Environment it claimed the Sandbox for (absent without one). */
-export type PreparedClaim = SandboxClaim & { environmentId?: string };
+/**
+ * What a preparation starts with (ADR-0024): the Session's Environment and
+ * the image a claim would use, as the session's spec names them.
+ */
+export interface SandboxPrepareContext {
+  environmentId?: string;
+  image?: string;
+}
 
 /** How one preparation of the Turn's Sandbox ended (ADR-0023). */
 export type SandboxPrepareOutcome =
   /**
-   * The Sandbox is connected, or created, and its mount verified. `claim`:
-   * this preparation claimed it from the Warm Pool (ADR-0024).
+   * The Sandbox is connected, or created, and its mount verified.
+   * `environmentId` and `image`: what that Sandbox was created with (the
+   * claim's, or for one it reused the binding's record; absent when not
+   * recorded). `claim`: this preparation claimed it from the Warm Pool.
    */
-  | { outcome: "ready"; sandboxId: string; claim?: PreparedClaim }
+  | { outcome: "ready"; sandboxId: string; environmentId?: string; image?: string; claim?: SandboxClaim }
   /**
    * The Turn-start connect found no Sandbox to connect: the recorded one is
    * gone, or the binding moved on. The first operation brings it to Ready.
@@ -257,7 +281,7 @@ export type SandboxPrepareOutcome =
  * ensure. One runs at a time.
  */
 export interface SandboxPrepareObserver {
-  started(): void;
+  started(context: SandboxPrepareContext): void;
   ended(outcome: SandboxPrepareOutcome): void;
 }
 
@@ -491,8 +515,8 @@ class SandboxSessionImpl implements SandboxSession {
   private readonly binding: SandboxBinding;
   /** What a Sandbox unavailability is recorded against (see recordFailure). */
   private known?: KnownRow;
-  /** The Sandbox the running preparation claimed, and how (ADR-0024). */
-  private claimed?: { sandboxId: string; claim: PreparedClaim };
+  /** The Sandbox the running preparation reached, and what it was created with (ADR-0024). */
+  private reached?: PreparedSandbox;
 
   constructor(
     private readonly deps: SandboxManagerDeps,
@@ -662,11 +686,12 @@ class SandboxSessionImpl implements SandboxSession {
    * reconciles or creates (ADR-0023).
    */
   private async connect(): Promise<void> {
-    const id = await this.preparation((begin) => this.binding.withLock<string | null>(async ({ sandboxId: id }) => {
+    const id = await this.preparation((begin) => this.binding.withLock<string | null>(async ({ sandboxId: id, environmentId, image }) => {
       await this.assertExecutable();
       this.sandboxId = id ?? undefined;
       if (!id) return { value: null };
       begin();
+      this.reached = { sandboxId: id, environmentId, image };
       if (!await this.deps.sandboxClient.reconnect(id, this.metadata())) {
         this.sandboxId = undefined;
         return { next: "cold", value: null };
@@ -709,8 +734,13 @@ class SandboxSessionImpl implements SandboxSession {
   private async preparation<T extends string | null>(work: (begin: () => void) => Promise<T>): Promise<T> {
     const { signal, sandboxPrepares: observer } = this.turn;
     let begun = false;
-    const begin = () => { if (!begun) { begun = true; observer?.started(); } };
-    this.claimed = undefined;
+    const { environmentId, image } = this.spec;
+    const begin = () => {
+      if (begun) return;
+      begun = true;
+      observer?.started({ ...(environmentId ? { environmentId } : {}), ...(image ? { image } : {}) });
+    };
+    this.reached = undefined;
     let id: T;
     try {
       id = await work(begin);
@@ -726,15 +756,19 @@ class SandboxSessionImpl implements SandboxSession {
       observer?.ended({ outcome: "failed", error: failure });
       throw failure;
     }
-    const claim = id === null ? undefined : this.takeClaim(id);
-    if (begun) observer?.ended(id === null ? { outcome: "deferred" } : { outcome: "ready", sandboxId: id, ...(claim ? { claim } : {}) });
+    if (begun) observer?.ended(id === null ? { outcome: "deferred" } : { outcome: "ready", sandboxId: id, ...this.takePrepared(id) });
     return id;
   }
-  /** The Warm Pool claim of Sandbox `id`, when the preparation that ends claimed it. */
-  private takeClaim(id: string): PreparedClaim | undefined {
-    const claimed = this.claimed;
-    this.claimed = undefined;
-    return claimed?.sandboxId === id ? claimed.claim : undefined;
+  /** What the ending preparation knows of Sandbox `id`'s creation (see SandboxPrepareOutcome). */
+  private takePrepared(id: string): Pick<Extract<SandboxPrepareOutcome, { outcome: "ready" }>, "environmentId" | "image" | "claim"> {
+    const prepared = this.reached;
+    this.reached = undefined;
+    if (prepared?.sandboxId !== id) return {};
+    return {
+      ...(prepared.environmentId ? { environmentId: prepared.environmentId } : {}),
+      ...(prepared.image ? { image: prepared.image } : {}),
+      ...(prepared.claim ? { claim: prepared.claim } : {}),
+    };
   }
   /**
    * Record a Sandbox unavailability as the binding's last error, which the
@@ -901,6 +935,7 @@ class SandboxSessionImpl implements SandboxSession {
         if (id !== null) {
           if (await this.deps.sandboxClient.reconnect(id, this.metadata())) {
             await this.attach(id, false);
+            this.reached = { sandboxId: id, environmentId: binding.environmentId, image: binding.image };
             return { value: { kind: "ready", sandboxId: id }, observed: "ready" };
           }
           this.sandboxId = undefined;
@@ -914,6 +949,8 @@ class SandboxSessionImpl implements SandboxSession {
           return { value: { kind: "reconcile", creatingSince: binding.creatingSince } };
         }
         if (!mayCreate) throw new SandboxUnavailable("unknown");
+        // Nothing to claim with: no intent is committed, the binding stays Cold.
+        this.claimImage();
         // Commit the intent before create: a lost response, a lost Runner or a
         // lost binding write leaves an intent any Runner reconciles after its deadline.
         return { next: "creating", value: { kind: "create", notBefore: binding.now } };
@@ -929,11 +966,16 @@ class SandboxSessionImpl implements SandboxSession {
    * the binding moved on meanwhile: the Sandbox is killed and ensure follows
    * the row.
    */
+  /** The image a create claims with; a SandboxUnavailable when the spec has none (ADR-0024). */
+  private claimImage(): string {
+    if (this.spec.image) return this.spec.image;
+    throw new SandboxUnavailable(this.spec.environmentId ? "environment_has_no_image" : "no_environment");
+  }
   private async create(notBefore: Date): Promise<string | undefined> {
     let handle: SandboxHandle;
     try {
       handle = await this.deps.sandboxClient.create({
-        image: this.spec.image, env: this.spec.env,
+        image: this.claimImage(), env: this.spec.env,
         timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: this.metadata(),
       });
     } catch (error) {
@@ -945,8 +987,7 @@ class SandboxSessionImpl implements SandboxSession {
       return undefined;
     }
     this.sandboxId = handle.id;
-    const { environmentId } = this.spec;
-    if (handle.claim) this.claimed = { sandboxId: handle.id, claim: { ...handle.claim, ...(environmentId ? { environmentId } : {}) } };
+    this.reached = { sandboxId: handle.id, environmentId: this.spec.environmentId ?? null, image: handle.claim?.image ?? this.claimImage(), claim: handle.claim };
     await this.assertExecutable();
     // A known Sandbox whose mount fails verification stays recorded: the
     // next tool retries its preparation, not its creation.

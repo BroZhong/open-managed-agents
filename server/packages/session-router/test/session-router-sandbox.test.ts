@@ -7,6 +7,7 @@ import {
   FakeSandboxClient,
   DefaultSandboxManager,
   DefaultTurnSandboxes,
+  fakeEnvironments,
 } from "@oma-server/sandbox";
 import type {
   PendingEventStore,
@@ -93,6 +94,7 @@ const sandboxedAgent: Agent = {
   system: "helpful",
   runtime: "pi-agent",
   sandbox: { enabled: true },
+  environmentId: "env_test",
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -118,6 +120,7 @@ const legacyAgent: Agent = {
   model: "claude-3",
   system: "helpful",
   runtime: "pi-agent",
+  environmentId: "env_test",
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -155,6 +158,7 @@ function createDeps(opts: {
     eventStreamHub,
     resolveAdapter: () => opts.adapter,
     sandboxes: sandboxManager && new DefaultTurnSandboxes({
+      environments: fakeEnvironments(),
       manager: sandboxManager,
       bindings: delegationStore,
       sessions: sessionStore,
@@ -1057,6 +1061,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       runtime: "pi-agent",
       skills: [],
       sandbox: { enabled: true },
+      environmentId: "env_test",
     });
     const skillStore = new InMemorySkillStore();
     const skillBundleStore = new InMemorySkillBundleStore();

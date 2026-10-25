@@ -3,7 +3,8 @@ import { DefaultSandboxManager, type EnvSpec } from '../src/sandbox-manager.js';
 import { FakeSandboxClient } from '../src/fake-sandbox-client.js';
 import type { ToolFileSystem } from '@open-managed-agents/adapter-core';
 import { durableBinding, signalBus } from './bindings.js';
-const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', workspaceMount: {
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
+const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', image: FAKE_ENVIRONMENT_IMAGE, workspaceMount: {
   bucket: 'agentry', prefix: 't/w/', agentName: 'agent', pvName: 'pv', credentialProviderName: 'credentials',
 } };
 function setup() {

@@ -379,6 +379,12 @@ export interface SpanSkillsInstallEndEvent extends BaseEvent {
 export interface SpanSandboxPrepareStartEvent extends BaseEvent {
   type: "span.sandbox_prepare_start";
   prepareId: string;
+  /**
+   * The Session's Environment and the image a claim would use (ADR-0024);
+   * absent when the Session has none, or it serves no image.
+   */
+  environmentId?: string;
+  image?: string;
 }
 
 export interface SpanSandboxPrepareEndEvent extends BaseEvent {
@@ -401,15 +407,18 @@ export interface SpanSandboxPrepareEndEvent extends BaseEvent {
   code?: string;
   reason?: string;
   /**
-   * `ready` after a preparation that claimed `sandboxId` from the Warm Pool
-   * (ADR-0024); absent when it connected to an existing Sandbox.
-   * `environmentId`: the Session's Environment it was claimed for (absent
-   * without one). `image`: the image digest it was claimed with. `swapped`:
-   * whether the claim replaced the warm Sandbox's container with that image
-   * in place (absent when unobserved). `claimMs`: how long the claim took.
+   * As the start's (ADR-0024); for `ready`, what `sandboxId` was created
+   * with: the claim's Environment and image, or for a Sandbox it reused the
+   * binding's record (absent when not recorded).
    */
   environmentId?: string;
   image?: string;
+  /**
+   * `ready` after a preparation that claimed `sandboxId` from the Warm Pool
+   * only. `swapped`: whether the claim replaced the warm Sandbox's container
+   * with `image` in place (absent when unobserved). `claimMs`: how long the
+   * claim took.
+   */
   swapped?: boolean;
   claimMs?: number;
 }

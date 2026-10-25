@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, fakeEnvironments } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, DurableEvent, SessionEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -25,7 +25,7 @@ function gate() { let release!: () => void; const promise = new Promise<void>((r
 async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: number } = {}) {
   const stores = createMemoryStores();
   const sandbox = new FakeSandboxClient();
-  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true } });
+  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const parent = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const errors: unknown[] = [];
@@ -33,7 +33,7 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
   const createHub = () => { const hub = new InProcessEventStreamHub(); hubs.push(hub); return hub; };
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: createHub(), resolveAdapter: () => adapter,
-    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
+    sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(), manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore,
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       onError: ({ error }) => errors.push(error) }),

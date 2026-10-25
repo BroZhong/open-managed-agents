@@ -6,8 +6,9 @@ import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS } from "../src/sandbox-client.js";
 import { BINDING_REREAD_MS } from "../src/sandbox-signals.js";
 import { signalBus } from "./bindings.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
-const spec: EnvSpec = { tenantId: "t", workspaceId: "w", workspaceMount: {
+const spec: EnvSpec = { tenantId: "t", workspaceId: "w", image: FAKE_ENVIRONMENT_IMAGE, workspaceMount: {
   bucket: "agentry", prefix: "t/w/", agentName: "agent", pvName: "pv", credentialProviderName: "credentials",
 } };
 /** What a lost Runner's calls return: nothing, ever. */

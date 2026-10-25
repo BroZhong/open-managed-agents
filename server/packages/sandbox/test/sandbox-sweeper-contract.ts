@@ -6,6 +6,7 @@ import { DefaultSandboxManager } from "../src/sandbox-manager.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, SWEEP_MAX_UNSETTLED } from "../src/sandbox-sweep.js";
 import { SandboxSweeper, type SweepRound } from "../src/sandbox-sweeper.js";
 import { signalBus } from "./bindings.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
 /** One Runner's stores: its own binding operations over the rows every Runner shares. */
 export interface SweeperRunnerStores {
@@ -19,8 +20,8 @@ export interface SweeperRunnerStores {
 export interface SweeperStores {
   /** Another Runner over the same rows: its binding operations queue only behind its own. */
   runner(): SweeperRunnerStores;
-  /** A root Session; its id is its binding's. */
-  session(): Promise<string>;
+  /** A root Session, frozen to `environmentId` when given; its id is its binding's. */
+  session(environmentId?: string): Promise<string>;
   /** Queue an input for the Session: its binding is in use. */
   queue(sessionId: string): Promise<void>;
   /** Queue an input for the Session and claim it as a Runner starting its Turn does: the activity the Turn's admission begins. */
@@ -33,6 +34,8 @@ export interface SweeperStores {
   elapse(seconds: number): Promise<void>;
   /** The row as stored, read without creating it; null when the binding has none. */
   row(bindingId: string): Promise<{ sandboxId: string | null; creatingSince: Date | null } | null>;
+  /** What the binding records its Sandbox was created with (ADR-0024); null when it has no row. */
+  origin(bindingId: string): Promise<{ environmentId: string | null; image: string | null } | null>;
 }
 
 const ENVIRONMENT = "test";
@@ -81,6 +84,7 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       const sandbox = async (binding: string | null, shape: { environment?: string | null; deadline?: boolean; paused?: boolean } = {}) => {
         const { environment = ENVIRONMENT, deadline = true, paused = false } = shape;
         const { id } = await gateway.create({
+          image: FAKE_ENVIRONMENT_IMAGE,
           metadata: {
             ...(binding === null ? {} : { [SANDBOX_BINDING_LABEL]: binding }),
             ...(environment === null ? {} : { [SANDBOX_ENVIRONMENT_LABEL]: environment }),
@@ -112,6 +116,7 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
             return read;
           },
           unsettled: (deadline, limit) => runner.facts.unsettled(deadline, limit),
+          bindingEnvironment: (bindingId) => runner.facts.bindingEnvironment(bindingId),
         };
         const client = hooks.client ?? gateway;
         return new SandboxSweeper({ client, facts, bindings: runner.bindings, manager: manager(runner, client), environment: ENVIRONMENT,
@@ -152,7 +157,7 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       const withoutDeadline = await sandbox(undying, { deadline: false });
       await move(undying, { ready: withoutDeadline });
 
-      const unresolved = await stores.session();
+      const unresolved = await stores.session("env_video");
       await move(unresolved, "creating");
       const duplicate = await sandbox(unresolved, { paused: true });
       const adoptable = await sandbox(unresolved);
@@ -204,6 +209,8 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       expect(await stores.row(b.undying)).toEqual({ sandboxId: null, creatingSince: null });
       expect(await stores.row(b.reclaimed)).toEqual({ sandboxId: null, creatingSince: null });
       expect(await stores.row(b.unresolved)).toEqual({ sandboxId: f.adoptable, creatingSince: null });
+      // The adopted Sandbox records its Session's Environment and the image its listing shows (ADR-0024).
+      expect(await stores.origin(b.unresolved)).toEqual({ environmentId: "env_video", image: FAKE_ENVIRONMENT_IMAGE });
       expect(await stores.row(b.creating)).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });
       expect(await stores.row("sesn_of_another_schema")).toBeNull();
       // The adoption and the reclamations told the bindings' waiting Turns.
