@@ -1,10 +1,10 @@
 {
-  "tag": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-media-0.1.0",
-  "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:5a33456bbe238f85ac33559068dd569e4d800d78c001b5072339a90766019439",
+  "tag": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-media-0.1.2",
+  "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00",
   "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-  "compressedBytes": 982708117,
+  "compressedBytes": 982716715,
   "unpackedSize": "4.21GB",
   "layers": 42,
-  "revision": "ab9f36decaf9025feaef7407796f6c30bfc08a1d",
+  "revision": "ca5fe3ecaba9ca65f4fb108e1cd86a5ee541d111",
   "verifiedAt": "2026-10-26"
 }
