@@ -9,11 +9,16 @@ export function publicAgent(agent: Agent): Agent {
   };
 }
 
-/** Apply the same projection to the immutable Agent snapshot in a Session. */
-export function publicSession(session: Session): Session {
+/**
+ * Apply the same projection to the immutable Agent snapshot in a Session,
+ * and show the Environment it is frozen to by id and name (ADR-0024).
+ */
+export function publicSession(session: Session, environment: { id: string; name: string } | null) {
+  const { environmentId: _frozen, ...rest } = session;
   return {
-    ...session,
+    ...rest,
     agent: publicAgent(session.agent),
+    environment,
   };
 }
 

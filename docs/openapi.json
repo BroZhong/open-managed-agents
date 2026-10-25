@@ -706,6 +706,11 @@
           "sandbox": {
             "$ref": "#/components/schemas/AgentSandboxConfig"
           },
+          "environmentId": {
+            "type": "string",
+            "example": "env_video_production",
+            "description": "The Environment the Agent's new Sessions run in unless a Session names another. Absent: none; its Sandboxes run the Host's configured image."
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time",
@@ -858,6 +863,14 @@
           },
           "sandbox": {
             "$ref": "#/components/schemas/AgentSandboxConfig"
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready); null binds none. Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in."
           }
         },
         "required": [
@@ -947,6 +960,14 @@
           },
           "sandbox": {
             "$ref": "#/components/schemas/AgentSandboxConfig"
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready); null binds none. Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in."
           }
         }
       },
@@ -1126,6 +1147,9 @@
           "workspaceId": {
             "type": "string"
           },
+          "environment": {
+            "$ref": "#/components/schemas/SessionEnvironment"
+          },
           "loopId": {
             "type": "string"
           },
@@ -1155,6 +1179,7 @@
           "status",
           "agent",
           "workspaceId",
+          "environment",
           "createdAt",
           "updatedAt"
         ]
@@ -1167,6 +1192,28 @@
           "waiting",
           "terminated"
         ]
+      },
+      "SessionEnvironment": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "env_video_production"
+          },
+          "name": {
+            "type": "string",
+            "example": "video-production",
+            "description": "The Environment's current name, also once it is deleted."
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "description": "Null: the Session runs in no Environment; its Sandboxes run the Host's configured image."
       },
       "AgentFileList": {
         "type": "object",
@@ -5418,6 +5465,26 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Environment not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Environment is not ready (environment_not_ready)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       },
@@ -5711,7 +5778,17 @@
             }
           },
           "404": {
-            "description": "Agent not found",
+            "description": "Agent not found, or Environment not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Environment is not ready (environment_not_ready)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9319,7 +9396,7 @@
       "post": {
         "operationId": "createSession",
         "summary": "Create a Session",
-        "description": "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace.",
+        "description": "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace. The Session runs in its Agent's Environment as of now unless environmentId names another.",
         "tags": [
           "Sessions"
         ],
@@ -9350,6 +9427,16 @@
                   "workspaceName": {
                     "type": "string",
                     "deprecated": true
+                  },
+                  "environmentId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "A ready Environment to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too."
+                  },
+                  "environment_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Alias of environmentId."
                   }
                 },
                 "required": [
@@ -9401,7 +9488,7 @@
             }
           },
           "404": {
-            "description": "Agent not found",
+            "description": "Agent not found, or Environment not found (environment_not_found)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9411,7 +9498,7 @@
             }
           },
           "409": {
-            "description": "Workspace has been deleted",
+            "description": "Workspace has been deleted, or the Environment is not ready (environment_not_ready)",
             "content": {
               "application/json": {
                 "schema": {

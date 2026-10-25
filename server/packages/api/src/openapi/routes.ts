@@ -271,6 +271,8 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       201: jsonResponse(AgentSchema, "Agent created"),
       400: errorResponse("Invalid Agent configuration"),
+      404: errorResponse("Environment not found (environment_not_found)"),
+      409: errorResponse("The Environment is not ready (environment_not_ready)"),
     },
   }),
   protectedRoute({
@@ -319,7 +321,8 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       200: jsonResponse(AgentSchema, "Agent updated"),
       400: errorResponse("Invalid Agent configuration"),
-      404: errorResponse("Agent not found"),
+      404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
+      409: errorResponse("The Environment is not ready (environment_not_ready)"),
     },
   }),
   protectedRoute({
@@ -960,7 +963,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/sessions",
     operationId: "createSession",
     summary: "Create a Session",
-    description: "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace.",
+    description: "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace. The Session runs in its Agent's Environment as of now unless environmentId names another.",
     tags: ["Sessions"],
     request: {
       body: jsonBody(
@@ -985,14 +988,24 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
             .string({ error: "workspace_name must be a string" })
             .optional()
             .openapi({ deprecated: true }),
+          environmentId: z
+            .string({ error: "environmentId must be an Environment id" })
+            .min(1, { error: "environmentId must be an Environment id" })
+            .optional()
+            .openapi({ description: "A ready Environment to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too." }),
+          environment_id: z
+            .string({ error: "environmentId must be an Environment id" })
+            .min(1, { error: "environmentId must be an Environment id" })
+            .optional()
+            .openapi({ description: "Alias of environmentId." }),
         }),
       ),
     },
     responses: {
       201: jsonResponse(SessionSchema, "Session created"),
       400: errorResponse("Invalid Session input"),
-      409: errorResponse("Workspace has been deleted"),
-      404: errorResponse("Agent not found"),
+      409: errorResponse("Workspace has been deleted, or the Environment is not ready (environment_not_ready)"),
+      404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
     },
   }),
   protectedRoute({

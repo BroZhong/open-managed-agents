@@ -1,10 +1,11 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import type { DelegationStore, SandboxStatus, SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { DelegationStore, SandboxStatus, Session, SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor, sandboxBindingId } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
-import { publicSession, sharedSession } from "../lib/public-projection.js";
+import { sharedSession } from "../lib/public-projection.js";
+import { EnvironmentError, publicSessions, type EnvironmentService } from "../lib/environments.js";
 import { tokenUsageToWire } from "../lib/token-usage.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -29,6 +30,8 @@ export interface SessionRouteDeps {
   wakeSession?: (sessionId: string) => void;
   /** The Sandbox bindings; without them a Session is returned without its Sandbox state. */
   sandboxes?: Pick<DelegationStore, "sandbox">;
+  /** Environments (ADR-0024): a Session is created in one and shows it. Without them none can be chosen. */
+  environments?: Pick<EnvironmentService, "ready" | "ofSessions">;
 }
 
 /** The documented SessionSandbox shape. */
@@ -38,6 +41,8 @@ const sandboxToWire = ({ state, since, lastError }: SandboxStatus) => ({
 
 export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+  const present = (tenantId: string, sessions: Session[]) => publicSessions(tenantId, sessions, deps.environments);
+  const presentOne = async (tenantId: string, session: Session) => (await present(tenantId, [session]))[0]!;
 
   registerContractRoute(router, getOpenApiRoute("createSessionShare"), async (c) => {
     const session = await deps.sessionStore.getById(c.req.param("id")!);
@@ -102,6 +107,12 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       return c.json({ error: "workspace_name must be a string" }, 400);
     }
 
+    // Optional Environment overriding the Agent's (camelCase wire, snake_case alias).
+    const environmentIdInput = body.environmentId ?? body.environment_id;
+    if (environmentIdInput !== undefined && (typeof environmentIdInput !== "string" || !environmentIdInput)) {
+      return c.json({ error: "environmentId must be an Environment id", code: "validation_error" }, 400);
+    }
+
     const tenant = c.get("tenant");
     if (workspaceIdInput !== undefined) {
       try {
@@ -114,6 +125,13 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     if (!agent || agent.tenantId !== tenant.tenantId) {
       return c.json({ error: "Agent not found" }, 404);
     }
+    // The Session freezes its Environment now (ADR-0024): the one named, which
+    // must be ready, otherwise its Agent's, whatever that is building.
+    if (environmentIdInput !== undefined) {
+      if (!deps.environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
+      await deps.environments.ready(tenant.tenantId, environmentIdInput);
+    }
+    const environmentId = environmentIdInput ?? agent.environmentId;
 
     // Resolve the Workspace to bind: use the supplied ID as-is (idempotent
     // create), otherwise auto-create one. The Session→Workspace binding is
@@ -130,9 +148,10 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       agentId: agent.id,
       agent,
       workspaceId: workspace.id,
+      ...(environmentId ? { environmentId } : {}),
     });
 
-    return c.json(publicSession(session), 201);
+    return c.json(await presentOne(tenant.tenantId, session), 201);
   });
 
   // GET /v1/sessions — List sessions
@@ -195,7 +214,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     });
 
     const response: Record<string, unknown> = {
-      data: result.data.map(publicSession),
+      data: await present(tenant.tenantId, result.data),
       has_more: result.hasMore,
     };
 
@@ -238,7 +257,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     // A plain read of the binding, never its lock: a Turn may be preparing or
     // the binding being reclaimed (ADR-0023). A Child Session reports its root's.
     const sandbox = await deps.sandboxes?.sandbox(sandboxBindingId(session));
-    return c.json({ ...publicSession(session), ...(sandbox ? { sandbox: sandboxToWire(sandbox) } : {}) });
+    return c.json({ ...await presentOne(tenant.tenantId, session), ...(sandbox ? { sandbox: sandboxToWire(sandbox) } : {}) });
   });
 
   registerContractRoute(router, getOpenApiRoute("updateSession"), async (c) => {
@@ -256,7 +275,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     const session = body.thinking !== undefined
       ? await deps.sessionStore.setThinking(id, body.thinking)
       : await deps.sessionStore.setTitle(id, body.title.trim());
-    return c.json(publicSession(session!));
+    return c.json(await presentOne(tenant.tenantId, session!));
   });
 
   // DELETE /v1/sessions/:id — Terminate session

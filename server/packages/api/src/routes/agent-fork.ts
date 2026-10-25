@@ -42,6 +42,8 @@ export function agentForkRoutes(
       model: config.model, system: config.system, runtime: config.runtime,
       thinking: config.thinking,
       tools: config.tools, mcpServers: config.mcpServers, sandbox: config.sandbox,
+      // The fork runs its Sessions in the same Environment (ADR-0024).
+      ...(config.environmentId ? { environmentId: config.environmentId } : {}),
       skills: [],
     });
     const forkSkillIds: string[] = [];

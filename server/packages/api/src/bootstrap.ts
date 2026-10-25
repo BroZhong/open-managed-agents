@@ -67,7 +67,9 @@ export async function startHost(role: HostRole): Promise<void> {
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
     modelProviderService: modelProviders,
-    environmentService: new EnvironmentService(stores.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY),
+    environmentService: new EnvironmentService(stores.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY, {
+      inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+    }),
     thinkingOptions: (tenant, model) => modelProviders.thinkingOptions(tenant, model, managedOptions),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => signals.publish({ sessionId, kind: "check" }),

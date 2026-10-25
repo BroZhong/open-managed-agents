@@ -128,7 +128,7 @@ export function createApp(deps: AppDeps) {
 
   // Mount agent routes
   if (deps.agentStore) {
-    app.route("/", agentRoutes(deps.agentStore));
+    app.route("/", agentRoutes(deps.agentStore, deps.environmentService));
   }
 
   if (deps.agentStore && deps.loopStore) {
@@ -138,6 +138,7 @@ export function createApp(deps: AppDeps) {
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
       now: deps.now,
+      environments: deps.environmentService,
     }));
   }
 
@@ -180,6 +181,7 @@ export function createApp(deps: AppDeps) {
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
       sandboxes: deps.delegationStore,
+      environments: deps.environmentService,
     }));
   }
 

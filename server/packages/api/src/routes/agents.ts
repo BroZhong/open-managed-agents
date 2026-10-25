@@ -5,6 +5,7 @@ import {
   normalizeManagedMcpRefs,
 } from "@oma-server/mcp-catalog";
 import { publicAgent } from "../lib/public-projection.js";
+import { EnvironmentError, type EnvironmentService } from "../lib/environments.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -33,8 +34,26 @@ function validateSandbox(value: unknown): string | undefined {
   }
 }
 
-export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
+/**
+ * Agents, each optionally bound to an Environment its new Sessions run in
+ * (ADR-0024). Without `environments` none can be bound.
+ */
+export function agentRoutes(agentStore: AgentStore, environments?: Pick<EnvironmentService, "ready">): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+  /**
+   * The Environment `environmentId` binds: a ready one the Tenant can see,
+   * or null to bind none. `current`, the Agent's binding, is kept as it is
+   * whatever it is building: an edit that resends it binds nothing new.
+   */
+  const bindable = async (tenantId: string, environmentId: unknown, current?: string): Promise<string | null> => {
+    if (environmentId === null) return null;
+    if (typeof environmentId !== "string" || !environmentId) {
+      throw new EnvironmentError(400, "validation_error", "environmentId must be an Environment id or null");
+    }
+    if (environmentId === current) return environmentId;
+    if (!environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
+    return (await environments.ready(tenantId, environmentId)).id;
+  };
 
   // POST /v1/agents — Create agent
   registerContractRoute(router, getOpenApiRoute("createAgent"), async (c) => {
@@ -43,7 +62,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    const { name, description, model, thinking, system, runtime, tools, mcpServers, skills, sandbox } = body;
+    const { name, description, model, thinking, system, runtime, tools, mcpServers, skills, sandbox, environmentId } = body;
     const tenant = c.get("tenant");
     let normalizedMcpServers = mcpServers;
 
@@ -88,6 +107,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       const error = validateSandbox(sandbox);
       if (error) return c.json({ error }, 400);
     }
+    const bound = environmentId === undefined ? null : await bindable(tenant.tenantId, environmentId);
 
     const agent = await agentStore.create({
       tenantId: tenant.tenantId,
@@ -101,6 +121,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       mcpServers: normalizedMcpServers,
       skills,
       sandbox,
+      ...(bound ? { environmentId: bound } : {}),
     });
 
     return c.json(publicAgent(agent), 201);
@@ -216,6 +237,9 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     if (body.mcpServers !== undefined) updateInput.mcpServers = body.mcpServers;
     if (body.skills !== undefined) updateInput.skills = body.skills;
     if (body.sandbox !== undefined) updateInput.sandbox = body.sandbox;
+    if (body.environmentId !== undefined) {
+      updateInput.environmentId = await bindable(tenant.tenantId, body.environmentId, existing.environmentId);
+    }
 
     const updated = await agentStore.update(id, updateInput);
     if (!updated) {

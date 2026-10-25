@@ -8,9 +8,11 @@ import {
   type EnvironmentStore,
   type EnvironmentStoreUpdateInput,
   type EnvironmentVariable,
+  type Session,
 } from "@oma-server/store";
 import { ENVIRONMENT_VARIABLE_NAME, isReservedEnvironmentVariable } from "@oma-server/sandbox";
 import { SecretBox, sealedPlaintextBytes } from "./secret-box.js";
+import { publicSession } from "./public-projection.js";
 
 /** Bytes, not characters: the limits bound what the builder and Sandboxes receive. */
 export const ENVIRONMENT_ENV_MAX_BYTES = 32 * 1024;
@@ -36,9 +38,26 @@ export interface EnvironmentCreateInput extends EnvironmentInput {
 
 /**
  * Whether an Agent references the Environment. Deleting one that is in use
- * answers 409 `environment_in_use`; Agents gain `environmentId` with #306.
+ * answers 409 `environment_in_use`.
  */
 export type EnvironmentInUse = (tenantId: string, environmentId: string) => Promise<boolean>;
+
+/** A Session's Environment as the Session API shows it (ADR-0024): its id and current name. */
+export interface SessionEnvironment {
+  id: string;
+  name: string;
+}
+
+/**
+ * Sessions as the Session API returns them, each with its Environment
+ * (ADR-0024). A Host that serves no Environments shows a frozen id as its name.
+ */
+export async function publicSessions(tenantId: string, sessions: readonly Session[], environments?: Pick<EnvironmentService, "ofSessions">) {
+  const shown = environments
+    ? await environments.ofSessions(tenantId, sessions)
+    : sessions.map(({ environmentId: id }) => (id ? { id, name: id } : null));
+  return sessions.map((session, index) => publicSession(session, shown[index] ?? null));
+}
 
 export class EnvironmentError extends HTTPException {
   constructor(status: 400 | 403 | 404 | 409 | 503, readonly code: string, message: string) {
@@ -95,6 +114,30 @@ export class EnvironmentService {
 
   async get(tenantId: string, id: string) {
     return publicEnvironment(await this.visible(tenantId, id));
+  }
+
+  /**
+   * The Environment an Agent is bound to or a Session created in (ADR-0024):
+   * one the Tenant can see (404 `environment_not_found`) that is ready (409
+   * `environment_not_ready`).
+   */
+  async ready(tenantId: string, id: string): Promise<Environment> {
+    const env = await this.visible(tenantId, id);
+    if (env.status !== "ready") {
+      throw new EnvironmentError(409, "environment_not_ready",
+        `Environment ${env.name} is ${env.status}; only a ready Environment can be bound to an Agent or chosen for a Session.`);
+    }
+    return env;
+  }
+
+  /**
+   * Each Session's Environment as the Session API shows it, deleted or not;
+   * null for a Session without one. One read for all of them.
+   */
+  async ofSessions(tenantId: string, sessions: readonly Pick<Session, "environmentId">[]): Promise<Array<SessionEnvironment | null>> {
+    const ids = sessions.flatMap((session) => (session.environmentId ? [session.environmentId] : []));
+    const names = new Map((await this.store.listForSessions(tenantId, ids)).map((env) => [env.id, env.name]));
+    return sessions.map(({ environmentId: id }) => (id ? { id, name: names.get(id) ?? id } : null));
   }
 
   async create(tenantId: string, input: EnvironmentCreateInput) {

@@ -86,6 +86,10 @@ export const AgentSchema = z
     mcpServers: z.array(ManagedMcpServerRefSchema).optional(),
     skills: z.array(z.string()).optional(),
     sandbox: AgentSandboxConfigSchema.optional(),
+    environmentId: z.string().optional().openapi({
+      example: "env_video_production",
+      description: "The Environment the Agent's new Sessions run in unless a Session names another. Absent: none; its Sandboxes run the Host's configured image.",
+    }),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
@@ -124,6 +128,14 @@ export const CreateAgentInputSchema = z
       .array(z.string(), { error: "skills must be an array" })
       .optional(),
     sandbox: AgentSandboxConfigSchema.optional(),
+    environmentId: z
+      .string({ error: "environmentId must be an Environment id or null" })
+      .min(1, { error: "environmentId must be an Environment id or null" })
+      .nullable()
+      .optional()
+      .openapi({
+        description: "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready); null binds none. Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in.",
+      }),
   })
   .openapi("CreateAgentInput");
 
@@ -317,6 +329,15 @@ export const LoopListSchema = z
   .object({ data: z.array(LoopSchema) })
   .openapi("LoopList");
 
+export const SessionEnvironmentSchema = z
+  .object({
+    id: z.string().openapi({ example: "env_video_production" }),
+    name: z.string().openapi({ example: "video-production", description: "The Environment's current name, also once it is deleted." }),
+  })
+  .openapi("SessionEnvironment", {
+    description: "The Environment the Session's Sandboxes are created from, frozen at its creation (ADR-0024): the one it was created with, otherwise its Agent's then; a Child Session's parent's; a Loop Session's Agent's at trigger time.",
+  });
+
 export const SessionSchema = z
   .object({
     thinking: AgentSchema.shape.thinking,
@@ -327,6 +348,7 @@ export const SessionSchema = z
     title: z.string().optional(),
     agent: AgentSchema,
     workspaceId: z.string(),
+    environment: SessionEnvironmentSchema.nullable().openapi({ description: "Null: the Session runs in no Environment; its Sandboxes run the Host's configured image." }),
     loopId: z.string().optional(),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
