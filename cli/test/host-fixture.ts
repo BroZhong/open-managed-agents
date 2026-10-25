@@ -67,11 +67,25 @@ await stores.environmentStore.create({
   env: [{ name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }],
   encryptedSecrets: {},
 });
+// A built Environment of the Tenant, which Agents and Sessions can use.
+await stores.environmentStore.create({
+  id: "env_cli_tools",
+  owner: { ownerType: "tenant", tenantId: "dev" },
+  name: "cli-tools",
+  description: "",
+  baseImage: "oma-base",
+  initScript: "true\n",
+  env: [],
+  encryptedSecrets: {},
+});
+stores.environmentStore.succeedBuild("env_cli_tools", "registry.example/welltop/oma-environments@sha256:" + "d".repeat(64));
 const app = createApp({
   ...stores,
   eventStreamHub: hub,
   sessionRouter: router,
-  environmentService: new EnvironmentService(stores.environmentStore, "ab".repeat(32)),
+  environmentService: new EnvironmentService(stores.environmentStore, "ab".repeat(32), {
+    inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+  }),
 });
 const server = serve(
   { fetch: app.fetch, port: 0, hostname: "127.0.0.1" },

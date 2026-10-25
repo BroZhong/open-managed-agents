@@ -8,7 +8,7 @@ export const agents: Command[] = [
     api: ["GET /v1/agents"],
     run: (c) =>
       c.http.pages("/v1/agents", c.flags, (x) =>
-        pick(x, ["id", "name", "description", "runtime", "model"]),
+        pick(x, ["id", "name", "description", "runtime", "model", "environmentId"]),
       ),
   },
   {
@@ -39,10 +39,14 @@ const config: Record<string, Flag> = {
 const configFlags = Object.fromEntries(
   Object.entries(config).map(([k, v]) => [k, { ...v, field: k }]),
 );
+/** The ready Environment an Agent's new Sessions run in; null (update only) unbinds it. */
+const environmentFields: Record<string, Flag> = {
+  environmentId: { type: "json", description: "Environment ID, or null to unbind" },
+};
 for (const action of ["create", "update"] as const)
   agents.push({
     path: `agent ${action}`,
-    description: `${action} Agent configuration. Existing Sessions retain their snapshots.`,
+    description: `${action} Agent configuration. Existing Sessions retain their snapshots and Environment.`,
     flags: {
       ...(action === "update" ? id("agent") : {}),
       ...configFlags,
@@ -50,18 +54,28 @@ for (const action of ["create", "update"] as const)
         field: "system",
         source: "text-file",
       }),
+      environment: string("Ready Environment ID new Sessions run in", { field: "environmentId" }),
+      ...(action === "update"
+        ? { "no-environment": boolean("Unbind the Agent's Environment") }
+        : {}),
     },
-    bodyFields: config,
+    bodyFields: { ...config, ...environmentFields },
     requiredBody:
       action === "create" ? ["name", "runtime", "model", "system"] : [],
-    exclusive: [["system", "system-file"]],
+    exclusive: [["system", "system-file"], ["environment", "no-environment"]],
     write: true,
     effects: "Changes Agent configuration only; no historical Session updates.",
     api: [`POST /v1/agents${action === "update" ? "/{id}" : ""}`],
-    validate: (_f, b) => {
+    validate: (f, b) => {
+      if (f["no-environment"]) {
+        if ("environmentId" in b) invalid("Duplicate field environmentId", "--no-environment");
+        b.environmentId = null;
+      }
       if (!Object.keys(b).length) invalid("Provide at least one update field");
       for (const k of ["name", "model", "system"])
         if (k in b && !b[k]) invalid(`${k} cannot be empty`, k);
+      if ("environmentId" in b && !(typeof b.environmentId === "string" && b.environmentId) && !(action === "update" && b.environmentId === null))
+        invalid("Environment ID cannot be empty", "--environment");
     },
     run: (c) =>
       write(c, {

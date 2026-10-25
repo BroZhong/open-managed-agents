@@ -400,7 +400,8 @@ test("CLI defines Environments against the real Host: pending, copied, secrets n
     assert.equal(env.status, "pending");
     assert.deepEqual(env.env, [{ name: "A", value: "1" }, { name: "TOKEN", secretRef: { source: "environment", key: "TOKEN" } }]);
     const listed = await call(["environment", "list"]);
-    assert.deepEqual(listed.map((x) => [x.id, x.ownerType, x.status]), [["env_video_production", "platform", "pending"], [env.id, "tenant", "pending"]]);
+    assert.deepEqual(listed.map((x) => [x.id, x.ownerType, x.status]),
+      [["env_video_production", "platform", "pending"], ["env_cli_tools", "tenant", "ready"], [env.id, "tenant", "pending"]]);
     const updated = await call(["environment", "update", "--environment-id", env.id, "--env", "B=2", "--unset", "A"]);
     assert.deepEqual(updated.env.map((x) => x.name), ["TOKEN", "B"]);
     assert.equal(updated.lastBuild.id, env.lastBuild.id);
@@ -413,4 +414,27 @@ test("CLI defines Environments against the real Host: pending, copied, secrets n
     assert.deepEqual(copy.env, [{ name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }]);
     await call(["environment", "delete", "--environment-id", env.id, "--yes"]);
     await call(["environment", "get", "--environment-id", env.id], 3);
+  }));
+test("CLI binds an Agent to a ready Environment against the real Host, and Sessions run in it", async () =>
+  withHost(async (config, opts) => {
+    const call = async (args, code = 0) => {
+      const r = await run(args, opts);
+      assert.equal(r.code, code, r.stderr);
+      return code === 0 ? r.data().data : r.error();
+    };
+    const bound = await call(["agent", "update", "--agent-id", config.agentId, "--environment", "env_cli_tools"]);
+    assert.equal(bound.environmentId, "env_cli_tools");
+    assert.equal((await call(["agent", "update", "--agent-id", config.agentId, "--environment", "env_video_production"], 5)).subtype, "environment_not_ready");
+    assert.equal((await call(["agent", "update", "--agent-id", config.agentId, "--environment", "env_missing"], 3)).subtype, "environment_not_found");
+    const session = await call(["session", "create", "--agent-id", config.agentId]);
+    assert.deepEqual(session.environment, { id: "env_cli_tools", name: "cli-tools" });
+    assert.deepEqual((await call(["session", "get", "--session-id", session.id])).environment, { id: "env_cli_tools", name: "cli-tools" });
+    assert.equal((await call(["session", "create", "--agent-id", config.agentId, "--environment", "env_video_production"], 5)).subtype, "environment_not_ready");
+    assert.equal((await call(["environment", "delete", "--environment-id", "env_cli_tools", "--yes"], 5)).subtype, "environment_in_use");
+    const unbound = await call(["agent", "update", "--agent-id", config.agentId, "--no-environment"]);
+    assert.equal(unbound.environmentId, undefined);
+    assert.equal((await call(["session", "create", "--agent-id", config.agentId])).environment, null);
+    await call(["environment", "delete", "--environment-id", "env_cli_tools", "--yes"]);
+    // The Session keeps the Environment it was created in, deleted or not.
+    assert.deepEqual((await call(["session", "get", "--session-id", session.id])).environment, { id: "env_cli_tools", name: "cli-tools" });
   }));

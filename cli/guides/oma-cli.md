@@ -165,7 +165,21 @@ oma-cli environment get --environment-id env-example
 oma-cli environment update --environment-id env-example --env FOO=bar --unset OLD
 oma-cli environment update --environment-id env-example --init-script @init.sh
 oma-cli environment delete --environment-id env-example --yes
+oma-cli agent update --agent-id agent-example --environment env-example
+oma-cli agent update --agent-id agent-example --no-environment
+oma-cli session create --agent-id agent-example --environment env_video_production
 ```
+
+An Agent bound with `--environment` runs its new Sessions in that
+Environment; `--no-environment` unbinds it. Only a ready Environment can be
+bound or passed to `session create --environment`, which overrides the
+Agent's for that Session (exit 5, `environment_not_ready`, otherwise). A
+Session keeps the Environment it was created with for its lifetime, as its
+Child Sessions do; `session get` and `session list` show it as
+`environment: {id, name}`. After a rebuild, new Sandboxes run the new image
+while running ones keep theirs. An Environment an Agent is bound to cannot be
+deleted (exit 5, `environment_in_use`); a deleted one keeps serving the
+Sessions created in it.
 
 A new Environment, or one whose init script or Base Image changed, is pending
 until its build; changing variables, name or description never builds and
