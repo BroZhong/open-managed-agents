@@ -382,7 +382,8 @@ Run the counts with psql as the migration role before and after the
 migration; it prints counts and dropped variable names, never values. The
 migration keeps what it changed in `migration_0029_agents` /
 `migration_0029_sessions` for `0029_environment_migration.rollback.sql`
-(apply it once the previous image runs); drop both tables once the release is
+(apply it once the previous image runs; it keeps a copy that a Session or
+Agent created since references); drop both tables once the release is
 accepted. After it, the `oma-auto-story-env` Secret is no longer referenced
 and can be deleted.
 
@@ -571,9 +572,11 @@ but unavailable Secret prevents startup; omission of both settings disables the
 integration for local development. HTTPS requests use the ServiceAccount CA and
 bypass the outbound LLM proxy.
 
-After Secret rotation, roll the Runners: they read it at startup, and the next
-command of every Session gets the new values. Verify with E2B `commands.run()`
-and only emit presence/equality booleans, never values.
+Runners re-read it every 60 s (`PLATFORM_SECRETS_REFRESH_MS`), keeping the
+last good values when a read fails, so after a rotation the next command of
+every Session gets the new values within a minute, without a restart. Verify
+with E2B `commands.run()` and only emit presence/equality booleans, never
+values.
 
 Use the dedicated kubeconfig instead of whichever context happens to be the
 local default:

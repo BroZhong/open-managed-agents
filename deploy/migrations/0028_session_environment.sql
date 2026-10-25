@@ -2,8 +2,8 @@
 -- references the Environment its new Sessions run in, a Session freezes its
 -- Environment at creation, and a Sandbox Binding records the Environment and
 -- image its Sandbox was created with (set with sandbox_id, NULL with it).
--- NULL everywhere means no Environment: the Host's configured image, as
--- before. Mirrors the idempotent ensureSchema DDL.
+-- NULL means no Environment (until 0029 binds every Sandboxed Agent and
+-- Session to one). Mirrors the idempotent ensureSchema DDL.
 --
 -- Additive: the previous image neither reads nor writes these columns, so
 -- apply it before starting the image that needs them. Existing rows keep NULL

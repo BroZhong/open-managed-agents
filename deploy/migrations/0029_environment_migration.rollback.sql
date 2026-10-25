@@ -1,9 +1,10 @@
 -- Rollback of 0029_environment_migration.sql, from what it kept: every Agent
 -- and Session snapshot gets its sandbox.image and sandbox.env back; Agents
 -- the migration bound, and that are still bound so, and the Sessions it froze
--- lose their Environment; the copies it made, and their builds, are deleted.
--- Agents and Sessions created since keep their Environment, which the
--- previous image understands. Apply once the previous image runs.
+-- lose their Environment; the copies it made, and their builds, are deleted
+-- unless an Agent or Session still references one. Agents and Sessions
+-- created since keep their Environment, which the previous image
+-- understands. Apply once the previous image runs.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
@@ -23,10 +24,15 @@ UPDATE oma.sessions s SET
   environment_id = m.environment_id
 FROM oma.migration_0029_sessions m WHERE m.session_id = s.id;
 
-DELETE FROM oma.environment_builds WHERE environment_id IN (
-  SELECT copied_environment_id FROM oma.migration_0029_agents WHERE copied_environment_id IS NOT NULL);
-DELETE FROM oma.environments WHERE id IN (
-  SELECT copied_environment_id FROM oma.migration_0029_agents WHERE copied_environment_id IS NOT NULL);
+-- A copy an Agent or Session still references (one created since, or bound to
+-- it since) is kept, with its builds; the others are deleted.
+CREATE TEMP TABLE migration_0029_unused_copies ON COMMIT DROP AS
+SELECT m.copied_environment_id AS id FROM oma.migration_0029_agents m
+WHERE m.copied_environment_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM oma.agents a WHERE a.environment_id = m.copied_environment_id)
+  AND NOT EXISTS (SELECT 1 FROM oma.sessions s WHERE s.environment_id = m.copied_environment_id);
+DELETE FROM oma.environment_builds WHERE environment_id IN (SELECT id FROM migration_0029_unused_copies);
+DELETE FROM oma.environments WHERE id IN (SELECT id FROM migration_0029_unused_copies);
 
 DROP TABLE oma.migration_0029_sessions;
 DROP TABLE oma.migration_0029_agents;

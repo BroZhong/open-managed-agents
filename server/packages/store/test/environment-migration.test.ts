@@ -173,4 +173,19 @@ describe.skipIf(!process.env.PG_TEST_URL)("migration 0029: Agents and Sessions m
     await apply("0029_environment_migration.sql");
     expect(await state()).toEqual(migrated);
   });
+
+  it("keeps on rollback a copy a Session created since references, with its build, and deletes the others", async () => {
+    await builtIn();
+    await agent("agent_more", "t1", { enabled: true, env: { MORE: "1" } });
+    await apply("0029_environment_migration.sql");
+    // The new API ran a Session in the copy of agent_vars, then the rollback.
+    await session("sess_after", "agent_vars", { enabled: true }, "env_agent_vars");
+    await apply("0029_environment_migration.rollback.sql");
+    const rolledBack = await state();
+    expect(rolledBack.environments.map((row) => row.id)).toEqual(["env_agent_vars", "env_video_production"]);
+    expect(rolledBack.builds.map((row) => row.id)).toEqual(["envb_agent_vars", "envb_video"]);
+    expect(rolledBack.sessions.find((row) => row.id === "sess_after")).toMatchObject({ environment_id: "env_agent_vars" });
+    // The Agent itself is back as it was.
+    expect(rolledBack.agents.find((row) => row.id === "agent_vars")).toMatchObject({ environment_id: null, sandbox: { image: "custom:1" } });
+  });
 });
