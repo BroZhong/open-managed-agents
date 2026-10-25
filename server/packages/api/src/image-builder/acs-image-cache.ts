@@ -40,10 +40,13 @@ const FAILED = new Set(["Failed", "UpdateFailed"]);
 
 /**
  * ACS ImageCaches through the `acc` OpenAPI (CreateImageCache,
- * ListImageCaches), as #299's bench created one with `aliyun acc
- * create-image-cache`: one image, the cluster's network, no registry
- * credential (the account's ACR). Found by name, so a restart or a second
- * call never creates a second cache for the same image.
+ * ListImageCaches), as #299's bench and #301's oma-test pool created them
+ * with `aliyun acc create-image-cache`: one image by digest, the cluster
+ * pods' network (that of the production cache imc-uf6c2ys46pzt3c3grd74), no
+ * registry credential (the account's ACR). Found by name, so a restart or a
+ * second call never creates a second cache for the same image.
+ * ListImageCaches answers `{ImageCaches: [{ImageCacheId, ImageCacheName,
+ * Status, Images}], TotalCount}` (read 2026-10-26).
  */
 export class AcsImageCaches implements ImageCaches {
   private readonly rpc: AcsRpc;
