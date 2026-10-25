@@ -431,6 +431,18 @@ describe("EnvironmentBuilder (ADR-0024 Building)", () => {
     for (const env of envs) expect((await store.get("t1", env.id))!.status).toBe("building");
   });
 
+  it("starts claiming even when the startup sweep fails", async () => {
+    const runner = new FakeRunner([pushed(1)]);
+    runner.sweep = async () => { throw new Error("pods is forbidden"); };
+    const { builder, create, store, clock } = setup({ runner });
+    const env = await create();
+    const worker = builder();
+    await worker.start();
+    await clock.advance(BUILD_TIMING.pollMs);
+    while (worker.runningCount) await settle();
+    expect(await store.get("t1", env.id)).toMatchObject({ status: "ready" });
+  });
+
   it("sweeps periodically, sparing its own running attempts and those another builder's lease covers", async () => {
     const step = blocking();
     const runner = new FakeRunner([step]);

@@ -124,9 +124,13 @@ export class EnvironmentBuilder {
     this.nonce = deps.nonce ?? (() => randomBytes(12).toString("hex"));
   }
 
-  /** Remove what a previous builder left, then claim and run builds until {@link stop}. */
+  /**
+   * Remove what a previous builder left, then claim and run builds until
+   * {@link stop}. A failed sweep does not keep builds waiting: the next
+   * periodic sweep tries again.
+   */
   async start(): Promise<void> {
-    await this.sweep();
+    await this.sweep().catch((error) => this.logger.error(`environment_build_sweep: ${errorText(error)}`));
     this.loop = this.claimLoop();
   }
 

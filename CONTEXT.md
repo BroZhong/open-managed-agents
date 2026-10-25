@@ -188,7 +188,7 @@ One of the platform images an **Environment** builds on (`oma-base`, or `oma-med
 _Avoid_: template, SandboxSet, custom base image
 
 **Environment Build**:
-One attempt to turn an **Environment**'s Base Image and init script into an image. A successful build becomes the Environment's image; a failed one leaves the previous image serving.
+One request to turn an **Environment**'s Base Image and init script into an image, queued by a change or a rebuild and run by the image builder. An infrastructure failure is retried as another attempt of the same build; a newer change supersedes it. A successful build becomes the Environment's image; a failed one leaves the previous image serving.
 _Avoid_: commit, snapshot, provisioning, setup
 
 **Warm Pool**:
