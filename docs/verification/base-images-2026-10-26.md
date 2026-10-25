@@ -73,7 +73,7 @@
 - 加 `oma.dev/test-only` 标签；
 - 不写服务器端默认字段（`dnsPolicy`、`restartPolicy`、`schedulerName`、`securityContext`、`terminationMessage*`）。
 
-保留：`persistentContents`、`runtimes`（csi、agent-runtime）、`enable-image-cache` 注解、ACS 标签、资源（2C4G，50 Gi 临时盘）、`imagePullSecrets: ali-shanghai`、`terminationGracePeriodSeconds: 30`、`vfs-cli-policy-test-v1` ConfigMap 只读挂 `/etc/vfs-cli`（#305 的 init 脚本已把策略写进镜像，换成新镜像后可去掉）。镜像暂为线上 0.3.3 digest，第二阶段换成过渡镜像（oma-media + video-production 的 init.sh），同时改 `SANDBOX_IMAGE` 并先建 ImageCache。
+保留：`persistentContents`、`runtimes`（csi、agent-runtime）、`enable-image-cache` 注解、ACS 标签、资源（2C4G，50 Gi 临时盘）、`imagePullSecrets: ali-shanghai`、`terminationGracePeriodSeconds: 30`。第一阶段还保留了 `vfs-cli-policy-test-v1` 的只读挂载、镜像暂用线上 0.3.3。第二阶段换成过渡镜像（oma-media + video-production 的 init.sh，自带同样的策略文件），去掉了这个挂载，`SANDBOX_IMAGE` 同时改，并先建了 ImageCache。
 
 ## Host
 
@@ -84,7 +84,7 @@
   - PID 1 在领取之后启动，但内核在领取之前已启动：同一个 Pod 里容器被换掉，`swapped: true`；
   - 两者都在领取之后：Pod 是为这次领取新建的（池子无库存时冷启动），`swapped: false`。
   - 探测失败或输出无法解析：不写 `swapped`，创建照常成功，不记为执行结果不确定。
-  - 前提：ACS Sandbox 的 `/proc/uptime` 是该 Pod 自己的内核（Kata 类虚拟机）。第二阶段在 oma-test 池上实测确认；若是宿主机内核，冷启动会被记成换镜像。
+  - **第二阶段更正：** 实测 ACS 给每个容器单独的 `/proc/uptime`（PID 1 从 0 开始），这一版把每次换镜像都记成了 `false`。现在改为用 `/etc/hostname` 的 ctime 判断 Pod 年龄（提交 `6c79c1e`），见 [warm-pool-oma-test-2026-10-26.md](warm-pool-oma-test-2026-10-26.md)。
 - **span**：建出 Sandbox 的那次准备，其 `span.sandbox_prepare_end` 多出 `image`、`swapped`、`claimMs`（网关 create 的耗时）；连接已有 Sandbox 的准备不带这些字段。
 
 ## 过程与异常
