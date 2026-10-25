@@ -2,9 +2,9 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import { Sandbox, SandboxNotFoundError } from 'e2b';
 import {
+  CLAIM_PROBE,
   E2BSandboxClient,
   parseFindOutput,
-  resolveTemplate,
   type CreateSandboxFn,
   type E2BSandbox,
   type E2BCommandResult,
@@ -12,6 +12,20 @@ import {
 } from "../src/e2b-sandbox-client.js";
 import type { SandboxExecChunk } from "../src/sandbox-client.js";
 import { CLAIM_SECONDS, CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SandboxCreateRejected, WAIT_READY_SECONDS } from "../src/index.js";
+
+/** The image every create claims with: digest-pinned, as the Host's configuration requires. */
+const IMAGE = "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:" + "a".repeat(64);
+const claim = { image: IMAGE };
+
+/**
+ * The claim probe's answer (`cat /proc/uptime /proc/1/stat; getconf CLK_TCK`):
+ * the kernel up `uptime` seconds, PID 1 started `pid1Age` seconds ago.
+ */
+function probeOutput(uptime: number, pid1Age: number, ticks = 100): string {
+  const start = Math.round((uptime - pid1Age) * ticks);
+  const fields = ["S", "0", "1", "1", "0", "-1", "4194560", "1", "0", "0", "0", "3", "1", "0", "0", "20", "0", "1", "0", String(start), "4096"];
+  return `${uptime.toFixed(2)} ${(uptime * 3).toFixed(2)}\n1 (tini) ${fields.join(" ")}\n${ticks}\n`;
+}
 
 /** A recorded `commands.run` call. */
 interface RunCall {
@@ -38,6 +52,10 @@ interface RunCall {
 class FakeSandbox implements E2BSandbox {
   readonly sandboxId: string;
   readonly runCalls: RunCall[] = [];
+  /** The claim probe create runs, kept apart from the commands under test. */
+  readonly claimProbes: RunCall[] = [];
+  /** How the claim probe answers: a plain claim of a warm Sandbox by default. */
+  claimProbe: () => E2BCommandResult = () => ({ exitCode: 0, stdout: probeOutput(600, 300), stderr: "" });
   readonly writes: Array<{ path: string; data: string | ArrayBuffer }> = [];
   readonly removes: string[] = [];
   readonly reads = new Map<string, string | Uint8Array>();
@@ -76,6 +94,10 @@ class FakeSandbox implements E2BSandbox {
       cmd: string,
       opts?: RunCall["opts"],
     ): Promise<E2BCommandResult | E2BCommandHandle> => {
+      if (cmd === CLAIM_PROBE) {
+        this.claimProbes.push({ cmd, opts });
+        return this.claimProbe();
+      }
       this.runCalls.push({ cmd, opts });
       const wait = async () => {
         if (this.processWait) return this.processWait();
@@ -152,6 +174,10 @@ function makeClient(
       name: string,
       body: string,
     ) => Promise<void>;
+    claimProbe?: FakeSandbox["claimProbe"];
+    clock?: () => number;
+    /** Runs while the gateway handles the create, e.g. to advance the clock. */
+    onCreate?: () => void;
   },
 ): {
   client: E2BSandboxClient;
@@ -169,7 +195,9 @@ function makeClient(
   let counter = 0;
   const createSandbox: CreateSandboxFn = async (template, o) => {
     factoryCalls.push({ template, opts: o });
+    opts?.onCreate?.();
     const s = new FakeSandbox(`sbx-${++counter}`, runHandler);
+    if (opts?.claimProbe) s.claimProbe = opts.claimProbe;
     const volume = JSON.parse(
       o.metadata?.["e2b.agents.kruise.io/csi-volume-config"] ?? "null",
     )?.[0];
@@ -198,8 +226,9 @@ function makeClient(
   const client = new E2BSandboxClient({
     domain: "sandbox.example.com",
     apiKey: "gw-key",
-    defaultTemplate: "configured-template",
+    pool: "oma-test-sandbox",
     createSandbox,
+    ...(opts?.clock ? { clock: opts.clock } : {}),
     getSandboxInfo: async id => {
       const sandbox = sandboxes.find(item => item.sandboxId === id);
       if (!sandbox || sandbox.killed) throw new SandboxNotFoundError('not found');
@@ -216,7 +245,7 @@ function makeClient(
 describe("root commands with input on stdin", () => {
   it("runs as root and sends the input once to the started process, never on its command line", async () => {
     const { client, sandboxes } = makeClient(() => ({ stdout: "done\n" }));
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const onExit = vi.fn();
     const secret = "https://bucket.example.com/key.zip?Signature=abc\n";
     const chunks = await collect(client.exec(id, ["bash", "-c", "read -r line"], { user: "root", stdin: secret, timeoutSeconds: 40, onExit }));
@@ -231,7 +260,7 @@ describe("root commands with input on stdin", () => {
 
   it("keeps ordinary commands on the default user with stdin closed", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await collect(client.exec(id, ["true"]));
     expect(sandboxes[0].runCalls.at(-1)!.opts).not.toHaveProperty("user");
     expect(sandboxes[0].runCalls.at(-1)!.opts).not.toHaveProperty("stdin");
@@ -240,7 +269,7 @@ describe("root commands with input on stdin", () => {
 
   it("stops a process whose input could not be delivered and reports the transport error", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     let finish!: (result: E2BCommandResult) => void;
     sandboxes[0].processWait = () => new Promise((resolve) => { finish = resolve; });
     sandboxes[0].processKill.mockImplementation(async () => { finish({ exitCode: 137, stdout: "", stderr: "" }); return true; });
@@ -255,7 +284,7 @@ describe("root commands with input on stdin", () => {
 describe('managed Sandbox lifetime and exit evidence', () => {
   it('does not turn an acknowledged kill plus a broken stream into exit evidence', async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const controller = new AbortController();
     const onExit = vi.fn();
     let waiting!: () => void;
@@ -271,14 +300,14 @@ describe('managed Sandbox lifetime and exit evidence', () => {
   });
   it('does not treat a DNS ENOTFOUND during deletion as a missing Sandbox', async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].kill = async () => { throw new Error('getaddrinfo ENOTFOUND gateway'); };
     await expect(client.destroy(id)).rejects.toThrow('ENOTFOUND');
     expect(await client.state(id)).toBe("running");
   });
   it('requests one finite native lifecycle and bounded server creation budgets', async () => {
     const { client, factoryCalls } = makeClient();
-    await client.create({ metadata: { 'oma.dev/binding': 'parent' } });
+    await client.create({ ...claim, metadata: { 'oma.dev/binding': 'parent' } });
     expect(factoryCalls[0].opts).toMatchObject({
       timeoutMs: 86400000, lifecycle: { onTimeout: 'pause', autoResume: false },
       metadata: { 'oma.dev/binding': 'parent',
@@ -294,7 +323,7 @@ describe('managed Sandbox lifetime and exit evidence', () => {
   });
   it('retains uncertainty after a lost command stream, even if a later command exits', async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].processWait = async () => { throw new Error('transport disconnected'); };
     sandboxes[0].processKill.mockRejectedValueOnce(new Error('network unavailable'));
     await expect((async () => { for await (const _ of client.exec(id, ['sleep', '999'])) {} })()).rejects.toThrow('transport');
@@ -305,7 +334,7 @@ describe('managed Sandbox lifetime and exit evidence', () => {
   });
   it('clears activity on an observed nonzero exit and on an abort before process creation', async () => {
     const { client } = makeClient(() => ({ exitCode: 2, throwExit: true }));
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     for await (const _ of client.exec(id, ['false'])) {}
     expect(client.hasUncertainExecution(id)).toBe(false);
     const signal = AbortSignal.abort();
@@ -323,54 +352,24 @@ async function collect(
 }
 
 describe("E2BSandboxClient", () => {
-  it("requires domain and apiKey", () => {
-    expect(
-      () =>
-        new E2BSandboxClient({
-          domain: "",
-          apiKey: "k",
-          verifyWorkspaceProbe: async () => {},
-        }),
-    ).toThrow(/domain/);
-    expect(
-      () =>
-        new E2BSandboxClient({
-          domain: "d",
-          apiKey: "",
-          verifyWorkspaceProbe: async () => {},
-        }),
-    ).toThrow(/apiKey/);
+  it("requires domain, apiKey and the Warm Pool", () => {
+    const options = { domain: "d", apiKey: "k", pool: "oma-test-sandbox", verifyWorkspaceProbe: async () => {} };
+    expect(() => new E2BSandboxClient({ ...options, domain: "" })).toThrow(/domain/);
+    expect(() => new E2BSandboxClient({ ...options, apiKey: "" })).toThrow(/apiKey/);
+    expect(() => new E2BSandboxClient({ ...options, pool: "" })).toThrow(/Warm Pool/);
   });
 
-  it("defaults to auto-story-v2 while preserving explicit Agent template selection", async () => {
-    const templates: string[] = [];
-    const client = new E2BSandboxClient({
-      domain: "sandbox.example.com",
-      apiKey: "gw-key",
-      verifyWorkspaceProbe: async () => {},
-      createSandbox: async (template) => {
-        templates.push(template);
-        return new FakeSandbox(`default-${templates.length}`);
-      },
-    });
-
-    await client.create();
-    await client.create({ image: "legacy/container:latest" });
-    await client.create({ image: "agent-specific-template" });
-
-    expect(templates).toEqual(["auto-story-v2", "auto-story-v2", "agent-specific-template"]);
-  });
-
-  it("create passes templateID + apiKey + domain and returns the sandboxId", async () => {
+  it("create passes the pool as template + apiKey + domain and returns the sandboxId", async () => {
     const { client, factoryCalls } = makeClient();
     const handle = await client.create({
+      image: IMAGE,
       env: { FOO: "bar" },
       metadata: { sessionId: "s1" },
       timeoutSeconds: 30,
     });
     expect(handle.id).toBe("sbx-1");
     expect(factoryCalls).toHaveLength(1);
-    expect(factoryCalls[0].template).toBe("configured-template");
+    expect(factoryCalls[0].template).toBe("oma-test-sandbox");
     expect(factoryCalls[0].opts.apiKey).toBe("gw-key");
     expect(factoryCalls[0].opts.domain).toBe("sandbox.example.com");
     expect(factoryCalls[0].opts.envs).toEqual({ FOO: "bar" });
@@ -378,25 +377,81 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].opts.timeoutMs).toBe(30_000);
   });
 
-  it("create maps opts.image to the template, else uses defaultTemplate", async () => {
-    const { client, factoryCalls } = makeClient();
-    await client.create({ image: "my-custom-set" });
-    expect(factoryCalls[0].template).toBe("my-custom-set");
-  });
-
-  it("create ignores a container-image-style image and uses the default template", async () => {
-    // Legacy Agents persisted sandbox.image as a container ref, which is not a
-    // valid E2B template name — the client must fall back to defaultTemplate.
-    const { client, factoryCalls } = makeClient();
-    await client.create({ image: "open-managed-agents/sandbox:latest" });
-    expect(factoryCalls[0].template).toBe("configured-template");
-  });
-
   it("create leaves mount provisioning to CSI and waits past the gateway's claim timeout", async () => {
     const { client, sandboxes, factoryCalls } = makeClient();
-    await client.create();
+    await client.create(claim);
     expect(sandboxes[0].runCalls).toEqual([]);
     expect(factoryCalls[0].opts.requestTimeoutMs).toBe(170_000);
+  });
+
+  describe("claiming from the Warm Pool with an image digest (ADR-0024)", () => {
+    it("always claims from the configured pool and passes the image as the in-place image", async () => {
+      const { client, factoryCalls } = makeClient();
+      await client.create({ image: IMAGE, metadata: { "oma.dev/binding": "sesn_1" } });
+      expect(factoryCalls[0].template).toBe("oma-test-sandbox");
+      expect(factoryCalls[0].opts.metadata).toMatchObject({ "oma.dev/binding": "sesn_1", "e2b.agents.kruise.io/image": IMAGE });
+    });
+
+    it.each([
+      ["no image", undefined],
+      ["a template name", "auto-story-v2"],
+      ["a tag", "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-base-0.1.0"],
+      ["a short digest", "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:abc"],
+      ["a digest without repository", "@sha256:" + "a".repeat(64)],
+    ])("rejects %s as a definite 400 without calling the gateway", async (_label, image) => {
+      const { client, factoryCalls } = makeClient();
+      const failure = await client.create({ image }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(SandboxCreateRejected);
+      expect(failure).toMatchObject({ status: 400 });
+      expect(factoryCalls).toEqual([]);
+    });
+
+    it("a claim of the pool's own image keeps the warm container: not swapped", async () => {
+      let now = 0;
+      const { client, sandboxes } = makeClient(undefined, {
+        clock: () => now,
+        claimProbe: () => ({ exitCode: 0, stdout: probeOutput(900, 300), stderr: "" }),
+      });
+      const created = client.create(claim);
+      now = 210;
+      const handle = await created;
+      expect(handle.claim).toEqual({ image: IMAGE, swapped: false, claimMs: expect.any(Number) });
+      expect(sandboxes[0].claimProbes).toHaveLength(1);
+      expect(sandboxes[0].runCalls).toEqual([]);
+    });
+
+    it("a claim whose container started after the request, in a Pod that ran before it, swapped the image in place", async () => {
+      let now = 0;
+      const { client } = makeClient(undefined, {
+        clock: () => now,
+        onCreate: () => { now = 4_100; },
+        claimProbe: () => { now = 4_150; return { exitCode: 0, stdout: probeOutput(300, 2.5), stderr: "" }; },
+      });
+      const handle = await client.create(claim);
+      expect(handle.claim).toEqual({ image: IMAGE, swapped: true, claimMs: 4_100 });
+    });
+
+    it("a Pod booted during the claim (no warm stock) is a cold start, not a swap", async () => {
+      let now = 0;
+      const { client } = makeClient(undefined, {
+        clock: () => now,
+        onCreate: () => { now = 26_000; },
+        claimProbe: () => ({ exitCode: 0, stdout: probeOutput(20, 15), stderr: "" }),
+      });
+      const handle = await client.create(claim);
+      expect(handle.claim).toEqual({ image: IMAGE, swapped: false, claimMs: 26_000 });
+    });
+
+    it.each([
+      ["a failed probe", () => ({ exitCode: 1, stdout: "", stderr: "cat: /proc/1/stat: denied" })],
+      ["an unreadable answer", () => ({ exitCode: 0, stdout: "garbage\n", stderr: "" })],
+      ["a lost probe", () => { throw new Error("transport closed"); }],
+    ])("%s leaves swapped unknown, fails nothing and marks no execution uncertain", async (_label, probe) => {
+      const { client } = makeClient(undefined, { claimProbe: probe as FakeSandbox["claimProbe"] });
+      const handle = await client.create(claim);
+      expect(handle.claim).toEqual({ image: IMAGE, claimMs: expect.any(Number) });
+      expect(client.hasUncertainExecution(handle.id)).toBe(false);
+    });
   });
 
   const target = {
@@ -405,6 +460,7 @@ describe("E2BSandboxClient", () => {
     prefix: "tenant_1/ws_1/",
   };
   const mountOptions = {
+    image: IMAGE,
     metadata: {
       "security.agents.kruise.io/agent-name": "agentry-workspace",
       "e2b.agents.kruise.io/csi-volume-config":
@@ -497,7 +553,7 @@ describe("E2BSandboxClient", () => {
       }
       return {};
     });
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const chunks = await collect(
       client.exec(id, ["echo", "hello"], { cwd: "/workspace" }),
     );
@@ -511,7 +567,7 @@ describe("E2BSandboxClient", () => {
 
   it("forwards raw SDK bytes once and flushes decoded text before reporting exit", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].processWait = async () => {
       const options = sandboxes[0].runCalls.at(-1)!.opts!;
       await options.onStdoutBytes!(new Uint8Array([0xef, 0xbb]));
@@ -536,8 +592,8 @@ describe("E2BSandboxClient", () => {
 
   it("provides a stable native filesystem capability scoped to a live sandbox", async () => {
     const { client } = makeClient();
-    const a = await client.create();
-    const b = await client.create();
+    const a = await client.create(claim);
+    const b = await client.create(claim);
     expect(client.fileSystem(a.id)).toBe(client.fileSystem(a.id));
     expect(client.fileSystem(a.id)).not.toBe(client.fileSystem(b.id));
     await client.destroy(a.id);
@@ -551,7 +607,7 @@ describe("E2BSandboxClient", () => {
       }
       return {};
     });
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const chunks = await collect(client.exec(id, ["false"]));
     // The failing command's stderr streams through; no throw.
     expect(chunks).toEqual([{ stream: "stderr", text: "boom\n" }]);
@@ -559,7 +615,7 @@ describe("E2BSandboxClient", () => {
 
   it("exec passes env and timeout through to commands.run", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await collect(
       client.exec(id, ["ls"], { env: { A: "1" }, timeoutSeconds: 5 }),
     );
@@ -570,7 +626,7 @@ describe("E2BSandboxClient", () => {
 
   it("exec maps timeoutSeconds: 40 to timeoutMs: 40000 (#81)", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await collect(client.exec(id, ["ls"], { timeoutSeconds: 40 }));
     expect(sandboxes[0].runCalls.at(-1)!.opts?.timeoutMs).toBe(40_000);
   });
@@ -579,14 +635,14 @@ describe("E2BSandboxClient", () => {
     // `0` is the disable-timeout convention (mirrors e2b SDK `timeoutMs: 0`).
     // It must reach the SDK as `timeoutMs: 0`, NOT be dropped as falsy.
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await collect(client.exec(id, ["ls"], { timeoutSeconds: 0 }));
     expect(sandboxes[0].runCalls.at(-1)!.opts?.timeoutMs).toBe(0);
   });
 
   it("exec retains a process handle without passing the turn signal to its stream", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const controller = new AbortController();
     await collect(client.exec(id, ["ls"], { signal: controller.signal }));
     expect(sandboxes[0].runCalls.at(-1)!.opts?.signal).toBeUndefined();
@@ -597,7 +653,7 @@ describe("E2BSandboxClient", () => {
     const { client } = makeClient((cmd) => cmd.includes("'rg'")
       ? { stdout: "matches\n", exitCode, throwExit: exitCode !== 0 }
       : {});
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const events: unknown[] = [];
     for await (const chunk of client.exec(id, ["rg", "a"], {
       onExit: (result) => events.push(result),
@@ -610,7 +666,7 @@ describe("E2BSandboxClient", () => {
 
   it.each([false, true])("kills the process when cancellation occurs %s during startup", async (duringStartup) => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const sandbox = sandboxes[0];
     const controller = new AbortController();
     const onExit = vi.fn();
@@ -649,7 +705,7 @@ describe("E2BSandboxClient", () => {
 
   it("does not start an already cancelled command", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const before = sandboxes[0].runCalls.length;
     await expect(collect(client.exec(id, ["rg", "a"], {
       signal: AbortSignal.abort(),
@@ -659,7 +715,7 @@ describe("E2BSandboxClient", () => {
 
   it("surfaces a failed kill without claiming the process exited or waiting forever", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const sandbox = sandboxes[0];
     const controller = new AbortController();
     const onExit = vi.fn();
@@ -683,7 +739,7 @@ describe("E2BSandboxClient", () => {
 
   it("kills and waits for the process when a stream consumer stops early", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const sandbox = sandboxes[0];
     const onExit = vi.fn();
     let rejectWait!: (reason: unknown) => void;
@@ -702,14 +758,14 @@ describe("E2BSandboxClient", () => {
 
   it("readFile reads via files.read", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].reads.set("/workspace/a.txt", "file-body");
     expect(await client.readFile(id, "/workspace/a.txt")).toBe("file-body");
   });
 
   it("writeFile writes via files.write (SDK creates parent dirs)", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await client.writeFile(id, "/workspace/dir/b.txt", "payload");
     expect(sandboxes[0].writes).toContainEqual({
       path: "/workspace/dir/b.txt",
@@ -719,7 +775,7 @@ describe("E2BSandboxClient", () => {
 
   it("reads and writes exact bytes through the E2B bytes format", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
     sandboxes[0].reads.set("/workspace/image.png", bytes);
 
@@ -736,7 +792,7 @@ describe("E2BSandboxClient", () => {
 
   it("removes a file or directory through the E2B filesystem API", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].reads.set("/skills/a/SKILL.md", "body");
 
     await client.remove(id, "/skills/a");
@@ -751,7 +807,7 @@ describe("E2BSandboxClient", () => {
     const { client, sandboxes } = makeClient((cmd) =>
       cmd.includes("find") ? { stdout: findOut } : {},
     );
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const entries = await client.list(id, "/workspace");
     expect(entries).toEqual([
       { path: "/workspace/a.txt", size: 12, mtimeMs: 1700000000500 },
@@ -764,14 +820,14 @@ describe("E2BSandboxClient", () => {
 
   it("lists an optional missing directory as empty without creating it", async () => {
     const { client, sandboxes } = makeClient(() => ({ stdout: '\u001eoma-fs:{"ok":false,"error":{"code":"ENOENT","message":"directory missing"}}\n' }));
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     expect(await client.list(id, "/skills", { missingOk: true })).toEqual([]);
     expect(sandboxes[0].writes).toEqual([]);
   });
 
   it("preserves access and transport errors while probing optional directories", async () => {
     const { client, sandboxes } = makeClient(() => ({ stdout: '\u001eoma-fs:{"ok":false,"error":{"code":"EACCES","message":"permission denied"}}\n' }));
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await expect(client.list(id, "/private/skills", { missingOk: true })).rejects.toMatchObject({ code: "EACCES" });
     sandboxes[0].processWait = async () => { throw new Error("gateway disconnected"); };
     await expect(client.list(id, "/skills", { missingOk: true })).rejects.toThrow("gateway disconnected");
@@ -783,7 +839,7 @@ describe("E2BSandboxClient", () => {
       stderr: "Input/output error",
       exitCode: 1,
     }));
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await expect(client.list(id, "/home/user/workspace")).rejects.toThrow(
       /list/i,
     );
@@ -791,7 +847,7 @@ describe("E2BSandboxClient", () => {
 
   it("control-plane state distinguishes Running and Paused without a health request", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     expect(await client.state(id)).toBe("running");
     sandboxes[0].running = false;
     expect(await client.state(id)).toBe("paused");
@@ -800,21 +856,21 @@ describe("E2BSandboxClient", () => {
   it("control-plane state distinguishes a missing Sandbox", async () => {
     const { client } = makeClient();
     expect(await client.state("never-created")).toBe("missing");
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await client.destroy(id);
     expect(await client.state(id)).toBe("missing");
   });
 
   it("does not reclaim a potentially live Sandbox on a transport error", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].isRunningThrows = true;
     await expect(client.state(id)).rejects.toThrow();
   });
 
   it("destroy kills the sandbox and is idempotent", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await client.destroy(id);
     expect(sandboxes[0].killed).toBe(true);
     // Second destroy is a no-op (no throw, sandbox already gone).
@@ -823,7 +879,7 @@ describe("E2BSandboxClient", () => {
 
   it("destroy reports transport failure and retains the handle so cleanup can be retried", async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     const kill = vi
       .spyOn(sandboxes[0], "kill")
       .mockRejectedValueOnce(new Error("gateway temporarily unavailable"));
@@ -835,7 +891,7 @@ describe("E2BSandboxClient", () => {
 
   it("destroy swallows a kill failure (idempotent)", async () => {
     const { client } = makeClient(undefined, { failKill: true });
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     await expect(client.destroy(id)).resolves.toBeUndefined();
   });
 
@@ -857,37 +913,13 @@ describe("parseFindOutput", () => {
   });
 });
 
-describe("resolveTemplate", () => {
-  it("uses the default when no image is given", () => {
-    expect(resolveTemplate(undefined, "configured-template")).toBe(
-      "configured-template",
-    );
-  });
-
-  it("honours a bare template name", () => {
-    expect(resolveTemplate("my-set", "configured-template")).toBe("my-set");
-  });
-
-  it("falls back to default for a container-image ref (registry path or tag)", () => {
-    expect(
-      resolveTemplate("open-managed-agents/sandbox:latest", "configured-template"),
-    ).toBe("configured-template");
-    expect(resolveTemplate("nginx:1.25", "configured-template")).toBe(
-      "configured-template",
-    );
-    expect(resolveTemplate("repo/image", "configured-template")).toBe(
-      "configured-template",
-    );
-  });
-});
-
 describe('direct lifecycle control-plane operations', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   it('deletes an uncached Paused identity without connecting, and requires deletion confirmation', async () => {
     const kill = vi.fn(async () => true);
     const info = vi.fn().mockResolvedValueOnce({ state: 'paused' }).mockRejectedValueOnce(new SandboxNotFoundError('missing'));
     const connect = vi.fn();
-    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {},
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', pool: 'oma-test-sandbox', verifyWorkspaceProbe: async () => {},
       killSandbox: kill, getSandboxInfo: info, connectSandbox: connect });
     await expect(client.destroy('paused-from-another-runner')).rejects.toThrow(/not yet confirmed/);
     await client.destroy('paused-from-another-runner');
@@ -896,7 +928,7 @@ describe('direct lifecycle control-plane operations', () => {
   });
   it('refreshes the 24h deadline on every explicit reconnect, including a cached identity', async () => {
     const connect = vi.fn(async () => new FakeSandbox('same-id'));
-    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', pool: 'oma-test-sandbox', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
     await client.reconnect('same-id', {});
     await client.reconnect('same-id', {});
     expect(connect).toHaveBeenCalledTimes(2);
@@ -905,7 +937,7 @@ describe('direct lifecycle control-plane operations', () => {
   it('bounds connect by its own signal and gives the handle the same request default as a created one', async () => {
     const timeout = vi.spyOn(AbortSignal, 'timeout');
     const connect = vi.fn(async (_id: string, _opts: { signal: AbortSignal; requestTimeoutMs: number }) => new FakeSandbox('same-id'));
-    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', pool: 'oma-test-sandbox', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
     await client.reconnect('same-id', {});
     expect(timeout).toHaveBeenCalledWith(60_000);
     expect(connect.mock.calls[0][1].signal).toBe(timeout.mock.results[0].value);
@@ -916,7 +948,7 @@ describe('direct lifecycle control-plane operations', () => {
       .mockRejectedValueOnce(new SandboxNotFoundError('missing'));
     const kill = vi.spyOn(Sandbox, 'kill').mockResolvedValue(true);
     const setTimeout = vi.spyOn(Sandbox, 'setTimeout').mockResolvedValue();
-    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {} });
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', pool: 'oma-test-sandbox', verifyWorkspaceProbe: async () => {} });
     expect(await client.state('id')).toBe('running');
     await client.setTimeout('id', 1800);
     await client.destroy('id');
@@ -929,7 +961,7 @@ describe('direct lifecycle control-plane operations', () => {
 describe('transport stream failure', () => {
   it('returns uncertainty without issuing a destructive cleanup RPC that can stall on Paused', async () => {
     const { client, sandboxes } = makeClient();
-    const { id } = await client.create();
+    const { id } = await client.create(claim);
     sandboxes[0].processWait = async () => { throw new Error('transport timeout while paused'); };
     await expect(collect(client.exec(id, ['long-command']))).rejects.toThrow('transport timeout');
     expect(sandboxes[0].processKill).not.toHaveBeenCalled();
@@ -966,7 +998,7 @@ describe("listing Sandboxes from the gateway (ADR-0023)", () => {
     sandboxID, templateID: "auto-story-v2", state: "running", metadata: { "oma.dev/binding": "sesn_1" },
     startedAt: "2026-10-22T13:20:10Z", endAt: "2026-10-23T13:20:10Z", cpuCount: 2, memoryMB: 4096, ...extra,
   });
-  const client = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", verifyWorkspaceProbe: async () => {} });
+  const client = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", pool: "oma-test-sandbox", verifyWorkspaceProbe: async () => {} });
   afterEach(() => { vi.unstubAllEnvs(); });
 
   it("filters by exact labels the gateway can parse, follows x-next-token and maps the year-1 deadline to none", async () => {
@@ -1021,8 +1053,8 @@ describe("classifying a failed create by the gateway's answer (ADR-0023)", () =>
     return { close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }) };
   }
   /** The real SDK's create, as production calls it. */
-  const create = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", verifyWorkspaceProbe: async () => {} })
-    .create({ metadata: { "oma.dev/binding": "sesn_1" } }).catch((error: unknown) => error);
+  const create = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", pool: "oma-test-sandbox", verifyWorkspaceProbe: async () => {} })
+    .create({ image: IMAGE, metadata: { "oma.dev/binding": "sesn_1" } }).catch((error: unknown) => error);
   afterEach(() => { vi.unstubAllEnvs(); });
 
   it.each([400, 401, 403, 409, 429, 500, 503])("reports an HTTP %i answer by its status alone", async (status) => {

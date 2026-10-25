@@ -625,6 +625,35 @@ describe("each preparation of the Turn's Sandbox is observed (ADR-0023, #287)", 
     expect(gone.seen.slice(2)).toEqual(["started", { outcome: "ready", sandboxId: client.created[1] }]);
   });
 
+  describe("a preparation that claimed the Sandbox reports the claim (ADR-0024)", () => {
+    const POOL = "registry.example/welltop/oma-sandbox@sha256:" + "1".repeat(64);
+    const OTHER = "registry.example/welltop/oma-environments@sha256:" + "2".repeat(64);
+    function claiming() {
+      const client = new FakeSandboxClient({ poolImage: POOL });
+      const manager = new DefaultSandboxManager({ sandboxClient: client, environment: "test" });
+      return { client, manager };
+    }
+
+    it.each([[POOL, false], [OTHER, true]])("claims with the spec's image %s and reports swapped %s", async (image, swapped) => {
+      const { client, manager } = claiming();
+      const session = manager.open(specFor({ image }), durableBinding());
+      const { seen, observer } = prepares();
+      await session.prepare(undefined, { sandboxPrepares: observer });
+      await session.writeFile("a", "A");
+      expect(client.createOptsOf(client.created[0]).image).toBe(image);
+      expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0], claim: { image, swapped, claimMs: 0 } }]);
+    });
+
+    it("a Turn-start connect to the binding's Sandbox claims nothing and reports no claim", async () => {
+      const { client, manager } = claiming();
+      const binding = durableBinding();
+      await manager.open(specFor({ image: OTHER }), binding).writeFile("saved.txt", "kept");
+      const { seen, observer } = prepares();
+      await manager.open(specFor({ image: OTHER }), binding).prepare(undefined, { sandboxPrepares: observer });
+      expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0] }]);
+    });
+  });
+
   it("reports a failure of the gateway as sandbox_unavailable with a stable message, and the cause kept", async () => {
     const { client, manager } = makeManager();
     const binding = durableBinding();

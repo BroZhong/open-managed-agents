@@ -90,7 +90,9 @@ try {
     const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle });
     const spec: EnvSpec = { tenantId: evidence.tenant, workspaceId: evidence.workspace,
       workspaceMount: { ...config.mount, prefix: `${evidence.tenant}/${evidence.workspace}/` },
-      ...(phase === 'rebuild' ? { image: evidence.snapshotId } : {}) };
+      // Every create claims from the Runner's Warm Pool with its image (ADR-0024); a
+      // rebuild claims anew rather than from the snapshot, which no create can name.
+      image: config.sandboxImage };
     const open = (sessionId: string) => manager.open(spec, { id: evidence.root,
       withLock: work => stores.delegationStore.withBindingLock(evidence.root, work),
       canExecute: async () => (await stores.sessionStore.getById(sessionId))?.status !== 'terminated',

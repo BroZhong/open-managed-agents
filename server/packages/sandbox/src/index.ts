@@ -5,6 +5,7 @@
 export type {
   SandboxClient,
   SandboxHandle,
+  SandboxClaim,
   SandboxCreateOptions,
   SandboxExecChunk,
   SandboxExecOptions,
@@ -19,6 +20,7 @@ export {
   CREATE_REQUEST_MS,
   INTENT_DEADLINE_SECONDS,
   SandboxCreateRejected,
+  isDigestPinnedImage,
 } from "./sandbox-client.js";
 
 export {

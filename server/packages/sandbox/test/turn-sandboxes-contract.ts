@@ -354,15 +354,18 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(finish).toHaveBeenCalledTimes(2);
     });
 
-    it("builds the Sandbox from the Session's Workspace and the Agent's image and env, under deployment policy", async () => {
+    it("builds the Sandbox from the Session's Workspace, the configured image and the Agent's env, under deployment policy", async () => {
+      const image = "registry.example/welltop/oma-sandbox@sha256:" + "3".repeat(64);
       const h = await setup({
+        sandboxImage: image,
         defaultSandboxEnv: { VFS_TOKEN: "default", SHARED: "yes" },
         managedSandboxEnvByAgentId: { [agent.id]: { OPENGROVE_WW_ACCESS_TOKEN: "managed" }, agent_other: { OTHER: "no" } },
       });
+      // The Agent's legacy template choice no longer selects anything (ADR-0024).
       const session = await h.session({ sandbox: { enabled: true, image: "custom:1", env: { VFS_TOKEN: "agent", OPENGROVE_WW_ACCESS_TOKEN: "agent", OWN: "1" } } });
       await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
       const created = h.client.createOptsOf(h.client.created[0]);
-      expect(created.image).toBe("custom:1");
+      expect(created.image).toBe(image);
       expect(created.env).toMatchObject({ VFS_TOKEN: "agent", SHARED: "yes", OWN: "1", OPENGROVE_WW_ACCESS_TOKEN: "managed", HOME: "/home/user" });
       expect(created.env).not.toHaveProperty("OTHER");
       expect(h.client.workspaceContents(`${TENANT}/ws_1/`).get("saved.txt")?.content).toBe("x");

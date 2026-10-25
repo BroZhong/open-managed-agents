@@ -32,13 +32,13 @@ type Write = ReturnType<typeof journalWriter>;
 type Script = (input: AdapterInput, write: Write, attempt: number) => Promise<void>;
 
 /** Runners sharing one store and one gateway, each with its own Sandbox Manager; a lost Runner never renews or claims again. */
-async function harness(script: Script) {
+async function harness(script: Script, claims: { poolImage?: string; sandboxImage?: string } = {}) {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test",
     runtime: "pi-agent", sandbox: { enabled: true } });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
-  const gateway = new FakeSandboxClient();
+  const gateway = new FakeSandboxClient({ poolImage: claims.poolImage });
   const attempts: AdapterInput[] = [];
   const adapter: Adapter = { async run(input) {
     attempts.push(input);
@@ -56,7 +56,7 @@ async function harness(script: Script) {
   const runner = (ownerId = "runner-a") => new SessionRouter({
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: gateway, environment: "test" }),
-      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
+      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, sandboxImage: claims.sandboxImage,
       onError: ({ error }) => errors.push({ owner: ownerId, error }) }),
     pendingClaimOwnerId: ownerId, pendingClaimLeaseMs: 100, pendingClaimRenewIntervalMs: 30,
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
@@ -105,6 +105,29 @@ const spansOf = (log: StoredEvent[]) => log.filter((stored) => stored.type.start
   .map((stored) => [stored.type, stored.data]);
 const errorCodes = (log: StoredEvent[]) => log.filter((stored) => stored.type === "session.error")
   .map((stored) => (stored.data as { error: { code: string } }).error.code);
+
+describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
+  const POOL = "registry.example/welltop/oma-sandbox@sha256:" + "6".repeat(64);
+  const OTHER = "registry.example/welltop/oma-environments@sha256:" + "7".repeat(64);
+
+  it.each([[POOL, false], [OTHER, true]])("claims with the configured image %s (swapped %s); a later Turn's connect claims nothing", async (image, swapped) => {
+    const h = await harness(async (input, write) => {
+      await tool(input, write, `call_${input.turnId}`);
+      await answer(write);
+    }, { poolImage: POOL, sandboxImage: image });
+    await h.turn("write a note");
+    await h.turn("write another");
+    expect(h.gateway.createOptsOf(h.gateway.created[0]).image).toBe(image);
+    expect(h.gateway.created).toHaveLength(1);
+    expect(spansOf(await h.log()).filter(([type]) => type === "span.sandbox_prepare_end")).toEqual([
+      ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
+        image, swapped, claimMs: 0, durationMs: expect.any(Number) }],
+      ["span.sandbox_prepare_end", { turnId: expect.not.stringMatching(/^turn_1_/), prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
+        durationMs: expect.any(Number) }],
+    ]);
+    expect(h.errors).toEqual([]);
+  });
+});
 
 describe("a Sandbox unavailability is a tool error (ADR-0023)", () => {
   it("runs a Turn whose Sandbox is never available to its answer, and ends it with one sandbox_unavailable", async () => {

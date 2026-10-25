@@ -16,10 +16,12 @@ import {
   SANDBOX_RUNNING_SECONDS,
   SandboxCreateRejected,
   WAIT_READY_SECONDS,
+  isDigestPinnedImage,
   listedSandbox,
 } from "./sandbox-client.js";
 import type {
   ListedSandbox,
+  SandboxClaim,
   SandboxClient,
   SandboxCreateOptions,
   SandboxExecChunk,
@@ -101,7 +103,13 @@ export type CreateSandboxFn = (
   },
 ) => Promise<E2BSandbox>;
 
-const DEFAULT_TEMPLATE = "auto-story-v2";
+/**
+ * Read inside a just-claimed Sandbox: the kernel's uptime, PID 1's (the main
+ * container's) start in clock ticks since boot, and the tick rate. The
+ * gateway reports nothing about an in-place swap, so the Host observes it
+ * (see {@link claimSwapped}).
+ */
+export const CLAIM_PROBE = "cat /proc/uptime /proc/1/stat && getconf CLK_TCK";
 
 /** Client timeouts of the control-plane calls other than create; each is one short gateway step. */
 const CONTROL_REQUEST_MS = {
@@ -128,8 +136,13 @@ export interface E2BSandboxClientOptions {
   domain: string;
   /** Gateway API key. */
   apiKey: string;
-  /** Template (SandboxSet name) used when a create call omits an image. */
-  defaultTemplate?: string;
+  /**
+   * The Warm Pool (SandboxSet name) every Sandbox is claimed from: the E2B
+   * template of every create (ADR-0024). The image comes with each create.
+   */
+  pool: string;
+  /** Monotonic milliseconds for claim timing; tests inject one. */
+  clock?: () => number;
   /**
    * Injectable sandbox factory. Defaults to the real `Sandbox.create`. Tests
    * pass a fake so the client can be exercised with no network.
@@ -152,8 +165,10 @@ export interface E2BSandboxClientOptions {
  *
  * Replaces the abandoned kruise-CRD client (#53). Sandboxes are created via the
  * official `e2b` Node SDK against a self-hosted gateway (domain + apiKey are
- * injected, never hardcoded). The `image` create option maps to an e2b
- * template (the SandboxSet name); when omitted, {@link defaultTemplate} is used.
+ * injected, never hardcoded). Every create claims from the one Warm Pool
+ * ({@link E2BSandboxClientOptions.pool}) and passes its digest-pinned
+ * `image` as `e2b.agents.kruise.io/image`: the pool's own image is a plain
+ * claim, any other is swapped in place (ADR-0024).
  *
  * `exec` shell-quotes argv for the SDK's `bash -lc` wrapper (honouring cwd/env),
  * replaces that shell with the command, streams stdout/stderr, and reports a
@@ -163,7 +178,8 @@ export interface E2BSandboxClientOptions {
 export class E2BSandboxClient implements SandboxClient {
   private readonly domain: string;
   private readonly apiKey: string;
-  private readonly defaultTemplate: string;
+  private readonly pool: string;
+  private readonly clock: () => number;
   private readonly createSandbox: CreateSandboxFn;
   private readonly connectSandbox: NonNullable<E2BSandboxClientOptions["connectSandbox"]>;
   private readonly getSandboxInfo: NonNullable<E2BSandboxClientOptions["getSandboxInfo"]>;
@@ -192,9 +208,11 @@ export class E2BSandboxClient implements SandboxClient {
   constructor(opts: E2BSandboxClientOptions) {
     if (!opts.domain) throw new Error("E2BSandboxClient requires a domain");
     if (!opts.apiKey) throw new Error("E2BSandboxClient requires an apiKey");
+    if (!opts.pool) throw new Error("E2BSandboxClient requires the Warm Pool (SandboxSet) name");
     this.domain = opts.domain;
     this.apiKey = opts.apiKey;
-    this.defaultTemplate = opts.defaultTemplate ?? DEFAULT_TEMPLATE;
+    this.pool = opts.pool;
+    this.clock = opts.clock ?? (() => performance.now());
     this.createSandbox = opts.createSandbox ?? defaultCreateSandbox;
     this.connectSandbox = opts.connectSandbox ?? ((id, options) => Sandbox.connect(id, options));
     this.verifyWorkspaceProbe = opts.verifyWorkspaceProbe;
@@ -208,12 +226,18 @@ export class E2BSandboxClient implements SandboxClient {
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
-    const template = resolveTemplate(opts.image, this.defaultTemplate);
-    const sandbox = await this.createSandbox(template, {
+    const { image } = opts;
+    // The gateway answers an invalid image with 400 too; a missing one would
+    // silently run the pool's image. Either is a definite rejection that
+    // claimed nothing (the Host's configuration is validated at startup).
+    if (!isDigestPinnedImage(image)) throw new SandboxCreateRejected(400);
+    const started = this.clock();
+    const sandbox = await this.createSandbox(this.pool, {
       requestTimeoutMs: CREATE_REQUEST_MS,
       apiKey: this.apiKey,
       domain: this.domain,
       metadata: { ...opts.metadata,
+        'e2b.agents.kruise.io/image': image,
         'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
         'e2b.agents.kruise.io/claim-timeout-seconds': String(CLAIM_SECONDS),
         'e2b.agents.kruise.io/wait-ready-timeout-seconds': String(WAIT_READY_SECONDS),
@@ -222,9 +246,26 @@ export class E2BSandboxClient implements SandboxClient {
       ...(opts.env ? { envs: opts.env } : {}),
       timeoutMs: (opts.timeoutSeconds ?? SANDBOX_RUNNING_SECONDS) * 1000,
     }).catch(createFailed);
+    const claimMs = Math.round(this.clock() - started);
     this.sandboxes.set(sandbox.sandboxId, sandbox);
     this.creationMetadata.set(sandbox.sandboxId, { ...opts.metadata });
-    return { id: sandbox.sandboxId };
+    const swapped = await this.observeSwap(sandbox, started);
+    const claim: SandboxClaim = { image, claimMs, ...(swapped === undefined ? {} : { swapped }) };
+    return { id: sandbox.sandboxId, claim };
+  }
+
+  /**
+   * Whether the claim that began at `started` swapped the Sandbox's image in
+   * place (see {@link claimSwapped}). Never fails the create, and its
+   * failure is no evidence about any command: undefined when unobserved.
+   */
+  private async observeSwap(sandbox: E2BSandbox, started: number): Promise<boolean | undefined> {
+    try {
+      const result = await sandbox.commands.run(CLAIM_PROBE, { timeoutMs: 10_000 });
+      return claimSwapped(result.stdout, this.clock() - started);
+    } catch {
+      return undefined;
+    }
   }
 
   async verifyWorkspaceMount(
@@ -507,24 +548,26 @@ export class E2BSandboxClient implements SandboxClient {
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Resolve the E2B template (SandboxSet name) for a create call.
- *
- * For the E2B backend `image` is a bare template *name* — NOT a container
- * image reference. Older Agents (and the pre-#54 UI) persisted a container
- * image string like `open-managed-agents/sandbox:latest` in `sandbox.image`;
- * passing that as a template would 400 with "Template or Checkpoint not found".
- * So we only honour a value that looks like a bare template name and otherwise
- * fall back to the default template.
+ * Whether a claim swapped the image in place, from the {@link CLAIM_PROBE}
+ * output read `elapsedMs` after the create began; undefined when unreadable.
+ * The gateway restarts the main container to swap (PID 1 starts anew); the
+ * Pod keeps running, so the kernel's uptime spans the claim:
+ * - PID 1 older than the claim: the warm container was kept (a plain claim);
+ * - PID 1 and the kernel both younger: the Pod was created for the claim,
+ *   with the image (a cold start when the pool had no stock);
+ * - otherwise the container was replaced inside a Pod that predates the claim.
  */
-export function resolveTemplate(
-  image: string | undefined,
-  defaultTemplate: string,
-): string {
-  if (!image) return defaultTemplate;
-  // A registry path (`/`) or a tag (`:`) marks a container-image reference,
-  // which is not a valid E2B template name — ignore it and use the default.
-  if (image.includes("/") || image.includes(":")) return defaultTemplate;
-  return image;
+export function claimSwapped(probe: string, elapsedMs: number): boolean | undefined {
+  const [uptimeLine, statLine, ticksLine] = probe.trim().split("\n");
+  const uptime = Number.parseFloat(uptimeLine ?? "");
+  // Fields after the parenthesised command name start at field 3 (state); starttime is field 22.
+  const startTicks = Number.parseInt(statLine?.slice(statLine.lastIndexOf(")") + 2).split(" ")[19] ?? "", 10);
+  const ticks = Number.parseInt(ticksLine ?? "", 10);
+  if (!Number.isFinite(uptime) || !Number.isFinite(startTicks) || !(ticks > 0) || !statLine?.includes(")")) return undefined;
+  const elapsed = elapsedMs / 1000;
+  const pid1Age = uptime - startTicks / ticks;
+  if (pid1Age >= elapsed) return false;
+  return uptime >= elapsed;
 }
 
 /**

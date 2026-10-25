@@ -100,6 +100,11 @@ export interface FakeSandboxClientOptions {
   /** The gateway's clock: claim times and deadlines. Defaults to the system clock. */
   clock?: () => Date;
   /**
+   * The emulated Warm Pool's image: a create with another image reports a
+   * swap (ADR-0024). Without it, a claim's swap is unobserved.
+   */
+  poolImage?: string;
+  /**
    * Optional handler for `exec` calls. If it returns `undefined` the default
    * built-in handling (cat/ls/echo) applies.
    */
@@ -143,6 +148,7 @@ export class FakeSandboxClient implements SandboxClient {
     [];
   private readonly generateId: () => string;
   private readonly clock: () => Date;
+  private readonly poolImage?: string;
   private readonly execHandler?: FakeSandboxClientOptions["execHandler"];
   /** See {@link FakeSkillInstallFault}. */
   skillInstallFault?: FakeSkillInstallFault;
@@ -160,6 +166,7 @@ export class FakeSandboxClient implements SandboxClient {
   constructor(opts: FakeSandboxClientOptions = {}) {
     this.generateId = opts.generateId ?? (() => `sbx-fake-${++this.counter}`);
     this.clock = opts.clock ?? (() => new Date());
+    this.poolImage = opts.poolImage;
     this.execHandler = opts.execHandler;
   }
 
@@ -258,7 +265,9 @@ export class FakeSandboxClient implements SandboxClient {
     });
     this.created.push(id);
     await this.createFault?.("respond", opts);
-    return { id };
+    if (!opts.image) return { id };
+    const swapped = this.poolImage === undefined ? {} : { swapped: opts.image !== this.poolImage };
+    return { id, claim: { image: opts.image, claimMs: 0, ...swapped } };
   }
 
   /** The gateway's filter: every label with its exact value; a destroyed or reclaimed Sandbox is not listed. */

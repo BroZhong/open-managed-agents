@@ -8,7 +8,7 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ExecutorUnavailableError } from "@open-managed-agents/adapter-core";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected, intentExpired, intentExpiresAt } from "./sandbox-client.js";
-import type { ListedSandbox, SandboxClient, SandboxHandle } from "./sandbox-client.js";
+import type { ListedSandbox, SandboxClaim, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
 import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type BindingTransition, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
@@ -27,6 +27,10 @@ export interface EnvSpec {
   tenantId: string;
   workspaceId: string;
   workspaceMount: WorkspaceMountSpec;
+  /**
+   * The image digest a Sandbox is claimed with (ADR-0024): from the Host's
+   * configuration until the Session's Environment supplies it (#306).
+   */
   image?: string;
   env?: Record<string, string>;
   /** The Agent's equipped Skills; each Turn's `prepare` passes the current Set. Default: none. */
@@ -203,8 +207,11 @@ export interface SkillInstallObserver {
 
 /** How one preparation of the Turn's Sandbox ended (ADR-0023). */
 export type SandboxPrepareOutcome =
-  /** The Sandbox is connected, or created, and its mount verified. */
-  | { outcome: "ready"; sandboxId: string }
+  /**
+   * The Sandbox is connected, or created, and its mount verified. `claim`:
+   * this preparation claimed it from the Warm Pool (ADR-0024).
+   */
+  | { outcome: "ready"; sandboxId: string; claim?: SandboxClaim }
   /**
    * The Turn-start connect found no Sandbox to connect: the recorded one is
    * gone, or the binding moved on. The first operation brings it to Ready.
@@ -440,6 +447,8 @@ class SandboxSessionImpl implements SandboxSession {
   private readonly binding: SandboxBinding;
   /** What a Sandbox unavailability is recorded against (see recordFailure). */
   private known?: KnownRow;
+  /** The Sandbox the running preparation claimed, and how (ADR-0024). */
+  private claimed?: { sandboxId: string; claim: SandboxClaim };
 
   constructor(
     private readonly deps: SandboxManagerDeps,
@@ -649,6 +658,7 @@ class SandboxSessionImpl implements SandboxSession {
     const { signal, sandboxPrepares: observer } = this.turn;
     let begun = false;
     const begin = () => { if (!begun) { begun = true; observer?.started(); } };
+    this.claimed = undefined;
     let id: T;
     try {
       id = await work(begin);
@@ -664,8 +674,15 @@ class SandboxSessionImpl implements SandboxSession {
       observer?.ended({ outcome: "failed", error: failure });
       throw failure;
     }
-    if (begun) observer?.ended(id === null ? { outcome: "deferred" } : { outcome: "ready", sandboxId: id });
+    const claim = id === null ? undefined : this.takeClaim(id);
+    if (begun) observer?.ended(id === null ? { outcome: "deferred" } : { outcome: "ready", sandboxId: id, ...(claim ? { claim } : {}) });
     return id;
+  }
+  /** The Warm Pool claim of Sandbox `id`, when the preparation that ends claimed it. */
+  private takeClaim(id: string): SandboxClaim | undefined {
+    const claimed = this.claimed;
+    this.claimed = undefined;
+    return claimed?.sandboxId === id ? claimed.claim : undefined;
   }
   /**
    * Record a Sandbox unavailability as the binding's last error, which the
@@ -876,6 +893,7 @@ class SandboxSessionImpl implements SandboxSession {
       return undefined;
     }
     this.sandboxId = handle.id;
+    if (handle.claim) this.claimed = { sandboxId: handle.id, claim: handle.claim };
     await this.assertExecutable();
     // A known Sandbox whose mount fails verification stays recorded: the
     // next tool retries its preparation, not its creation.

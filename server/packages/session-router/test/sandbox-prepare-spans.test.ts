@@ -36,6 +36,19 @@ describe("a Turn attempt's Sandbox preparation spans (ADR-0023)", () => {
     ]);
   });
 
+  it("records the Warm Pool claim of a preparation that created the Sandbox: image digest, swap and its duration (ADR-0024)", () => {
+    const { prepares, written } = spans();
+    const image = "registry.example/welltop/oma-sandbox@sha256:" + "4".repeat(64);
+    prepares.started();
+    prepares.ended({ outcome: "ready", sandboxId: "sbx-1", claim: { image, swapped: true, claimMs: 4012 } });
+    prepares.started();
+    prepares.ended({ outcome: "ready", sandboxId: "sbx-2", claim: { image, claimMs: 230 } });
+    expect(written.filter(({ event }) => event.type === "span.sandbox_prepare_end").map(({ event }) => event.data)).toEqual([
+      { turnId: "t", prepareId: "3.1", outcome: "ready", sandboxId: "sbx-1", image, swapped: true, claimMs: 4012, durationMs: expect.any(Number) },
+      { turnId: "t", prepareId: "3.2", outcome: "ready", sandboxId: "sbx-2", image, claimMs: 230, durationMs: expect.any(Number) },
+    ]);
+  });
+
   it("judges the Sandbox unavailable once a tool call met a failure, until a preparation is ready, deferred and aborted ones changing nothing", () => {
     const { prepares } = spans();
     expect(prepares.unavailable()).toBe(false);

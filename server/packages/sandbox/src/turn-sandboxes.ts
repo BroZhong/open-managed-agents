@@ -22,7 +22,7 @@ export function isSandboxedAgent(agent: Pick<Agent, "sandbox">): boolean {
 export interface SandboxLeaseRequest extends TurnExecutorGuard {
   /** The Turn's Session, as read under its claim. */
   session: Session;
-  /** The Agent configuration the Turn runs with: whether it is sandboxed, its image and env. */
+  /** The Agent configuration the Turn runs with: whether it is sandboxed, and its env. */
   agent: Agent;
   /** The attempt's claim: the Turn's use of the binding is recorded under it. */
   fence: PendingEventFence;
@@ -130,6 +130,12 @@ export interface TurnSandboxesDeps {
   defaultSandboxEnv?: Record<string, string>;
   /** Deployment-managed sandbox variables, explicitly scoped per Agent id. */
   managedSandboxEnvByAgentId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /**
+   * The image digest every Sandbox is claimed from the Warm Pool with
+   * (ADR-0024; `SANDBOX_IMAGE`). The Session's Environment supplies it once
+   * Environments exist (#306); the Agent's `sandbox.image` selects nothing.
+   */
+  sandboxImage?: string;
   /** Observe failures to record settlement off a Turn's path (a watched runtime's, a retry's) without unhandled rejections. */
   onError?: (failure: { sessionId: string; error: unknown }) => void;
 }
@@ -240,7 +246,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
   /**
    * Compute the complete recipe the SandboxManager needs for this Session
    * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
-   * Agent's image/env, and the Skill Set to install at `/skills/<skill-name>`
+   * configured image, the Agent's env, and the Skill Set to install at `/skills/<skill-name>`
    * outside the persistent Workspace.
    *
    * The sandbox env is the deployment-wide `defaultSandboxEnv` overlaid with
@@ -259,7 +265,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
       workspaceMount: { ...this.deps.workspaceMount, prefix: workspaceObjectPrefix(session.tenantId, session.workspaceId) },
-      image: agent.sandbox?.image,
+      image: this.deps.sandboxImage,
       env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
       skills,
     };

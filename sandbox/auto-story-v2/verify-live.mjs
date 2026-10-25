@@ -14,17 +14,20 @@ const { E2BSandboxClient } = await tsImport(
 const options = { domain: process.env.E2B_DOMAIN, apiKey: process.env.E2B_API_KEY };
 assert(options.domain && options.apiKey, "The Host must configure its E2B endpoint and key");
 const template = process.env.SANDBOX_TEMPLATE;
-assert.equal(template, "auto-story-v2", "The Host global default must be auto-story-v2");
+assert.equal(template, "auto-story-v2", "The Host's Warm Pool must be auto-story-v2");
+const image = process.env.SANDBOX_IMAGE;
+assert(image, "The Host must configure SANDBOX_IMAGE");
 const marker = `auto-story-live-${Date.now()}`;
 const file = "/home/user/.auto-story-live-verification.txt";
 let sandbox;
 let handle;
 const report = { template, domain: options.domain, checks: [], ok: false };
 try {
-  // Match the running Host's constructor; omit image on create so this tests
-  // its global default selection through the real deployed SandboxClient.
-  const client = new E2BSandboxClient({ ...options, defaultTemplate: template });
+  // Match the running Host's constructor and claim (ADR-0024): its Warm Pool
+  // and image, through the real deployed SandboxClient.
+  const client = new E2BSandboxClient({ ...options, pool: template });
   handle = await client.create({
+    image,
     timeoutSeconds: 300,
     env: { AUTO_STORY_SMOKE_VALUE: marker },
     metadata: { purpose: "auto-story-default-verification" },
