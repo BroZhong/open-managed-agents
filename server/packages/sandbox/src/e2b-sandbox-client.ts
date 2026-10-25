@@ -173,7 +173,7 @@ export interface E2BSandboxClientOptions {
  * `image` as `e2b.agents.kruise.io/image`: the pool's own image is a plain
  * claim, any other is swapped in place (ADR-0024).
  *
- * `exec` shell-quotes argv for the SDK's `bash -lc` wrapper (honouring cwd/env),
+ * `exec` shell-quotes argv for the SDK's `bash -lc` wrapper (honouring cwd; env goes as envd `envs`),
  * replaces that shell with the command, streams stdout/stderr, and reports a
  * non-zero exit is reported through `onExit`, while stdout/stderr retain their
  * original streaming surface for existing consumers.
@@ -758,8 +758,9 @@ function isMissingFileError(error: unknown): boolean {
 }
 
 /**
- * Quote argv for the SDK's shell, honouring cwd + env and replacing the shell
- * with the executable so the SDK process handle can terminate it reliably.
+ * Quote argv for the SDK's shell, honouring cwd and replacing the shell with
+ * the executable so the SDK process handle can terminate it reliably. The
+ * command's env is not part of it: exec passes it as envd `envs`.
  */
 export function wrapCommand(
   command: string[],
@@ -769,15 +770,13 @@ export function wrapCommand(
   if (opts?.cwd) {
     parts.push(`cd ${shellQuote(opts.cwd)}`);
   }
-  const envPrefix = opts?.env
-    ? Object.entries(opts.env)
-        .map(([k, v]) => `${k}=${shellQuote(v)}`)
-        .join(" ")
-    : "";
+  // Variables travel as the request's envd `envs` only, never in the command
+  // string, which the Sandbox's process list shows: they may be secrets
+  // (ADR-0024). A profile script keeps them by writing `${NAME:-value}`.
   const cmd = command.map(shellQuote).join(" ");
   // Replace the SDK's wrapper shell so its process handle owns the executable
   // itself; otherwise killing the shell can leave the search process running.
-  parts.push(envPrefix ? `${envPrefix} exec ${cmd}` : `exec ${cmd}`);
+  parts.push(`exec ${cmd}`);
   return parts.join(" && ");
 }
 

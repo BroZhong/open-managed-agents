@@ -193,14 +193,13 @@ export class FakeSandboxClient implements SandboxClient {
    * The environment a command sees, as envd and the E2B client give it one
    * (ADR-0024): the process starts with the Sandbox's create `envs` and the
    * command's own env; `bash -l -c` then runs the image's profile scripts,
-   * whose `${NAME:-value}` defaults apply only to a name unset or empty; and
-   * the command line (`wrapCommand`) sets the command's env again before it
-   * execs the program.
+   * whose `${NAME:-value}` defaults apply only to a name unset or empty,
+   * before it execs the program (`wrapCommand` sets no variable).
    */
   commandEnvironment(id: string, env?: Readonly<Record<string, string>>): Record<string, string> {
     const started: Record<string, string> = { ...this.require(id).createOpts.env, ...env };
     for (const [name, value] of Object.entries(this.profile)) if (!started[name]) started[name] = value;
-    return { ...started, ...env };
+    return started;
   }
 
   /** Number of live (created, not destroyed) sandboxes. */

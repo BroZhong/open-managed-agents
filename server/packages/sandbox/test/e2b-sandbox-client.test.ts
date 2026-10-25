@@ -635,6 +635,18 @@ describe("E2BSandboxClient", () => {
     expect(call.opts?.timeoutMs).toBe(5_000);
   });
 
+  it("passes a command's variables as envd envs only, never in its command string (ADR-0024)", async () => {
+    const SECRET = "sk-canary-" + "c0ffee".repeat(6);
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create(claim);
+    await collect(client.exec(id, ["printenv", "API_TOKEN"], { cwd: "/home/user/workspace", env: { API_TOKEN: SECRET, MODE: "it's" } }));
+    const call = sandboxes[0].runCalls.at(-1)!;
+    expect(call.opts?.envs).toEqual({ API_TOKEN: SECRET, MODE: "it's" });
+    expect(call.cmd).toBe("cd '/home/user/workspace' && exec 'printenv' 'API_TOKEN'");
+    expect(call.cmd).not.toContain(SECRET);
+    expect(call.cmd).not.toContain("API_TOKEN=");
+  });
+
   it("exec maps timeoutSeconds: 40 to timeoutMs: 40000 (#81)", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create(claim);
@@ -1095,8 +1107,9 @@ describe("a command's variables in the login shell envd starts it in (ADR-0024)"
   /**
    * envd starts every command as `/bin/bash -l -c <wrapped>` with the
    * request's `envs` in its environment; the login shell runs the image's
-   * profile scripts first. Modelled with real bash: the process environment,
-   * then a profile script, then the command line `wrapCommand` builds.
+   * profile scripts before the command line `wrapCommand` builds, which sets
+   * no variable. Modelled with real bash: the process environment, a profile
+   * script, then the command line.
    */
   const run = (profile: string, injected: Record<string, string>) => {
     const dir = mkdtempSync(join(tmpdir(), "oma-login-shell-"));
@@ -1116,7 +1129,7 @@ describe("a command's variables in the login shell envd starts it in (ADR-0024)"
     expect(run(profile, { REGION: "from-environment" })).toBe("from-environment\n/opt/tool\n");
   });
 
-  it("keeps it even over a profile script that exports the name unconditionally", () => {
-    expect(run(`export REGION=forced\nexport TOOL_HOME=/opt/tool\n`, { REGION: "from-environment" })).toBe("from-environment\n/opt/tool\n");
+  it("loses it to a profile script that exports the name unconditionally: the convention keeps injected values", () => {
+    expect(run(`export REGION=forced\nexport TOOL_HOME=/opt/tool\n`, { REGION: "from-environment" })).toBe("forced\n/opt/tool\n");
   });
 });
