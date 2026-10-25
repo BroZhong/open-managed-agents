@@ -1,8 +1,8 @@
 {
-  "imageVersion": "0.1.1",
+  "imageVersion": "0.1.2",
   "platform": "linux/amd64",
   "repository": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox",
-  "baseImage": "PENDING: the oma-base-0.1.1 digest from ../oma-base/image.lock.json",
+  "baseImage": "PENDING: the oma-base-0.1.2 digest from ../oma-base/image.lock.json",
   "ffmpeg": {
     "version": "9.0.1",
     "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",

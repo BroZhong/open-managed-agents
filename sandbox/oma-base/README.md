@@ -15,8 +15,9 @@ every Sandbox:
 
 - **Mirrors**: apt uses `https://mirrors.aliyun.com/debian` (the base's
   nodesource list is removed; its apt Node 20 only provides npm), pip uses
-  `/etc/pip.conf` → Aliyun PyPI, npm uses `/usr/local/etc/npmrc` →
-  `registry.npmmirror.com`.
+  `/etc/pip.conf` → Aliyun PyPI, npm uses its builtin config
+  `/usr/lib/node_modules/npm/npmrc` → `registry.npmmirror.com` (read even with
+  the Host's `NPM_CONFIG_PREFIX`, which moves the global npmrc).
 - **Startup**: `ENTRYPOINT ["/usr/bin/tini", "-g", "--"]` in front of the
   original `bash /root/.jupyter/start-up.sh`. tini forwards SIGTERM to the
   whole startup process group, so an in-place swap no longer waits out the

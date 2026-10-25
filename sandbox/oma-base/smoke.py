@@ -94,7 +94,9 @@ def python_and_mirrors(directory):
     require("/opt/venv/" in pip_version, f"pip3 must be the ACS venv's pip: {pip_version}")
     pip_config = run(["pip3", "config", "list"])
     require("global.index-url='https://mirrors.aliyun.com/pypi/simple/'" in pip_config, f"pip mirror: {pip_config}")
-    registry = run(["npm", "config", "get", "registry"], env={"HOME": directory}).strip()
+    # As a Sandbox command sees it: the Host's WORKSPACE_ENV moves npm's prefix.
+    registry = run(["npm", "config", "get", "registry"],
+                   env={"HOME": directory, "NPM_CONFIG_PREFIX": directory + "/npm-prefix"}).strip()
     require(registry == "https://registry.npmmirror.com/", f"npm registry: {registry}")
     uris = []
     for path in [Path("/etc/apt/sources.list"), *sorted(Path("/etc/apt/sources.list.d").glob("*"))]:

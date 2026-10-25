@@ -1,5 +1,5 @@
 {
-  "imageVersion": "0.1.1",
+  "imageVersion": "0.1.2",
   "platform": "linux/amd64",
   "repository": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox",
   "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",

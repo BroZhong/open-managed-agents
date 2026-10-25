@@ -31,8 +31,9 @@ RUN rm -f /etc/apt/sources.list.d/nodesource.list && \
       "libglib2.0-0=${GLIB_VERSION}" && \
     rm -rf /var/lib/apt/lists/*
 COPY pip.conf /etc/pip.conf
-# npm resolves its global config from the running node's prefix (/usr/local).
-COPY npmrc /usr/local/etc/npmrc
+# npm's builtin config: read whatever the prefix or HOME (the Host injects
+# NPM_CONFIG_PREFIX, which moves the global npmrc into /home/user).
+COPY npmrc /usr/lib/node_modules/npm/npmrc
 # Pi 0.83 requires Node >=22.19; the ACS base ships Node 20.
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY pi-tools/package.json pi-tools/package-lock.json pi-tools/smoke.mjs /opt/oma-pi-tools/
