@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EnvironmentForm } from "@/components/environment-form";
 import { BuiltInTag, EnvironmentStatusBadge } from "@/components/environment-badges";
+import { EnvironmentBuildPanel } from "@/components/environment-build";
+import { EnvironmentManifest } from "@/components/environment-manifest";
 import {
   useCreateEnvironment,
   useDeleteEnvironment,
@@ -66,6 +68,8 @@ export default function EnvironmentDetailPage() {
             </div>
             {builtIn && <p className="text-xs text-neutral-500">平台内置环境只读；复制后可修改。</p>}
             <Overview environment={environment} />
+            <EnvironmentBuildPanel environment={environment} />
+            <EnvironmentManifest manifest={environment.manifest} />
             <Variables environment={environment} />
             <section className="space-y-2">
               <h2 className="text-sm font-semibold">初始化脚本</h2>
@@ -92,17 +96,14 @@ export default function EnvironmentDetailPage() {
 }
 
 function Overview({ environment }: { environment: Environment }) {
-  const build = environment.lastBuild;
   return (
     <dl className="grid gap-x-6 gap-y-3 rounded-2xl border border-neutral-200 p-5 text-sm md:grid-cols-[10rem_1fr]">
       <dt className="text-neutral-500">Base Image</dt>
       <dd>{environment.baseImage}</dd>
       <dt className="text-neutral-500">镜像</dt>
-      <dd className="break-all font-mono text-xs">{environment.image ?? "尚未构建"}</dd>
-      <dt className="text-neutral-500">最近构建</dt>
-      <dd>
-        {build ? `${build.id} · ${build.status} · ${new Date(build.createdAt).toLocaleString()}` : "无"}
-        {build?.errorMessage && <p role="alert" className="mt-1 text-red-600">{build.errorMessage}</p>}
+      <dd className="break-all font-mono text-xs">
+        {environment.image ?? "尚未构建"}
+        {environment.image && environment.status !== "ready" && <p className="mt-1 font-sans text-neutral-500">新的 Sandbox 仍使用此镜像，直到新构建成功。</p>}
       </dd>
     </dl>
   );

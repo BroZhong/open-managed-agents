@@ -29,6 +29,10 @@ function host(overrides: (url: URL, init: RequestInit) => Response | undefined =
     const answer = overrides(url, init);
     if (answer) return answer;
     const id = url.pathname.split("/")[3];
+    if (url.pathname.endsWith("/log")) {
+      const found = environments.get(id) as { lastBuild: unknown } | undefined;
+      return Response.json({ build: found?.lastBuild, finished: false, text: "", offset: 0, nextOffset: 0, truncated: false });
+    }
     if (url.pathname === "/v1/environments" && init.method === "POST") {
       const body = JSON.parse(String(init.body));
       const source = body.from ? environments.get(body.from) : {};
