@@ -66,17 +66,15 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
   }
 
   /**
-   * Stands in for the image builder (ADR-0024, "Building") where none runs:
-   * the Environment's active build succeeded with `image`, which now serves
-   * its new Sandboxes, and the Environment is ready.
+   * Build an Environment where no image builder runs (tests): claim its
+   * active build and complete it the way the builder does, so `image` now
+   * serves its new Sandboxes and the Environment is ready.
    */
-  succeedBuild(environmentId: string, image: string): void {
-    const env = this.environments.get(environmentId);
-    const build = this.builds.find((candidate) => candidate.environmentId === environmentId && (candidate.status === "pending" || candidate.status === "running"));
-    if (!env || !build) throw new Error(`Environment ${environmentId} has no active build`);
-    const now = new Date();
-    Object.assign(build, { status: "succeeded", startedAt: build.startedAt ?? now, finishedAt: now, image });
-    Object.assign(env, { status: "ready", image, updatedAt: now });
+  async buildNow(environmentId: string, image: string, manifest: Record<string, unknown> = {}): Promise<void> {
+    const build = this.builds.find((candidate) => candidate.environmentId === environmentId && candidate.status === "pending");
+    if (!build) throw new Error(`Environment ${environmentId} has no pending build`);
+    const { lease } = this.claim(build, "in-memory-builder", 60_000);
+    if (!await this.succeedBuild(lease, { image, manifest })) throw new Error(`Environment ${environmentId}'s build was not recorded`);
   }
 
   async create(input: EnvironmentStoreCreateInput): Promise<Environment> {
@@ -162,7 +160,11 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
     validateLeaseMs(leaseMs);
     const now = this.now();
     const build = this.builds.find((candidate) => candidate.status === "pending" || (candidate.status === "running" && candidate.leaseExpiresAt! <= now));
-    if (!build) return null;
+    return build ? this.claim(build, owner, leaseMs) : null;
+  }
+
+  private claim(build: EnvironmentBuild, owner: string, leaseMs: number): ClaimedEnvironmentBuild {
+    const now = this.now();
     const reclaimed = build.status === "running";
     build.status = "running";
     build.attempts += 1;

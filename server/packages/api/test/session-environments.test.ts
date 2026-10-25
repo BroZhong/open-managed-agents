@@ -41,7 +41,7 @@ async function setup() {
       owner: owner === "platform" ? { ownerType: "platform" } : { ownerType: "tenant", tenantId: owner },
       name, description: "", baseImage: "oma-media", initScript: "true\n", env: [], encryptedSecrets: {},
     });
-    if (ready) stores.environmentStore.succeedBuild(env.id, IMAGE);
+    if (ready) await stores.environmentStore.buildNow(env.id, IMAGE);
     return env;
   };
   const builtIn = await environment("platform", "video-production");

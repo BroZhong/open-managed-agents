@@ -78,7 +78,7 @@ await stores.environmentStore.create({
   env: [],
   encryptedSecrets: {},
 });
-stores.environmentStore.succeedBuild("env_cli_tools", "registry.example/welltop/oma-environments@sha256:" + "d".repeat(64));
+await stores.environmentStore.buildNow("env_cli_tools", "registry.example/welltop/oma-environments@sha256:" + "d".repeat(64));
 const app = createApp({
   ...stores,
   eventStreamHub: hub,

@@ -39,7 +39,7 @@ async function harness(script: Script, claims: { poolImage?: string; sandboxImag
   const environment = claims.environmentImage === undefined ? undefined : await stores.environmentStore.create({
     id: "env_tools", owner: { ownerType: "tenant", tenantId: "tenant" }, name: "tools", description: "", baseImage: "oma-base",
     initScript: "", env: [], encryptedSecrets: {} });
-  if (environment) stores.environmentStore.succeedBuild(environment.id, claims.environmentImage!);
+  if (environment) await stores.environmentStore.buildNow(environment.id, claims.environmentImage!);
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test",
     runtime: "pi-agent", sandbox: { enabled: true }, environmentId: environment?.id });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
