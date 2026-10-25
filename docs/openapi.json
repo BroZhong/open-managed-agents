@@ -570,6 +570,42 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentBuildLog": {
+        "type": "object",
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/EnvironmentBuildSummary"
+          },
+          "finished": {
+            "type": "boolean",
+            "description": "The build has ended (succeeded, failed or superseded): read once more from nextOffset, then stop polling."
+          },
+          "text": {
+            "type": "string",
+            "description": "UTF-8 log text from offset to the end of what the builder has written so far."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset of text in the whole log."
+          },
+          "nextOffset": {
+            "type": "integer",
+            "description": "Byte offset to pass as offset on the next poll."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Bytes before offset were dropped: the log keeps its last 1 MiB."
+          }
+        },
+        "required": [
+          "build",
+          "finished",
+          "text",
+          "offset",
+          "nextOffset",
+          "truncated"
+        ]
+      },
       "DeletedResource": {
         "type": "object",
         "properties": {
@@ -4957,6 +4993,176 @@
           },
           "409": {
             "description": "An Agent uses the Environment (environment_in_use)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/environments/{id}/build": {
+      "post": {
+        "operationId": "rebuildEnvironment",
+        "summary": "Rebuild an Environment",
+        "description": "Queues a build of the current Base Image and init script and supersedes the unfinished one; the Environment becomes pending. Sandboxes keep the current image until the build succeeds.",
+        "tags": [
+          "Environments"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Build queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Environment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A Built-in Environment is read-only (environment_read_only), or share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment not found (environment_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/environments/{id}/log": {
+      "get": {
+        "operationId": "getEnvironmentBuildLog",
+        "summary": "Read an Environment Build's log",
+        "description": "The log of the latest build (or of build_id) from offset on, with the build's status. The image builder writes it about every 2 s while the build runs; poll with nextOffset until finished. Built-in Environments' logs are readable by every Tenant.",
+        "tags": [
+          "Environments"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The build whose log to read; defaults to the Environment's latest build (lastBuild)."
+            },
+            "required": false,
+            "description": "The build whose log to read; defaults to the Environment's latest build (lastBuild).",
+            "name": "build_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Byte offset in the whole log to read from; pass the previous answer's nextOffset. Default 0."
+            },
+            "required": false,
+            "description": "Byte offset in the whole log to read from; pass the previous answer's nextOffset. Default 0.",
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Build log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentBuildLog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query (validation_error)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Environment not found (environment_not_found), or it has no such build (environment_build_not_found)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Build logs are not configured (environment_build_logs_unavailable)",
             "content": {
               "application/json": {
                 "schema": {

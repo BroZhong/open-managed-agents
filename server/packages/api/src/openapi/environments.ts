@@ -95,6 +95,24 @@ export const UpdateEnvironmentInputSchema = z.object({
   env: fields.env.optional(),
 }).strict().openapi("UpdateEnvironmentInput");
 
+export const EnvironmentBuildLogQuerySchema = z.object({
+  build_id: z.string().min(1).max(128).optional().openapi({
+    param: { name: "build_id", in: "query" }, description: "The build whose log to read; defaults to the Environment's latest build (lastBuild).",
+  }),
+  offset: z.coerce.number().int().min(0).optional().openapi({
+    param: { name: "offset", in: "query" }, description: "Byte offset in the whole log to read from; pass the previous answer's nextOffset. Default 0.",
+  }),
+});
+
+export const EnvironmentBuildLogSchema = z.object({
+  build: EnvironmentBuildSummarySchema,
+  finished: z.boolean().openapi({ description: "The build has ended (succeeded, failed or superseded): read once more from nextOffset, then stop polling." }),
+  text: z.string().openapi({ description: "UTF-8 log text from offset to the end of what the builder has written so far." }),
+  offset: z.number().int().openapi({ description: "Byte offset of text in the whole log." }),
+  nextOffset: z.number().int().openapi({ description: "Byte offset to pass as offset on the next poll." }),
+  truncated: z.boolean().openapi({ description: "Bytes before offset were dropped: the log keeps its last 1 MiB." }),
+}).openapi("EnvironmentBuildLog");
+
 const json = (schema: z.ZodType, description: string) => ({ description, content: { "application/json": { schema } } });
 const error = (description: string) => json(ErrorSchema, description);
 const params = z.object({ id: z.string().openapi({ param: { name: "id", in: "path" } }) });
@@ -157,6 +175,38 @@ export const environmentOpenApiRoutes = [
       404: error("Environment not found (environment_not_found)"),
       409: error("Name already used by another of the Tenant's Environments (environment_name_conflict)"),
       503: error("Secret storage requires OMA_PROVIDER_ENCRYPTION_KEY (environment_secrets_unavailable)"),
+    },
+  }),
+  createRoute({
+    method: "post",
+    path: "/v1/environments/{id}/build",
+    operationId: "rebuildEnvironment",
+    summary: "Rebuild an Environment",
+    description: "Queues a build of the current Base Image and init script and supersedes the unfinished one; the Environment becomes pending. Sandboxes keep the current image until the build succeeds.",
+    tags: ["Environments"],
+    request: { params },
+    responses: {
+      ...common,
+      202: json(EnvironmentSchema, "Build queued"),
+      403: error("A Built-in Environment is read-only (environment_read_only), or share access denied"),
+      404: error("Environment not found (environment_not_found)"),
+    },
+  }),
+  createRoute({
+    method: "get",
+    path: "/v1/environments/{id}/log",
+    operationId: "getEnvironmentBuildLog",
+    summary: "Read an Environment Build's log",
+    description: "The log of the latest build (or of build_id) from offset on, with the build's status. The image builder writes it about every 2 s while the build runs; poll with nextOffset until finished. Built-in Environments' logs are readable by every Tenant.",
+    tags: ["Environments"],
+    request: { params, query: EnvironmentBuildLogQuerySchema },
+    responses: {
+      ...common,
+      200: json(EnvironmentBuildLogSchema, "Build log"),
+      400: error("Invalid query (validation_error)"),
+      403: error("Share access denied"),
+      404: error("Environment not found (environment_not_found), or it has no such build (environment_build_not_found)"),
+      503: error("Build logs are not configured (environment_build_logs_unavailable)"),
     },
   }),
   createRoute({

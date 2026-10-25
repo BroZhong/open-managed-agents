@@ -3,7 +3,7 @@ import { ModelProviderService } from "./lib/model-providers.js";
 import { EnvironmentService } from "./lib/environments.js";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { serve } from "@hono/node-server";
-import { createMemoryStores } from "@oma-server/store-memory";
+import { createMemoryStores, InMemoryEnvironmentBuildLogStore } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
@@ -80,6 +80,7 @@ async function main() {
     modelProviderService,
     environmentService: new EnvironmentService(stores.environmentStore, secretKey, {
       inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+      logs: new InMemoryEnvironmentBuildLogStore(),
     }),
     thinkingOptions: (tenant, model) => modelProviderService.thinkingOptions(tenant, model, async raw => (await import("@open-managed-agents/adapter-pi-agent")).managedThinkingOptions(raw)),
     sessionShareStore: stores.sessionShareStore,

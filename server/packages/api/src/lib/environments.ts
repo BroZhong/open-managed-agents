@@ -1,9 +1,12 @@
 import { HTTPException } from "hono/http-exception";
 import {
   EnvironmentNameConflictError,
+  environmentBuildLogKey,
   newEnvironmentId,
   type SandboxEnvironmentRecord,
   type Environment,
+  type EnvironmentBuild,
+  type EnvironmentBuildLogStore,
   type EnvironmentBaseImage,
   type EnvironmentOwner,
   type EnvironmentStore,
@@ -144,6 +147,15 @@ export function publicEnvironment(env: Environment) {
   return rest;
 }
 
+/** A build as the API shows it. */
+export function buildSummary(build: EnvironmentBuild) {
+  const { id, status, createdAt, startedAt, finishedAt, errorCode, errorMessage } = build;
+  return { id, status, createdAt, startedAt, finishedAt, errorCode, errorMessage };
+}
+
+/** A build's status that will not change any more. */
+const FINISHED: ReadonlySet<EnvironmentBuild["status"]> = new Set(["succeeded", "failed", "superseded"]);
+
 /** The list view: without the script, variables and manifest. */
 export function environmentSummary(env: Environment) {
   const { initScript: _script, env: _env, manifest: _manifest, ...rest } = publicEnvironment(env);
@@ -161,7 +173,7 @@ export class EnvironmentService {
   constructor(
     readonly store: EnvironmentStore,
     encryptionKey: string | undefined,
-    private readonly options: { inUse?: EnvironmentInUse } = {},
+    private readonly options: { inUse?: EnvironmentInUse; logs?: EnvironmentBuildLogStore } = {},
   ) {
     this.secrets = new SecretBox(encryptionKey, () => new EnvironmentError(503, "environment_secrets_unavailable",
       "Environment secrets require OMA_PROVIDER_ENCRYPTION_KEY (32 bytes encoded as hex)."));
@@ -243,6 +255,43 @@ export class EnvironmentService {
     } catch (error) {
       throw conflict(error);
     }
+  }
+
+  /** Build the current definition again; a built-in is the platform's to build. */
+  async rebuild(tenantId: string, id: string) {
+    await this.owned(tenantId, id);
+    const rebuilt = await this.store.rebuild({ ownerType: "tenant", tenantId }, id);
+    if (!rebuilt) throw notFound();
+    return publicEnvironment(rebuilt);
+  }
+
+  /**
+   * A build's log from byte `offset` on (the latest build unless `buildId`
+   * names another), for polling: pass `nextOffset` back as `offset` until
+   * `finished`, then read once more. The status is read before the log,
+   * and the builder writes the log before the status, so the read after
+   * `finished` holds the whole log.
+   */
+  async buildLog(tenantId: string, id: string, query: { buildId?: string; offset?: number }) {
+    const env = await this.visible(tenantId, id);
+    const buildId = query.buildId ?? env.lastBuild?.id;
+    const build = buildId ? await this.store.getBuild(env.id, buildId) : null;
+    if (!build) throw new EnvironmentError(404, "environment_build_not_found", "Environment Build not found");
+    const logs = this.options.logs;
+    if (!logs) throw new EnvironmentError(503, "environment_build_logs_unavailable", "Environment Build logs are not configured on this Host.");
+    const kept = await logs.read(environmentBuildLogKey(build.tenantId, build.id)) ?? { text: "", start: 0 };
+    const bytes = Buffer.from(kept.text, "utf8");
+    const end = kept.start + bytes.length;
+    const requested = query.offset ?? 0;
+    const offset = Math.min(Math.max(requested, kept.start), end);
+    return {
+      build: buildSummary(build),
+      finished: FINISHED.has(build.status),
+      text: bytes.subarray(offset - kept.start).toString("utf8"),
+      offset,
+      nextOffset: end,
+      truncated: requested < kept.start,
+    };
   }
 
   async delete(tenantId: string, id: string) {

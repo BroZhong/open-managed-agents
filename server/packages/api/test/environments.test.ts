@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMemoryStores } from "@oma-server/store-memory";
+import { createMemoryStores, InMemoryEnvironmentBuildLogStore } from "@oma-server/store-memory";
+import { environmentBuildLogKey } from "@oma-server/store";
 import { createApp } from "../src/app.js";
 import { EnvironmentService } from "../src/lib/environments.js";
 import { SecretBox } from "../src/lib/secret-box.js";
@@ -10,7 +11,8 @@ const SECRET = "sk-environment-secret-value";
 async function setup(options: { key?: string; inUse?: (tenantId: string, id: string) => Promise<boolean> } = {}) {
   const stores = createMemoryStores();
   const secrets = new SecretBox("key" in options ? options.key : KEY, () => new Error("unavailable"));
-  const service = new EnvironmentService(stores.environmentStore, "key" in options ? options.key : KEY, { inUse: options.inUse });
+  const logs = new InMemoryEnvironmentBuildLogStore();
+  const service = new EnvironmentService(stores.environmentStore, "key" in options ? options.key : KEY, { inUse: options.inUse, logs });
   const app = createApp({ apiKeyStore: stores.apiKeyStore, environmentService: service });
   const keys = {
     t1: (await stores.apiKeyStore.create("t1", "t1")).rawKey,
@@ -31,7 +33,7 @@ async function setup(options: { key?: string; inUse?: (tenantId: string, id: str
     env: [{ name: "HTTP_PROXY", value: "http://proxy:7890" }, { name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }],
     encryptedSecrets: {},
   });
-  return { stores, service, app, call, builtIn, secrets };
+  return { stores, service, app, call, builtIn, secrets, logs };
 }
 
 const create = { name: "py", baseImage: "oma-base", initScript: "pip install requests\n" };
@@ -217,6 +219,58 @@ describe("Environment routes (ADR-0024)", () => {
     expect((await call("t1", "POST", `/v1/environments/${env.id}`, { name: "x" })).status).toBe(404);
     expect((await call("t1", "DELETE", `/v1/environments/${env.id}`)).status).toBe(404);
     expect((await stores.environmentStore.listBuilds(env.id)).map((build) => build.status)).toEqual(["superseded"]);
+  });
+
+  it("rebuilds a Tenant's Environment, superseding its unfinished build; built-ins are the platform's", async () => {
+    const { call, stores, builtIn } = await setup();
+    const { body: env } = await call("t1", "POST", "/v1/environments", create);
+    const rebuilt = await call("t1", "POST", `/v1/environments/${env.id}/build`);
+    expect(rebuilt.status).toBe(202);
+    expect(rebuilt.body).toMatchObject({ id: env.id, status: "pending", initScript: create.initScript, lastBuild: { status: "pending" } });
+    expect(rebuilt.body.lastBuild.id).not.toBe(env.lastBuild.id);
+    const builds = await stores.environmentStore.listBuilds(env.id);
+    expect(builds.map((build) => [build.status, build.initScript])).toEqual([["pending", create.initScript], ["superseded", create.initScript]]);
+    expect(await call("t1", "POST", `/v1/environments/${builtIn.id}/build`)).toMatchObject({ status: 403, body: { code: "environment_read_only" } });
+    expect(await call("t2", "POST", `/v1/environments/${env.id}/build`)).toMatchObject({ status: 404, body: { code: "environment_not_found" } });
+  });
+
+  it("serves a build's log by byte offset with its status, for 2 s polling", async () => {
+    const { call, stores, logs, builtIn } = await setup();
+    const { body: env } = await call("t1", "POST", "/v1/environments", create);
+    const first = env.lastBuild.id;
+    const empty = await call("t1", "GET", `/v1/environments/${env.id}/log`);
+    expect(empty).toMatchObject({ status: 200, body: { build: { id: first, status: "pending" }, finished: false, text: "", offset: 0, nextOffset: 0, truncated: false } });
+
+    // The built-in's build is older and claimed first.
+    await stores.environmentStore.claimBuild("builder-1", 60_000);
+    const claimed = (await stores.environmentStore.claimBuild("builder-1", 60_000))!;
+    expect(claimed.build.id).toBe(first);
+    await logs.write(environmentBuildLogKey("t1", first), { text: "==> Pulling\n构建\n", start: 0 });
+    const page = await call("t1", "GET", `/v1/environments/${env.id}/log`);
+    expect(page.body).toMatchObject({ build: { id: first, status: "running" }, finished: false, text: "==> Pulling\n构建\n", offset: 0, nextOffset: 19 });
+    const tail = await call("t1", "GET", `/v1/environments/${env.id}/log?offset=12`);
+    expect(tail.body).toMatchObject({ text: "构建\n", offset: 12, nextOffset: 19 });
+    expect((await call("t1", "GET", `/v1/environments/${env.id}/log?offset=99`)).body).toMatchObject({ text: "", offset: 19, nextOffset: 19 });
+
+    // The kept tail dropped its head: reading from before it says so.
+    await logs.write(environmentBuildLogKey("t1", first), { text: "line 9\n", start: 2_000_000 });
+    await stores.environmentStore.failBuild(claimed.lease, { code: "environment_build_script_failed", message: "The init script failed at line 2" });
+    const truncated = await call("t1", "GET", `/v1/environments/${env.id}/log?offset=19`);
+    expect(truncated.body).toMatchObject({
+      build: { id: first, status: "failed", errorCode: "environment_build_script_failed", errorMessage: "The init script failed at line 2" },
+      finished: true, text: "line 9\n", offset: 2_000_000, nextOffset: 2_000_007, truncated: true,
+    });
+
+    const { body: rebuilt } = await call("t1", "POST", `/v1/environments/${env.id}/build`);
+    expect((await call("t1", "GET", `/v1/environments/${env.id}/log`)).body.build.id).toBe(rebuilt.lastBuild.id);
+    expect((await call("t1", "GET", `/v1/environments/${env.id}/log?build_id=${first}`)).body).toMatchObject({ build: { id: first }, text: "line 9\n" });
+    expect(await call("t1", "GET", `/v1/environments/${env.id}/log?build_id=envb_missing`)).toMatchObject({ status: 404, body: { code: "environment_build_not_found" } });
+    expect(await call("t1", "GET", `/v1/environments/${env.id}/log?build_id=${builtIn.lastBuild!.id}`)).toMatchObject({ status: 404 });
+    expect(await call("t1", "GET", `/v1/environments/${env.id}/log?offset=-1`)).toMatchObject({ status: 400, body: { code: "validation_error" } });
+    expect(await call("t2", "GET", `/v1/environments/${env.id}/log`)).toMatchObject({ status: 404, body: { code: "environment_not_found" } });
+
+    await logs.write(environmentBuildLogKey(null, builtIn.lastBuild!.id), { text: "built-in\n", start: 0 });
+    expect((await call("t2", "GET", `/v1/environments/${builtIn.id}/log`)).body).toMatchObject({ build: { id: builtIn.lastBuild!.id }, text: "built-in\n" });
   });
 
   it("needs the encryption key only to write or copy secrets", async () => {
