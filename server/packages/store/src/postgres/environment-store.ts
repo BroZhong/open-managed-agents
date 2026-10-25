@@ -410,6 +410,28 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
     });
   }
 
+  async getBuiltIn(id: string): Promise<Environment | null> {
+    const { rows } = await this.pool.query<EnvironmentRow>(
+      `${SELECT_ENVIRONMENT} WHERE e.id = $1 AND e.owner_type = 'platform' AND e.deleted_at IS NULL`,
+      [id],
+    );
+    return rows[0] ? rowToEnvironment(rows[0]) : null;
+  }
+
+  async listBuiltOnOtherBaseImage(baseImage: EnvironmentBaseImage, digest: string): Promise<Array<{ id: string; owner: EnvironmentOwner }>> {
+    const { rows } = await this.pool.query<{ id: string; owner_type: EnvironmentOwnerType; tenant_id: string | null }>(
+      `SELECT e.id, e.owner_type, e.tenant_id FROM environments e JOIN environment_builds b ON b.id = e.last_build_id
+       WHERE e.base_image = $1 AND e.deleted_at IS NULL AND b.status IN ('succeeded', 'failed')
+         AND (b.base_image_digest IS NULL OR b.base_image_digest <> $2)
+       ORDER BY e.id`,
+      [baseImage, digest],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      owner: row.owner_type === "platform" ? { ownerType: "platform" } : { ownerType: "tenant", tenantId: row.tenant_id! },
+    }));
+  }
+
   /**
    * End a held build with `status`, then let `record` write the outcome, in
    * one transaction. A lease that lapsed without a reclaim still finishes:

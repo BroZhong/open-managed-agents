@@ -179,6 +179,57 @@ export function environmentBuildQueueContract(name: string, create: () => Promis
       expect(await store.get("t1", env.id)).toMatchObject({ status: "ready", image: "registry/env@sha256:v2", initScript: "echo v2\n" });
     });
 
+    it("reads a built-in by its id, never a Tenant's Environment or a deleted one", async () => {
+      const builtIn = await store.create(input(PLATFORM, { id: "env_builtin_read", name: "builtin-read" }));
+      const own = await store.create(input(T1));
+      expect(await store.getBuiltIn(builtIn.id)).toMatchObject({ id: builtIn.id, ownerType: "platform", tenantId: null, status: "pending" });
+      expect(await store.getBuiltIn(own.id)).toBeNull();
+      expect(await store.getBuiltIn("env_missing")).toBeNull();
+      await store.delete(PLATFORM, builtIn.id);
+      expect(await store.getBuiltIn(builtIn.id)).toBeNull();
+    });
+
+    it("lists the Environments whose latest build finished on another digest of their Base Image", async () => {
+      const finish = async (envId: string, digest: string | null, outcome: "succeeded" | "failed") => {
+        for (;;) {
+          const claimed = (await store.claimBuild("builder-a", LEASE))!;
+          if (digest) await store.recordBuildProgress(claimed.lease, { baseImageDigest: digest });
+          const done = outcome === "succeeded"
+            ? await store.succeedBuild(claimed.lease, { image: `registry/env@sha256:${envId}`, manifest: MANIFEST })
+            : await store.failBuild(claimed.lease, { code: "x", message: "x" });
+          expect(done).toBe(true);
+          if (claimed.build.environmentId === envId) return;
+        }
+      };
+      const old = await store.create(input(T1, { id: "env_a_old" }));
+      await finish(old.id, "sha256:old", "succeeded");
+      const current = await store.create(input(T1, { id: "env_b_current" }));
+      await finish(current.id, "sha256:new", "succeeded");
+      const failedOld = await store.create(input(PLATFORM, { id: "env_c_failed_old", name: "failed-old" }));
+      await finish(failedOld.id, "sha256:old", "failed");
+      const failedNew = await store.create(input(T1, { id: "env_d_failed_new" }));
+      await finish(failedNew.id, "sha256:new", "failed");
+      const unrecorded = await store.create(input(T1, { id: "env_e_unrecorded" }));
+      await finish(unrecorded.id, null, "failed");
+      const media = await store.create(input(T1, { id: "env_f_media", baseImage: "oma-media" }));
+      await finish(media.id, "sha256:media-old", "succeeded");
+      const deleted = await store.create(input(T1, { id: "env_g_deleted" }));
+      await finish(deleted.id, "sha256:old", "succeeded");
+      await store.delete(T1, deleted.id);
+      // A rebuild queued for the old digest is left to run on the configured one.
+      const queued = await store.create(input(T1, { id: "env_h_queued" }));
+      await finish(queued.id, "sha256:old", "succeeded");
+      await store.rebuild(T1, queued.id);
+
+      expect(await store.listBuiltOnOtherBaseImage("oma-base", "sha256:new")).toEqual([
+        { id: old.id, owner: T1 },
+        { id: failedOld.id, owner: PLATFORM },
+        { id: unrecorded.id, owner: T1 },
+      ]);
+      expect(await store.listBuiltOnOtherBaseImage("oma-media", "sha256:media-old")).toEqual([]);
+      expect(await store.listBuiltOnOtherBaseImage("oma-media", "sha256:media-new")).toEqual([{ id: media.id, owner: T1 }]);
+    });
+
     it("rebuilds only for the owner, superseding the active build", async () => {
       const env = await store.create(input(T1));
       const builtIn = await store.create(input(PLATFORM, { id: "env_builtin_rebuild" }));

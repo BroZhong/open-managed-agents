@@ -234,6 +234,25 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
     });
   }
 
+  async getBuiltIn(id: string): Promise<Environment | null> {
+    const env = this.environments.get(id);
+    return env && env.ownerType === "platform" && !env.deletedAt ? this.view(env) : null;
+  }
+
+  async listBuiltOnOtherBaseImage(baseImage: EnvironmentBaseImage, digest: string): Promise<Array<{ id: string; owner: EnvironmentOwner }>> {
+    return [...this.environments.values()]
+      .filter((env) => {
+        const build = this.builds.find((candidate) => candidate.id === env.lastBuildId);
+        return env.baseImage === baseImage && !env.deletedAt && !!build
+          && (build.status === "succeeded" || build.status === "failed") && build.baseImageDigest !== digest;
+      })
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .map((env): { id: string; owner: EnvironmentOwner } => ({
+        id: env.id,
+        owner: env.ownerType === "platform" ? { ownerType: "platform" } : { ownerType: "tenant", tenantId: env.tenantId! },
+      }));
+  }
+
   /** The build `lease` holds; with `live`, only while the lease has not expired. */
   private held(lease: EnvironmentBuildLease, live: boolean): EnvironmentBuild | undefined {
     const build = this.builds.find((candidate) => candidate.id === lease.buildId);

@@ -265,4 +265,14 @@ export interface EnvironmentBuildQueue {
    * nothing, when the lease is no longer held.
    */
   failBuild(lease: EnvironmentBuildLease, error: { code: string; message: string }): Promise<boolean>;
+  /** A Built-in Environment by its fixed id; null when there is none or it is deleted. */
+  getBuiltIn(id: string): Promise<Environment | null>;
+  /**
+   * Every Environment on `baseImage` that is not deleted and whose latest
+   * build has finished (succeeded or failed) on another Base Image digest
+   * than `digest` (`sha256:…`): what a new Base Image must rebuild. One
+   * whose latest build is pending or running is not listed: that build runs
+   * on the configured digest.
+   */
+  listBuiltOnOtherBaseImage(baseImage: EnvironmentBaseImage, digest: string): Promise<Array<{ id: string; owner: EnvironmentOwner }>>;
 }
