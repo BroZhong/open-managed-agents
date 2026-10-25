@@ -237,6 +237,15 @@ Measured on the agent-platform cluster on 2026-10-25:
   Secret and their code are deleted. `SANDBOX_TEMPLATE` becomes the pool name.
 - `auto-story-v2` keeps serving production until the production release;
   oma-test moves first.
+- Migration 0029 (#311) does this in SQL once the builder has built
+  `video-production`. A copy keeps the Agent's variables as plain values (they
+  were plaintext on the Agent and in its API; the Tenant can make them
+  secrets), drops empty values and reserved names, and serves
+  `video-production`'s image until its own pending build finishes, since it
+  has the same definition. A Sandboxed Agent always has an Environment: one
+  that names none is bound to `video-production`, and `SANDBOX_IMAGE` is gone;
+  a Session that froze none (its Agent then ran without a Sandbox) uses its
+  Agent's.
 
 ## Considered options
 

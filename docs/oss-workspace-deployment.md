@@ -44,8 +44,7 @@ Supabase fallback, local filesystem fallback or dual-write mode.
 | `WORKSPACE_OSS_PV_NAME` | `agentry-workspace-oss`; optional in code, explicit in the deployment. |
 | `WORKSPACE_OSS_CREDENTIAL_PROVIDER` | `agentry-oss-rw`; optional in code, explicit in the deployment. |
 | `SANDBOX_ENABLED` | Required literal `true`. Disabling it is a startup error for this storage assembly. |
-| `SANDBOX_TEMPLATE` | The Warm Pool every Sandbox is claimed from: `auto-story-v2` (oma-test: `oma-test-sandbox`). Agent template overrides are no longer read (ADR-0024). |
-| `SANDBOX_IMAGE` | Required image every claim passes, pinned by digest and equal to the pool's image (ADR-0024). |
+| `SANDBOX_TEMPLATE` | The Warm Pool every Sandbox is claimed from: `auto-story-v2` (oma-test: `oma-test-sandbox`); each claim passes the image of the Session's Environment (ADR-0024). |
 | `E2B_DOMAIN` | Required: `sandbox.agentry.welltop.tech`; production keeps the existing Secret reference. |
 | `E2B_API_KEY` | Required Shanghai gateway key from `oma-infra/oma-secrets`; an old gateway key is not interchangeable. |
 

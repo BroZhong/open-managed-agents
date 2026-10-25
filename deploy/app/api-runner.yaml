@@ -169,11 +169,9 @@ data:
   WORKSPACE_OSS_CREDENTIAL_PROVIDER: agentry-oss-rw
   OMA_PROXY_URL: http://10.0.165.246:7890
   SANDBOX_ENABLED: 'true'
-  # The Warm Pool (SandboxSet) every Sandbox is claimed from, and the image
-  # every claim passes (ADR-0024). The image must equal the pool's image byte
-  # for byte, or every claim swaps the container in place: change them together.
+  # The Warm Pool (SandboxSet) every Sandbox is claimed from (ADR-0024); each
+  # claim passes the image of the Session's Environment.
   SANDBOX_TEMPLATE: auto-story-v2
-  SANDBOX_IMAGE: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d
   # Labels every Sandbox created (oma.dev/environment); the test overlay sets test.
   OMA_ENVIRONMENT: production
   E2B_API_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:8080
@@ -222,9 +220,6 @@ spec:
         envFrom:
         - configMapRef:
             name: oma-runner-config
-        - secretRef:
-            name: oma-auto-story-env
-            optional: true
         env:
         # Node defaults to a ~2 GB heap regardless of the container limit.
         - name: NODE_OPTIONS
@@ -274,11 +269,6 @@ spec:
             secretKeyRef:
               name: oma-secrets
               key: E2B_API_KEY
-        - name: DEFAULT_SANDBOX_VFS_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: oma-secrets
-              key: DEFAULT_SANDBOX_VFS_TOKEN
         - name: RDS_MCP_APIKEY
           valueFrom:
             secretKeyRef:

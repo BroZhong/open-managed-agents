@@ -103,11 +103,10 @@ Agents using `kimi-coding-plan/k3` retain their selection. The upstream model ID
 is `k3`, not Ark's `kimi-k3`. Secret subPath mounts require a Host rollout to
 load changed configuration.
 
-The console creates Agents with the default Sandbox template and no image
-override. The Host no longer reads an Agent's template override: every
-Sandbox is claimed from the Runner's Warm Pool (`SANDBOX_TEMPLATE`, production
-`auto-story-v2`) with `SANDBOX_IMAGE` (ADR-0024). Sandbox environment
-variables are preserved.
+The console creates Agents in an Environment (`video-production` unless
+another is chosen). Every Sandbox is claimed from the Runner's Warm Pool
+(`SANDBOX_TEMPLATE`, production `auto-story-v2`) with the image of its
+Session's Environment, whose variables reach every command (ADR-0024).
 
 ## Model metadata (verified 2026-09-15)
 

@@ -77,12 +77,13 @@
 //     unusedRunning, noDeadline, killed, adopted, ms}, every 10 min with jitter (the band checked by
 //     sweep-summary defaults to 300–900 s); the read-only report's "Planned `sandbox_sweep` counters"
 //     block uses the same names.
-//  A9 Agent sandbox.env overrides the deployment default env per key (storyboard 2026-10-21), so the
-//     blanked env below keeps business credentials out of the test Sandboxes.
+//  A9 The verification Agent's Sandboxes run in VERIFY_ENVIRONMENT_ID (default env_video_production):
+//     its variables reach every command (ADR-0024). To keep business credentials out of the test
+//     Sandboxes, point it at a ready Tenant Environment whose variables are inert.
 //  A10 Preconditions outside this script: oma-test has its own gateway API key (#283) and its Runners
 //     label new Sandboxes `oma.dev/environment=test` (#284), so the report and the sweeper see only test.
 //
-// Knobs (VERIFY_*, passed through by the wrapper): MODEL (default openai-codex/gpt-5.6-sol), SANDBOX_IMAGE,
+// Knobs (VERIFY_*, passed through by the wrapper): MODEL (default openai-codex/gpt-5.6-sol), ENVIRONMENT_ID,
 // CREATE_CONCURRENCY (20), SUBMIT_CONCURRENCY (50), BURST_WATCH_SECONDS (300), BURST_SAMPLE_MS (5000),
 // DISRUPT_CREATING_RATIO (0.25), READ_CONCURRENCY (8), MIN_SANDBOX_USED_RATIO (1), SKIP_FILES (1 skips the
 // Workspace file reads), KILL_WAIT_SECONDS (180), KILL_FINISH_MINUTES (15), RECOVERY_MARGIN_SECONDS (60),
@@ -97,7 +98,7 @@ export const END_MARKER = 'END verify-sandbox-reconcile';
 export const INTENT_DEADLINE_SECONDS = 180;
 const BASE_URL = 'https://agentry-test.welltop.tech/api';
 const SCHEMA = 'oma_test';
-const TEST_TEMPLATE = 'oma-scale-test-20261021';
+const DEFAULT_ENVIRONMENT_ID = 'env_video_production';
 const DEFAULT_MODEL = 'openai-codex/gpt-5.6-sol';
 const KUBE = 'kubectl --kubeconfig ~/.kube/agent-platform-config -n oma-test';
 const WRAPPER = 'deploy/scripts/run-sandbox-reconcile-acceptance.sh';
@@ -125,17 +126,6 @@ export const SHAPES = {
     const last = sandbox?.last_error ?? sandbox?.lastError;
     return last == null ? null : (typeof last === 'string' ? last : last.code ?? 'unknown');
   },
-};
-
-/** Business credentials and URLs blanked, as for the 2026-10-21 burst (storyboard-multi-runner). */
-export const BLANKED_SANDBOX_ENV = {
-  GEMINI_VIDEO_MODEL: '', GOOGLE_API_KEY: '', HTTPS_PROXY: '', HTTP_PROXY: '', MEDIAKIT_API_KEY: '', MEDIAKIT_RUNTIME: '',
-  MEDIAKIT_SURFACE: '', NO_PROXY: '', OPENGROVE_WW_ACCESS_TOKEN: '', OPENGROVE_WW_BASE_URL: 'http://127.0.0.1:9', OSSUTIL_BIN: '',
-  OSS_READ_ACCESS_KEY_ID: '', OSS_READ_ACCESS_KEY_SECRET: '', OSS_READ_BUCKET: '', OSS_READ_ENDPOINT: '', OSS_READ_REGION: '',
-  OSS_READ_TABLE_ID: '', RUNTIME_ENV: 'test', VFS_OSS_AK: '', VFS_OSS_SK: '', VFS_TOKEN: '', http_proxy: '', https_proxy: '',
-  no_proxy: '', IS_TEST: 'true', VFS_ACCESS_TOKEN: '', VFS_API_KEY: '', VFS_API_TOKEN: '', OMA_API_KEY: '',
-  USAGE_BASE_URL: 'http://127.0.0.1:9', PIXEL_DIRECTOR_URL: 'http://127.0.0.1:9', VFS_BASE_URL: 'http://127.0.0.1:9',
-  VFS_API_BASE_URL: 'http://127.0.0.1:9',
 };
 
 const SYSTEM = 'Follow the verification instructions exactly. Use only the bash tool. A tool error about the Sandbox '
@@ -591,11 +581,11 @@ const PHASES = {
   async init(ctx) {
     assert(!ctx.e.agent, `init already ran for this evidence file (agent ${ctx.e.agent}); start a new evidence file for a new run`);
     const model = process.env.VERIFY_MODEL || DEFAULT_MODEL;
-    const image = process.env.VERIFY_SANDBOX_IMAGE || TEST_TEMPLATE;
+    const environmentId = process.env.VERIFY_ENVIRONMENT_ID || DEFAULT_ENVIRONMENT_ID;
     const agent = await ctx.api('/v1/agents', { name: `${ctx.e.runId}-agent`, model, runtime: 'pi-agent',
-      sandbox: { enabled: true, image, env: BLANKED_SANDBOX_ENV }, mcpServers: [], skills: [], system: SYSTEM });
-    Object.assign(ctx.e, { agent: agent.id, model, image });
-    ctx.check('init: verification Agent created', true, { tenant: ctx.e.runId, agent: agent.id, model, image });
+      sandbox: { enabled: true }, environmentId, mcpServers: [], skills: [], system: SYSTEM });
+    Object.assign(ctx.e, { agent: agent.id, model, environmentId });
+    ctx.check('init: verification Agent created', true, { tenant: ctx.e.runId, agent: agent.id, model, environmentId });
   },
 
   async burst(ctx, [count]) {

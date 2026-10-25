@@ -269,8 +269,8 @@ function fakeOmaTest() {
     const body = init.body ? JSON.parse(init.body) : undefined;
     let m;
     if (method === "POST" && path === "/v1/agents") {
-      assert.equal(body.sandbox.image, "oma-scale-test-20261021");
-      assert.equal(body.sandbox.env.VFS_TOKEN, "");
+      assert.deepEqual(body.sandbox, { enabled: true });
+      assert.equal(body.environmentId, "env_video_production");
       return json({ id: "agent_1" }, 201);
     }
     if (method === "POST" && path === "/v1/sessions") {

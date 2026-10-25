@@ -87,17 +87,23 @@ test("each environment's Runners label their Sandboxes with it; the API creates 
 
 const digestPinned = /^[a-z0-9.-]+\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/;
 
-test("each environment's Runners claim from their Warm Pool with its exact image (ADR-0024)", () => {
+test("each environment's Runners claim from their Warm Pool; the image is each Session's Environment's (ADR-0024)", () => {
   const pool = readFileSync(new URL("sandbox/warm-pool/oma-test-sandbox.yaml", root), "utf8");
-  const poolImage = pool.match(/^\s+image: (\S+)$/m)?.[1];
+  assert.match(pool.match(/^\s+image: (\S+)$/m)?.[1] ?? "", digestPinned);
   const test = configMap(render("test"), "oma-runner-config");
   assert.equal(field(test, "SANDBOX_TEMPLATE"), "oma-test-sandbox");
-  // The gateway compares references as strings: anything else swaps every claim.
-  assert.equal(field(test, "SANDBOX_IMAGE").replace(/^'|'$/g, ""), poolImage);
   const production = configMap(render("production"), "oma-runner-config");
   assert.equal(field(production, "SANDBOX_TEMPLATE"), "auto-story-v2");
-  for (const image of [poolImage, field(production, "SANDBOX_IMAGE")]) assert.match(image, digestPinned);
-  assert.match(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), new RegExp(`^  SANDBOX_IMAGE: "${field(production, "SANDBOX_IMAGE")}"$`, "m"));
+  for (const docs of [test, production]) assert.equal(field(docs, "SANDBOX_IMAGE"), undefined);
+  assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /SANDBOX_IMAGE/);
+});
+
+test("no environment injects the removed per-Agent or default Sandbox variables (ADR-0024)", () => {
+  for (const env of ["test", "production"]) {
+    const text = render(env).join("\n---\n");
+    assert.doesNotMatch(text, /oma-auto-story-env|AUTO_STORY_|OPENGROVE_WW_|name: DEFAULT_SANDBOX_/, env);
+  }
+  assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /oma-auto-story-env|AUTO_STORY_|OPENGROVE_WW_|name: DEFAULT_SANDBOX_/);
 });
 
 test("the oma-test Warm Pool is the auto-story-v2 template without base-secret pod env (ADR-0024)", () => {

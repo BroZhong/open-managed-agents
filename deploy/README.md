@@ -133,7 +133,7 @@ and restart the test Deployments. Keep the test `PG_PASSWORD`:
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
-for s in ali-shanghai certwelltoptech2026 oma-pi-gateway oma-auto-story-env; do
+for s in ali-shanghai certwelltoptech2026 oma-pi-gateway; do
   kubectl -n oma-infra get secret "$s" -o json \
     | jq '.metadata = {name: .metadata.name, namespace: "oma-test"}' \
     | kubectl apply -f -
@@ -289,16 +289,37 @@ deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-pro
 ```
 
 Every Sandbox is claimed from the Runner's Warm Pool, `SANDBOX_TEMPLATE`
-(production `auto-story-v2`, oma-test `oma-test-sandbox`), with the image
-`SANDBOX_IMAGE` (ADR-0024). Both are required: a Runner without them, or
-with an image not pinned by digest, does not start. `SANDBOX_IMAGE` must
-equal the pool's image byte for byte, or every claim swaps the container in
-place: a pool deployment that changes the image must change the Runner
-ConfigMap in the same release (a Runner rollout loads it), and a Runner
-image that introduces the key needs the ConfigMap applied first. Agent
-template selection no longer exists. Existing Session sandboxes need a
-rebuild or a new Session to pick up a changed image. The oma-test pool is
-`sandbox/warm-pool/oma-test-sandbox.yaml`; see `sandbox/README.md`.
+(production `auto-story-v2`, oma-test `oma-test-sandbox`), a required key,
+with the image of its Session's Environment (ADR-0024): a claim of the pool's
+own image keeps the warm container, any other swaps it in place. Agent
+template selection and a Runner-wide image no longer exist. A Sandbox keeps
+the image it was created with until it is reclaimed or rebuilt. The oma-test
+pool is `sandbox/warm-pool/oma-test-sandbox.yaml`; see `sandbox/README.md`.
+
+### Environment migration (0029)
+
+Migration `0029_environment_migration.sql` binds every Sandboxed Agent to
+`env_video_production` (a Tenant copy of it for an Agent that set
+`sandbox.env`), freezes existing Sessions to their Agent's Environment and
+removes `sandbox.image` / `sandbox.env` from stored Agents and Session
+snapshots. Order: Base Images, then oma-image-builder (it upserts and builds
+the built-in; wait until `env_video_production` is ready), then the
+migration, then API, Runner and Web. The migration refuses to run, changing
+nothing, until the built-in serves an image. Record the affected counts
+before and after:
+
+```bash
+node deploy/scripts/migration-for-env.mjs test deploy/scripts/environment-migration-counts.sql > /tmp/0029-counts.sql
+node deploy/scripts/migration-for-env.mjs test deploy/migrations/0029_environment_migration.sql > /tmp/0029-test.sql
+```
+
+Run the counts with psql as the migration role before and after the
+migration; it prints counts and dropped variable names, never values. The
+migration keeps what it changed in `migration_0029_agents` /
+`migration_0029_sessions` for `0029_environment_migration.rollback.sql`
+(apply it once the previous image runs); drop both tables once the release is
+accepted. After it, the `oma-auto-story-env` Secret is no longer referenced
+and can be deleted.
 
 ## What the repository owns
 
@@ -385,10 +406,10 @@ Runner's node process (`kill-runner`) and summarizes `sandbox_sweep` log lines
 (`sweep-logs`). The script header lists every assumption about event and API shapes that
 must be re-checked once #284–#291 land; they are collected in its `SHAPES` object.
 
-The test Agent uses the separate SandboxSet `sandbox-system/oma-scale-test-20261021` and
-blanks business credentials and URLs in `sandbox.env`, as the 2026-10-21 burst did, so the
-burst does not drain the shared `auto-story-v2` pool. With 5 warm replicas, about 195 of 200
-creates are cold starts; check cluster capacity first. Run phases one at a time and do not
+The test Agent runs in `VERIFY_ENVIRONMENT_ID` (default `env_video_production`); to keep
+business credentials out of the burst, as the 2026-10-21 one did, bind a ready Tenant
+Environment whose variables are inert. Its Sandboxes come from the Runner's Warm Pool; with
+5 warm replicas, about 195 of 200 creates are cold starts; check cluster capacity first. Run phases one at a time and do not
 interrupt them.
 
 ```bash
@@ -460,17 +481,19 @@ Runner's schedule. Write the result to `docs/verification/sandbox-reconcile-oma-
 with the evidence JSON. Rollback: Runners to 0, the rollback SQL through
 `migration-for-env.mjs test`, then the images in `rollback-images.txt` through `render.mjs test`.
 
-### Shared native sandbox credentials
+### Platform secrets for Environments
 
-The Host reads `sandbox-system/base-secret` at startup and supplies its valid
-environment-variable keys to E2B `Sandbox.create({ envs })` for every Agent,
-including newly created Agents. A SandboxSet's Kubernetes `env` alone does not
-populate the E2B command environment. No shell profile or `ACS_SYNC_ENVS` bridge
-is used by this integration.
+The Runner reads `sandbox-system/base-secret` at startup. Its valid
+environment-variable keys are the platform values that an Environment's
+platform secret references (`secretRef.source = platform`, which only copies of
+a built-in carry) resolve to, injected into each command of a Session in that
+Environment (ADR-0024). Nothing is passed at Sandbox creation, so no value is
+written into a Sandbox CR. A reference the Secret lacks is left out and logged
+once by name.
 
 The existing Secret is the source; no cross-namespace copy is maintained.
-`source.env` and other file-like keys are excluded. Values remain in Host memory
-and E2B's runtime environment, never in Agent records or Host `process.env`.
+`source.env` and other file-like keys are excluded. Values remain in Runner
+memory, never in Agent or Environment records or Host `process.env`.
 The dedicated Host ServiceAccount can only `get` this one Secret:
 
 ```bash
@@ -483,22 +506,9 @@ but unavailable Secret prevents startup; omission of both settings disables the
 integration for local development. HTTPS requests use the ServiceAccount CA and
 bypass the outbound LLM proxy.
 
-For an existing deployment, patch these two ConfigMap keys and the Deployment's
-ServiceAccount together with the updated Server image; routine image-only
-releases do not update those fields. Do not apply the full application manifest
-just to enable credentials, because unrelated live configuration may differ.
-
-Precedence remains explicit: legacy deployment defaults < base Secret < Agent
-`sandbox.env` < explicitly scoped WW values < fixed Workspace environment. The
-existing `oma-auto-story-env` only supplements keys absent from the base Secret,
-so old preset copies cannot override a rotated shared credential. Without a
-base Secret, the legacy preset retains its original behavior. Values explicitly
-configured on an Agent still override shared defaults.
-
-After Secret rotation, roll the Host. Its next Turn creates a new sandbox for an
-existing Session using the fresh values; Workspace files stay in OSS. Updating
-the Secret does not mutate environments of already running processes. Verify
-with E2B `commands.run()` and only emit presence/equality booleans, never values.
+After Secret rotation, roll the Runners: they read it at startup, and the next
+command of every Session gets the new values. Verify with E2B `commands.run()`
+and only emit presence/equality booleans, never values.
 
 Use the dedicated kubeconfig instead of whichever context happens to be the
 local default:
@@ -525,7 +535,4 @@ Agent presets are not shipped here; supply business Skills through the platform.
 
 The manifest was aligned with the Shanghai deployment on 2026-09-16, including
 its direct Pi gateway mounts, internal E2B endpoints, proxy overrides and Host
-4 CPU / 8 GiB limits. Secrets are referenced by name only. The existing
-`oma-auto-story-env` compatibility injection is still used by three Agents and
-is retained until those settings are migrated. Removing repository presets
-must not silently remove their deployed credentials.
+4 CPU / 8 GiB limits. Secrets are referenced by name only.

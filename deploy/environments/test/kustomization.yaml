@@ -30,9 +30,8 @@ patches:
     - {op: replace, path: /data/REDIS_HOST, value: redis}
     - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
     - {op: replace, path: /data/OMA_ENVIRONMENT, value: test}
-    # The oma-test Warm Pool (sandbox/warm-pool/oma-test-sandbox.yaml) and its image.
+    # The oma-test Warm Pool (sandbox/warm-pool/oma-test-sandbox.yaml).
     - {op: replace, path: /data/SANDBOX_TEMPLATE, value: oma-test-sandbox}
-    - {op: replace, path: /data/SANDBOX_IMAGE, value: 'registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d'}
 - target:
     kind: ConfigMap
     name: oma-image-builder-config

@@ -11,7 +11,8 @@ console are in `oma-infra`; SandboxSets are in `sandbox-system`.
 
 The Host claims every Sandbox from its deployment's **Warm Pool**
 (`SANDBOX_TEMPLATE`: production `auto-story-v2`, oma-test `oma-test-sandbox`)
-with the image `SANDBOX_IMAGE`, through E2B domain `sandbox.agentry.welltop.tech`.
+with the image of its Session's **Environment**, through E2B domain
+`sandbox.agentry.welltop.tech`.
 Sandbox images come from the Shanghai ACR repository
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 See `deploy/k8s.yaml` and `sandbox/README.md` for deployment configuration.
@@ -23,8 +24,8 @@ Historical test reports describe their original runs, not the current deployment
 `auto-story-v2` template and its recipe, and required build tools. `deploy/` contains application deployment and shared infrastructure.
 Business Agent presets, prompts, workflows and Skill content belong outside
 this repository; the platform still provides Skill Library, Equip and Skill
-Install mechanisms. The legacy `AUTO_STORY_*` environment injection remains
-required by existing production Agents and must be migrated before removal.
+Install mechanisms. What a Sandbox runs, image and variables, comes only from
+its Session's Environment; there is no per-Agent or deployment-wide injection.
 
 ## Language
 

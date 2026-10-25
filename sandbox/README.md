@@ -3,10 +3,10 @@
 Every Sandbox is claimed from one **Warm Pool** per deployment environment
 and runs an image pinned by digest (ADR-0024). The Runner's `SANDBOX_TEMPLATE`
 names the pool (the SandboxSet in `sandbox-system` on the Shanghai
-`agent-platform` cluster) and `SANDBOX_IMAGE` the image every claim passes as
-`e2b.agents.kruise.io/image`: the pool's own image, byte for byte, is a plain
-claim; any other is swapped into the claimed Sandbox in place. An Agent's
-`sandbox.image` no longer selects anything.
+`agent-platform` cluster); each claim passes the image of the Session's
+Environment as `e2b.agents.kruise.io/image`: the pool's own image, byte for
+byte, is a plain claim; any other is swapped into the claimed Sandbox in
+place.
 
 | Directory | Contents |
 | --- | --- |
@@ -28,16 +28,15 @@ published digest in `image.lock.json`. Building never changes a pool.
 
 | Environment | SandboxSet | Image |
 | --- | --- | --- |
-| oma-test | `oma-test-sandbox` ([manifest](warm-pool/oma-test-sandbox.yaml)) | in the manifest; the test overlay's `SANDBOX_IMAGE` equals it |
-| production | `auto-story-v2` ([manifest](auto-story-v2/sandboxset.yaml)) | the live image (0.3.3, `67a46af6…`), which `deploy/app/api-runner.yaml`'s `SANDBOX_IMAGE` equals; this repository's manifest still pins an older image, so compare with the live pool before applying it |
+| oma-test | `oma-test-sandbox` ([manifest](warm-pool/oma-test-sandbox.yaml)) | in the manifest; the image builder sets it to `video-production`'s |
+| production | `auto-story-v2` ([manifest](auto-story-v2/sandboxset.yaml)) | the live image (0.3.3, `67a46af6…`); this repository's manifest still pins an older image, so compare with the live pool before applying it |
 
 `oma-test-sandbox`'s template carries no secrets (auto-story-v2 still sets
-base-secret as pod env, which only PID 1 sees): the Runner reads
-`sandbox-system/base-secret` at startup and passes every key as the create's
-`envs`, which envd commands see along with their own env and
-`/etc/profile.d`. Change a
-pool's image and the Runner's `SANDBOX_IMAGE` together, and create an ACS
-ImageCache for a new image before patching the pool: an uncached refill pulls
+base-secret as pod env, which only PID 1 sees): every command gets its
+Session's Environment variables from the Runner, which resolves platform
+secret references from `sandbox-system/base-secret`; envd commands see those,
+the create's Workspace paths and `/etc/profile.d`. Create an ACS
+ImageCache for a new pool image before patching the pool: an uncached refill pulls
 the whole image (about 1.9 GB, 73–81 s). `sandbox-system` and the ACS vCPU
 quota are shared with production; `oma-test-sandbox` carries
 `oma.dev/test-only: "true"`.

@@ -1,20 +1,17 @@
 # The oma-test Warm Pool (ADR-0024): every oma-test Sandbox is claimed from it
-# with the Runner's SANDBOX_IMAGE (deploy/environments/test/kustomization.yaml),
-# which must equal this pool's image byte for byte for a plain claim; any other
-# image is swapped in place.
+# with its Session's Environment's image; this pool's own image, byte for
+# byte, is a plain claim, any other is swapped in place.
 #
 # The pod template is the live auto-story-v2 template (sandbox-system, read
 # 2026-10-26, generation 20) without its 18 base-secret pod env entries: envd
-# commands never saw pod env, and the Runner injects every base-secret key at
-# creation (sandboxBaseEnvFromKubernetes -> defaultSandboxEnv). The live
+# commands never saw pod env; every command gets its Session's Environment
+# variables, platform references resolved from base-secret. The live
 # template has no source.env Secret volume any more, and nothing in the image
 # reads /run/auto-story-source. The vfs-cli test policy ConfigMap mount stays
 # until video-production installs the policy (#305).
 #
-# Image: the live auto-story-v2 image until #301 phase 2 swaps in the
-# transitional pool image (oma-media + the video tools); change it together
-# with SANDBOX_IMAGE, and create an ACS ImageCache for a new image before
-# applying (an uncached refill pulls ~1.9 GB, 73-81 s).
+# Image: the image builder sets it to video-production's once that is ready,
+# after an ACS ImageCache for it (an uncached refill pulls ~1.9 GB, 73-81 s).
 #
 # Shares sandbox-system and the ACS quota with production: never touch
 # auto-story-v2. Apply only to the agent-platform cluster:

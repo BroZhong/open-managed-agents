@@ -244,6 +244,6 @@ for component in "${components[@]}"; do
   case "${component}" in
     server) printf 'SERVER_IMAGE=%s\n' "${server_image}" ;;
     web) printf 'WEB_IMAGE=%s\n' "${web_image}" ;;
-    sandbox) printf 'SANDBOX_IMAGE=%s\n' "${sandbox_image}" ;;
+    sandbox) printf 'POOL_IMAGE=%s\n' "${sandbox_image}" ;;
   esac
 done
