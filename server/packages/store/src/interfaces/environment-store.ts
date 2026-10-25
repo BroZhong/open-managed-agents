@@ -14,6 +14,14 @@ export type EnvironmentOwnerType = "platform" | "tenant";
 export type EnvironmentBaseImage = "oma-base" | "oma-media";
 
 /**
+ * `pending` until the builder claims the active build, `building` while it
+ * runs, then `ready` (its image now serves) or `failed` (the previous image,
+ * if any, keeps serving). A change to `baseImage` or `initScript` makes it
+ * `pending` again.
+ */
+export type EnvironmentStatus = "pending" | "building" | "failed" | "ready";
+
+/**
  * A build is `pending` until a builder claims it with a lease, `running`
  * while that lease is held, and ends `succeeded`, `failed`, or `superseded`
  * when a newer change (or deletion of the Environment) replaced it before it
@@ -90,13 +98,7 @@ export interface Environment {
    * sealed by the Host. Never returned by the API.
    */
   encryptedSecrets: Record<string, string>;
-  /**
-   * `pending` until the builder claims the active build, `building` while it
-   * runs, then `ready` (its image now serves) or `failed` (the previous
-   * image, if any, keeps serving). A change to `baseImage` or `initScript`
-   * makes it `pending` again.
-   */
-  status: "pending" | "building" | "failed" | "ready";
+  status: EnvironmentStatus;
   /** The image (by digest) that serves Sandboxes; null until a build first succeeds. */
   image: string | null;
   /** The manifest of `image`: package and binary versions. */
