@@ -34,7 +34,7 @@ export function skillBundleStorageConfigFromEnv(env: HostEnv): OSSSkillBundleSto
  * carries it as `oma.dev/environment`, and each environment's sweeper acts
  * only on its own (ADR-0023); production and test share a gateway.
  */
-function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
+export function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
   const value = env.OMA_ENVIRONMENT?.trim();
   if (value !== "production" && value !== "test") throw new Error("Sandboxes require OMA_ENVIRONMENT=production or OMA_ENVIRONMENT=test");
   return value;
