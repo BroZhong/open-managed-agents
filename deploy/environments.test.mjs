@@ -82,6 +82,32 @@ test("each environment's Runners label their Sandboxes with it; the API creates 
   assert.match(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /^  OMA_ENVIRONMENT: "production"$/m);
 });
 
+const digestPinned = /^[a-z0-9.-]+\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/;
+
+test("each environment's Runners claim from their Warm Pool with its exact image (ADR-0024)", () => {
+  const pool = readFileSync(new URL("sandbox/warm-pool/oma-test-sandbox.yaml", root), "utf8");
+  const poolImage = pool.match(/^\s+image: (\S+)$/m)?.[1];
+  const test = configMap(render("test"), "oma-runner-config");
+  assert.equal(field(test, "SANDBOX_TEMPLATE"), "oma-test-sandbox");
+  // The gateway compares references as strings: anything else swaps every claim.
+  assert.equal(field(test, "SANDBOX_IMAGE").replace(/^'|'$/g, ""), poolImage);
+  const production = configMap(render("production"), "oma-runner-config");
+  assert.equal(field(production, "SANDBOX_TEMPLATE"), "auto-story-v2");
+  for (const image of [poolImage, field(production, "SANDBOX_IMAGE")]) assert.match(image, digestPinned);
+  assert.match(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), new RegExp(`^  SANDBOX_IMAGE: "${field(production, "SANDBOX_IMAGE")}"$`, "m"));
+});
+
+test("the oma-test Warm Pool is the auto-story-v2 template without base-secret pod env (ADR-0024)", () => {
+  const pool = readFileSync(new URL("sandbox/warm-pool/oma-test-sandbox.yaml", root), "utf8");
+  const manifest = pool.split("\n").filter((line) => !line.startsWith("#")).join("\n");
+  assert.match(manifest, /^kind: SandboxSet\nmetadata:\n  name: oma-test-sandbox\n  namespace: sandbox-system\n  labels:\n    oma\.dev\/test-only: "true"$/m);
+  assert.match(manifest, /^  replicas: 1$/m);
+  assert.match(manifest, /image\.alibabacloud\.com\/enable-image-cache: "true"/);
+  assert.match(manifest, /- mountPath: \/etc\/vfs-cli\n\s+name: vfs-cli-policy\n\s+readOnly: true/);
+  assert.doesNotMatch(manifest, /base-secret|secretKeyRef|auto-story-source|^\s+env:/m);
+  assert.doesNotMatch(manifest, /name: auto-story-v2/);
+});
+
 test("test sandbox RBAC grants only the oma-test Runner identity", () => {
   const rbac = readFileSync(new URL("deploy/environments/test/sandbox-rbac.yaml", root), "utf8");
   assert.match(rbac, /namespace: sandbox-system/);

@@ -90,8 +90,10 @@ data:
   # Sandbox is mandatory (issue #54). This turns on the sandbox-backed
   # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
   SANDBOX_ENABLED: "true"
-  # E2B templateID = SandboxSet metadata.name in sandbox-system.
+  # E2B templateID = the Warm Pool's SandboxSet name in sandbox-system; every
+  # claim passes SANDBOX_IMAGE, which must equal the pool's image (ADR-0024).
   SANDBOX_TEMPLATE: "auto-story-v2"
+  SANDBOX_IMAGE: "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d"
   # Labels every Sandbox created (oma.dev/environment): the sweeper's scope.
   OMA_ENVIRONMENT: "production"
   E2B_API_URL: "http://sandbox-manager.sandbox-system.svc.cluster.local:8080"

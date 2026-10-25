@@ -1,0 +1,72 @@
+# The oma-test Warm Pool (ADR-0024): every oma-test Sandbox is claimed from it
+# with the Runner's SANDBOX_IMAGE (deploy/environments/test/kustomization.yaml),
+# which must equal this pool's image byte for byte for a plain claim; any other
+# image is swapped in place.
+#
+# The pod template is the live auto-story-v2 template (sandbox-system, read
+# 2026-10-26, generation 20) without its 18 base-secret pod env entries: envd
+# commands never saw pod env, and the Runner injects every base-secret key at
+# creation (sandboxBaseEnvFromKubernetes -> defaultSandboxEnv). The live
+# template has no source.env Secret volume any more, and nothing in the image
+# reads /run/auto-story-source. The vfs-cli test policy ConfigMap mount stays
+# until video-production installs the policy (#305).
+#
+# Image: the live auto-story-v2 image until #301 phase 2 swaps in the
+# transitional pool image (oma-media + the video tools); change it together
+# with SANDBOX_IMAGE, and create an ACS ImageCache for a new image before
+# applying (an uncached refill pulls ~1.9 GB, 73-81 s).
+#
+# Shares sandbox-system and the ACS quota with production: never touch
+# auto-story-v2. Apply only to the agent-platform cluster:
+#   kubectl --kubeconfig ~/.kube/agent-platform-config apply -f sandbox/warm-pool/oma-test-sandbox.yaml
+apiVersion: agents.kruise.io/v1alpha1
+kind: SandboxSet
+metadata:
+  name: oma-test-sandbox
+  namespace: sandbox-system
+  labels:
+    oma.dev/test-only: "true"
+spec:
+  persistentContents:
+  - filesystem
+  replicas: 1
+  runtimes:
+  - name: csi
+  - name: agent-runtime
+  template:
+    metadata:
+      annotations:
+        image.alibabacloud.com/enable-image-cache: "true"
+      labels:
+        alibabacloud.com/acs: "true"
+        alibabacloud.com/compute-class: agent-sandbox
+        alibabacloud.com/compute-qos: default
+        oma.dev/test-only: "true"
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: sandbox
+        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            cpu: "2"
+            memory: 4Gi
+          requests:
+            cpu: "2"
+            ephemeral-storage: 50Gi
+            memory: 4Gi
+        volumeMounts:
+        - mountPath: /etc/vfs-cli
+          name: vfs-cli-policy
+          readOnly: true
+      imagePullSecrets:
+      - name: ali-shanghai
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: vfs-cli-policy
+        configMap:
+          name: vfs-cli-policy-test-v1
+          defaultMode: 292
+  updateStrategy:
+    maxUnavailable: 20%

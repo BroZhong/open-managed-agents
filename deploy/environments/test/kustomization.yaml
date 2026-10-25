@@ -1,6 +1,7 @@
-# Test environment: same cluster, RDS instance, Sandbox pool and Workspace OSS
-# bucket as production; separate namespace, schema/role, Redis, Skill bucket
-# and host. Secrets are copies of production with the test PG password.
+# Test environment: same cluster, RDS instance and Workspace OSS bucket as
+# production; separate namespace, schema/role, Redis, Skill bucket, host and
+# Warm Pool (oma-test-sandbox, ADR-0024). Secrets are copies of production
+# with the test PG password.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: oma-test
@@ -29,6 +30,9 @@ patches:
     - {op: replace, path: /data/REDIS_HOST, value: redis}
     - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
     - {op: replace, path: /data/OMA_ENVIRONMENT, value: test}
+    # The oma-test Warm Pool (sandbox/warm-pool/oma-test-sandbox.yaml) and its image.
+    - {op: replace, path: /data/SANDBOX_TEMPLATE, value: oma-test-sandbox}
+    - {op: replace, path: /data/SANDBOX_IMAGE, value: 'registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d'}
 - target:
     kind: Deployment
     name: oma-runner
