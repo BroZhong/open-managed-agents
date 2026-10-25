@@ -30,6 +30,23 @@ describe("PgAgentStore", () => {
     expect((await reader.getById(agent.id))?.model).toBe("test");
   });
 
+  it("binds, keeps, clears and reports the Agent's Environment per Tenant (ADR-0024)", async () => {
+    const bound = await store.create({ tenantId: "t", name: "A", model: "m", system: "s", runtime: "pi-agent", environmentId: "env_a" });
+    const reader = new PgAgentStore(harness.pool);
+    expect((await reader.getById(bound.id))?.environmentId).toBe("env_a");
+    expect(await store.usesEnvironment("t", "env_a")).toBe(true);
+    expect(await store.usesEnvironment("other", "env_a")).toBe(false);
+    await store.update(bound.id, { name: "B" });
+    expect((await reader.getById(bound.id))?.environmentId).toBe("env_a");
+    await store.update(bound.id, { environmentId: "env_b" });
+    expect(await store.usesEnvironment("t", "env_a")).toBe(false);
+    await store.update(bound.id, { environmentId: null });
+    expect((await reader.getById(bound.id))?.environmentId).toBeUndefined();
+    expect(await store.usesEnvironment("t", "env_b")).toBe(false);
+    const unbound = await store.create({ tenantId: "t", name: "C", model: "m", system: "s", runtime: "pi-agent" });
+    expect(unbound.environmentId).toBeUndefined();
+  });
+
   it("should create an agent with agent_ prefix", async () => {
     const agent = await store.create({
       tenantId: "tenant1",

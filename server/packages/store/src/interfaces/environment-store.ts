@@ -145,6 +145,12 @@ export interface EnvironmentStore {
   /** A visible Environment (a built-in or the Tenant's own); null if absent or deleted. */
   get(tenantId: string, id: string): Promise<Environment | null>;
   /**
+   * The Environments of `ids` the Tenant's Sessions can be frozen to: the
+   * built-ins and its own, deleted ones included, since a Session keeps
+   * running on a deleted Environment's image (ADR-0024). In no order.
+   */
+  listForSessions(tenantId: string, ids: readonly string[]): Promise<Environment[]>;
+  /**
    * Insert the Environment `pending` with its first build, in one
    * transaction. Throws `EnvironmentNameConflictError` when its owner already
    * has an Environment of that name.

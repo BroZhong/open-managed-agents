@@ -17,6 +17,7 @@ export interface AgentStoreCreateInput {
   mcpServers?: Agent["mcpServers"];
   skills?: Agent["skills"];
   sandbox?: Agent["sandbox"];
+  environmentId?: string;
 }
 
 export interface AgentStoreUpdateInput {
@@ -30,6 +31,8 @@ export interface AgentStoreUpdateInput {
   mcpServers?: Agent["mcpServers"];
   skills?: Agent["skills"];
   sandbox?: Agent["sandbox"];
+  /** Null unbinds the Agent's Environment. */
+  environmentId?: string | null;
 }
 
 export interface AgentStore {
@@ -38,4 +41,6 @@ export interface AgentStore {
   list(tenantId: string, opts?: AgentStoreListOpts): Promise<PaginatedResult<Agent>>;
   update(id: string, input: AgentStoreUpdateInput): Promise<Agent | null>;
   delete(id: string): Promise<boolean>;
+  /** Whether any of the Tenant's Agents is bound to the Environment (ADR-0024: it cannot be deleted then). */
+  usesEnvironment(tenantId: string, environmentId: string): Promise<boolean>;
 }

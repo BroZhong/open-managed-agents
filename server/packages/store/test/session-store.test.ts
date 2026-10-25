@@ -55,6 +55,17 @@ describe("PgSessionStore", () => {
     expect((await store.getById(session.id))?.thinking).toBeNull();
   });
 
+  it("persists the Environment a Session is frozen to, apart from its Agent snapshot's (ADR-0024)", async () => {
+    const frozen = await store.create({ tenantId: "tenant1", agentId: mockAgent.id,
+      agent: { ...mockAgent, environmentId: "env_agent" }, workspaceId: await newWorkspace(), environmentId: "env_override" });
+    const reloaded = await new PgSessionStore(harness.pool).getById(frozen.id);
+    expect(reloaded).toMatchObject({ environmentId: "env_override", agent: { environmentId: "env_agent" } });
+    const none = await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: await newWorkspace() });
+    expect(none.environmentId).toBeUndefined();
+    const listed = new Map((await store.list("tenant1")).data.map((session) => [session.id, session.environmentId]));
+    expect(listed).toEqual(new Map([[frozen.id, "env_override"], [none.id, undefined]]));
+  });
+
   it("should create a session with sess_ prefix and idle status", async () => {
     const workspaceId = await newWorkspace();
     const session = await store.create({

@@ -133,6 +133,14 @@ export type SkillSetRecordOutcome = "recorded" | "superseded" | "detached";
  */
 export interface SandboxBindingRow {
   sandboxId: string | null;
+  /**
+   * What `sandboxId` was created with (ADR-0024): its Session's Environment
+   * (null without one) and the image it was claimed with. Both null without
+   * a Sandbox, and for one adopted by reconciliation, whose create this
+   * Runner did not see.
+   */
+  environmentId: string | null;
+  image: string | null;
   /** When the creation intent was committed, by the database clock. */
   creatingSince: Date | null;
   /**
@@ -144,9 +152,10 @@ export interface SandboxBindingRow {
 /**
  * The state a binding moves to: Ready with a Sandbox, or Cold, either of
  * which ends a creation intent; or Creating, whose `creating_since` is the
- * database's `now()` when the move commits.
+ * database's `now()` when the move commits. Ready records what the Sandbox
+ * was created with, when known (see {@link SandboxBindingRow}).
  */
-export type BindingTransition = { ready: string } | "cold" | "creating";
+export type BindingTransition = { ready: string; environmentId?: string | null; image?: string | null } | "cold" | "creating";
 /**
  * A Sandbox unavailability a preparation of the binding's Sandbox observed
  * (ADR-0023): `code` and `reason` as the tool results it failed carry them.

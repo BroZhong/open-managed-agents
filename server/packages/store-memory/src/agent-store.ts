@@ -25,6 +25,7 @@ export class InMemoryAgentStore implements AgentStore {
       mcpServers: input.mcpServers,
       skills: input.skills,
       sandbox: input.sandbox,
+      environmentId: input.environmentId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -65,6 +66,7 @@ export class InMemoryAgentStore implements AgentStore {
     if (input.mcpServers !== undefined) agent.mcpServers = input.mcpServers;
     if (input.skills !== undefined) agent.skills = input.skills;
     if (input.sandbox !== undefined) agent.sandbox = input.sandbox;
+    if (input.environmentId !== undefined) agent.environmentId = input.environmentId ?? undefined;
     agent.updatedAt = new Date();
     return agent;
   }
@@ -74,5 +76,9 @@ export class InMemoryAgentStore implements AgentStore {
     if (idx < 0) return false;
     this.agents.splice(idx, 1);
     return true;
+  }
+
+  async usesEnvironment(tenantId: string, environmentId: string): Promise<boolean> {
+    return this.agents.some((a) => a.tenantId === tenantId && a.environmentId === environmentId);
   }
 }

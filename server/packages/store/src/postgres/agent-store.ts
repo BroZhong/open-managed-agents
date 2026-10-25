@@ -16,6 +16,7 @@ interface AgentRow {
   mcp_servers: Agent["mcpServers"] | null;
   skills: Agent["skills"] | null;
   sandbox: Agent["sandbox"] | null;
+  environment_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -34,6 +35,7 @@ function rowToAgent(row: AgentRow): Agent {
     mcpServers: row.mcp_servers ?? undefined,
     skills: row.skills ?? undefined,
     sandbox: row.sandbox ?? undefined,
+    environmentId: row.environment_id ?? undefined,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -50,8 +52,8 @@ export class PgAgentStore implements AgentStore {
     const now = new Date();
     const id = `agent_${nanoid()}`;
     const { rows } = await this.pool.query<AgentRow>(
-      `INSERT INTO agents (id, tenant_id, name, description, model, thinking, system, runtime, tools, mcp_servers, skills, sandbox, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `INSERT INTO agents (id, tenant_id, name, description, model, thinking, system, runtime, tools, mcp_servers, skills, sandbox, environment_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         id,
@@ -66,6 +68,7 @@ export class PgAgentStore implements AgentStore {
         toJson(input.mcpServers),
         toJson(input.skills),
         toJson(input.sandbox),
+        input.environmentId ?? null,
         now,
         now,
       ],
@@ -115,6 +118,7 @@ export class PgAgentStore implements AgentStore {
     if (input.mcpServers !== undefined) addSet("mcp_servers", input.mcpServers, true);
     if (input.skills !== undefined) addSet("skills", input.skills, true);
     if (input.sandbox !== undefined) addSet("sandbox", input.sandbox, true);
+    if (input.environmentId !== undefined) addSet("environment_id", input.environmentId);
 
     addSet("updated_at", new Date());
 
@@ -129,5 +133,13 @@ export class PgAgentStore implements AgentStore {
   async delete(id: string): Promise<boolean> {
     const result = await this.pool.query(`DELETE FROM agents WHERE id = $1`, [id]);
     return (result.rowCount ?? 0) === 1;
+  }
+
+  async usesEnvironment(tenantId: string, environmentId: string): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      `SELECT 1 FROM agents WHERE tenant_id = $1 AND environment_id = $2 LIMIT 1`,
+      [tenantId, environmentId],
+    );
+    return rows.length > 0;
   }
 }

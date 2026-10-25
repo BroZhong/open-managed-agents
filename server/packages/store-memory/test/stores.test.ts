@@ -39,6 +39,17 @@ describe("createMemoryStores", () => {
       expect(updated?.name).toBe("B");
     });
 
+    it("binds, clears and reports the Agent's Environment per Tenant (ADR-0024)", async () => {
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock", environmentId: "env_a" });
+      expect(await stores.agentStore.usesEnvironment("t1", "env_a")).toBe(true);
+      expect(await stores.agentStore.usesEnvironment("t2", "env_a")).toBe(false);
+      await stores.agentStore.update(agent.id, { name: "B" });
+      expect((await stores.agentStore.getById(agent.id))?.environmentId).toBe("env_a");
+      await stores.agentStore.update(agent.id, { environmentId: null });
+      expect((await stores.agentStore.getById(agent.id))?.environmentId).toBeUndefined();
+      expect(await stores.agentStore.usesEnvironment("t1", "env_a")).toBe(false);
+    });
+
     it("deletes an agent", async () => {
       const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const deleted = await stores.agentStore.delete(agent.id);

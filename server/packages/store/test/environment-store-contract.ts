@@ -142,10 +142,25 @@ export function environmentStoreContract(name: string, create: () => Promise<Env
       expect(await store.get("t1", own.id)).toMatchObject({ name: own.name });
     });
 
-    it("soft-deletes: hidden from every read, its builds kept and the active one superseded", async () => {
+    it("reads the Environments a Tenant's Sessions run in: built-ins and its own, deleted ones too, never another Tenant's", async () => {
+      const builtIn = await store.create(input(PLATFORM, { name: "video-production" }));
+      const own = await store.create(input(T1, { name: "mine" }));
+      const deleted = await store.create(input(T1, { name: "gone" }));
+      await store.delete(T1, deleted.id);
+      const foreign = await store.create(input(T2, { name: "theirs" }));
+      const found = await store.listForSessions("t1", [own.id, builtIn.id, deleted.id, foreign.id, own.id, "env_missing"]);
+      expect(found.map((env) => env.id).sort()).toEqual([builtIn.id, deleted.id, own.id].sort());
+      expect(found.find((env) => env.id === own.id)).toEqual(await store.get("t1", own.id));
+      expect(await store.listForSessions("t1", [])).toEqual([]);
+      expect(await store.listForSessions("t2", [own.id])).toEqual([]);
+    });
+
+    it("soft-deletes: hidden from every read but a Session's, its builds kept and the active one superseded", async () => {
       const env = await store.create(input(T1));
       expect(await store.delete(T1, env.id)).toBe(true);
       expect(await store.get("t1", env.id)).toBeNull();
+      // A Session frozen to it keeps running on it (ADR-0024).
+      expect((await store.listForSessions("t1", [env.id])).map((found) => found.id)).toEqual([env.id]);
       expect(await store.list("t1")).toEqual([]);
       expect(await store.update(T1, env.id, { name: "revived" })).toBeNull();
       expect(await store.delete(T1, env.id)).toBe(false);

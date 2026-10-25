@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
   updated_at   TIMESTAMPTZ NOT NULL
 );
 ALTER TABLE ${s}.agents ADD COLUMN IF NOT EXISTS thinking TEXT;
+-- The Environment (ADR-0024) the Agent's new Sessions run in; NULL: none.
+ALTER TABLE ${s}.agents ADD COLUMN IF NOT EXISTS environment_id TEXT;
 CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 
 CREATE TABLE IF NOT EXISTS ${s}.loops (
@@ -153,6 +155,8 @@ ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS thinking TEXT;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS delegation JSONB;
+-- The Environment the Session is frozen to at creation (ADR-0024); NULL: none.
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS environment_id TEXT;
 
 -- One coordination lock orders quota admissions and multi-row transitions.
 CREATE TABLE IF NOT EXISTS ${s}.delegation_lock (id TEXT PRIMARY KEY);
@@ -194,6 +198,12 @@ ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_at 
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_sandbox_id TEXT;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_set_hash TEXT;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_generation BIGINT;
+-- What sandbox_id was created with (ADR-0024): its Session's Environment and
+-- the image it was claimed with. Set with sandbox_id by the move to Ready
+-- that recorded its creation, NULL with it, and NULL for a Sandbox adopted
+-- by reconciliation.
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS environment_id TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS image TEXT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);

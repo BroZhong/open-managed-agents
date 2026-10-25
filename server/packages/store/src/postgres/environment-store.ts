@@ -154,6 +154,19 @@ export class PgEnvironmentStore implements EnvironmentStore {
     return rows[0] ? rowToEnvironment(rows[0]) : null;
   }
 
+  async listForSessions(tenantId: string, ids: readonly string[]): Promise<Environment[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    // A list of parameters rather than = ANY($n): pg-mem matches no row with ANY.
+    const listed = unique.map((_, i) => `$${i + 2}`).join(", ");
+    const { rows } = await this.pool.query<EnvironmentRow>(
+      `${SELECT_ENVIRONMENT}
+       WHERE e.id IN (${listed}) AND (e.owner_type = 'platform' OR e.tenant_id = $1)`,
+      [tenantId, ...unique],
+    );
+    return rows.map(rowToEnvironment);
+  }
+
   async create(input: EnvironmentStoreCreateInput): Promise<Environment> {
     return this.transaction(async (client) => {
       await this.assertNameFree(client, input.owner, input.name);

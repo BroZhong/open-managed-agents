@@ -121,6 +121,27 @@ describe("PgLoopStore", () => {
     expect((await pending.peek(scheduled.session.id))?.apiKeyId).toBeUndefined();
   });
 
+  it("runs each Loop Session in its Agent's Environment as of the trigger (ADR-0024)", async () => {
+    const start = new Date("2026-07-14T00:00:00.000Z");
+    const agent = await agents.create({
+      tenantId: "tenant_1", name: "Analyst", model: "m", system: "s", runtime: "pi-agent", environmentId: "env_first",
+    });
+    const loop = await loops.create({
+      tenantId: "tenant_1", agentId: agent.id, name: "Review", prompt: "Review.", intervalMinutes: 5, enabled: true, now: start,
+    });
+    const sessions = new PgSessionStore(harness.pool);
+    const [first] = await loops.dispatchDue(new Date("2026-07-14T00:05:00.000Z"), 1);
+    expect(first.session.environmentId).toBe("env_first");
+    await agents.update(agent.id, { environmentId: "env_second" });
+    const manual = await loops.dispatchNow(loop.id, "tenant_1", new Date("2026-07-14T00:06:00.000Z"));
+    expect(manual!.session.environmentId).toBe("env_second");
+    expect((await sessions.getById(first.session.id))?.environmentId).toBe("env_first");
+    expect((await sessions.getById(manual!.session.id))?.environmentId).toBe("env_second");
+    await agents.update(agent.id, { environmentId: null });
+    const [unbound] = await loops.dispatchDue(new Date("2026-07-14T00:10:00.000Z"), 1);
+    expect(unbound.session.environmentId).toBeUndefined();
+  });
+
   it("disables an orphaned Loop instead of failing every due poll", async () => {
     const start = new Date("2026-07-14T00:00:00.000Z");
     const agent = await agents.create({

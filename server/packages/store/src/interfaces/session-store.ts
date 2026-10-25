@@ -33,6 +33,8 @@ export interface SessionStoreCreateInput {
    * the Workspace before binding.
    */
   workspaceId: string;
+  /** The Environment the Session is frozen to (see `Session.environmentId`). */
+  environmentId?: string;
   loopId?: string;
   delegation?: import("./delegation-store.js").DelegationOrigin;
 }

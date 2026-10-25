@@ -131,7 +131,9 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         if (!child || child.status === "terminated") throw new Error("Child Session terminated; cannot resume");
       } else {
         await tx.assertWorkspaceNotDeleted(parent.tenantId, parent.workspaceId);
+        // A Child Session runs in its parent's Environment, sharing its Sandbox binding (ADR-0024).
         child = await tx.sessions.create({ tenantId: parent.tenantId, agentId: parent.agentId, agent: { ...parent.agent, model: input.parentModel }, workspaceId: parent.workspaceId,
+          environmentId: parent.environmentId,
           delegation: { parentSessionId: parent.id, parentTurnId: input.callerTurnId, parentToolUseId: input.callerToolUseId, sandboxSessionId: input.sandboxSessionId } });
       }
       const previous = await tx.read<DelegationExecution>("executions", { childId: child.id });

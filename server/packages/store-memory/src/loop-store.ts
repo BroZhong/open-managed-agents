@@ -163,6 +163,8 @@ export class InMemoryLoopStore implements LoopStore {
         agentId: loop.agentId,
         agent,
         workspaceId: workspace.id,
+        // The Agent's Environment as of this trigger (ADR-0024).
+        environmentId: agent.environmentId,
         loopId: loop.id,
       });
       sessionId = session.id;

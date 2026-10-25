@@ -15,7 +15,7 @@ export interface SandboxActivity {
  * binding is the reclamation's, whatever the row records: a binding without a
  * Sandbox can still have one a lost create left.
  */
-export interface SandboxReclamation extends SandboxBindingRow { bindingId: string }
+export interface SandboxReclamation extends Pick<SandboxBindingRow, "sandboxId" | "creatingSince" | "now"> { bindingId: string }
 /** One binding row and its Sessions, as the sweeper (ADR-0023, "The sweeper") reads them. */
 export interface SandboxBindingFacts {
   sandboxId: string | null;

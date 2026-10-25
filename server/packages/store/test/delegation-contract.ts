@@ -34,6 +34,19 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect((await stores.sessionStore.getById(child.childId))?.delegation).toEqual(session?.delegation);
       expect(await stores.pendingEventStore.count(child.childId)).toBe(2);
     });
+    it("runs a Child Session in its parent's Environment, whatever its Agent is bound to now (ADR-0024)", async () => {
+      const agent = await stores.agentStore.create({ tenantId: "tenant-a", name: "Bound", model: "model", system: "system", runtime: "pi", environmentId: "env_agent_then" });
+      const parent = await stores.sessionStore.create({ tenantId: "tenant-a", agentId: agent.id, agent, workspaceId: "shared-workspace", environmentId: "env_parent" });
+      await stores.agentStore.update(agent.id, { environmentId: "env_agent_now" });
+      await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: { content: [{ type: "text", text: "parent" }] }, sessionThreadId: "sthr_primary" });
+      const claim = await stores.pendingEventStore.claim!(parent.id, "bound-owner", 60_000);
+      const fence = { eventId: claim!.event.id, ownerId: claim!.ownerId, generation: claim!.generation };
+      const child = await stores.delegationStore.accept({ ...input, callerSessionId: parent.id, sandboxSessionId: parent.id }, fence);
+      expect((await stores.sessionStore.getById(child.childId))?.environmentId).toBe("env_parent");
+      // The default parent has no Environment, nor do its children.
+      const plain = await stores.delegationStore.accept(input, parentFence);
+      expect((await stores.sessionStore.getById(plain.childId))?.environmentId).toBeUndefined();
+    });
     it("rejects new children in a deleted Workspace while accepted input and resume remain usable", async () => {
       await stores.workspaceStore.create({ tenantId: input.tenantId, id: "shared-workspace" });
       const accepted = await stores.delegationStore.accept(input, parentFence);
@@ -281,6 +294,26 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await store.withBindingLock("intent", async () => ({ next: "creating", value: undefined }));
       await store.withBindingLock("intent", async () => ({ next: "cold", value: undefined }));
       expect(await read()).toMatchObject({ sandboxId: null, creatingSince: null });
+    });
+    it("records the Environment and image a binding's Sandbox was created with, and only with it (ADR-0024)", async () => {
+      const store = stores.delegationStore;
+      const read = () => store.withBindingLock("origin", async (binding) => ({ value: binding }));
+      const image = "registry.example/welltop/oma-environments@sha256:" + "a".repeat(64);
+      expect(await read()).toMatchObject({ sandboxId: null, environmentId: null, image: null });
+      await store.withBindingLock("origin", async () => ({ next: "creating", value: undefined }));
+      expect(await read()).toMatchObject({ environmentId: null, image: null });
+      await store.withBindingLock("origin", async () => ({ next: { ready: "sandbox-1", environmentId: "env_a", image }, value: undefined }));
+      expect(await read()).toMatchObject({ sandboxId: "sandbox-1", environmentId: "env_a", image });
+      // Observations and reads leave it; any move replaces it.
+      await store.withBindingLock("origin", async () => ({ value: undefined, observed: "ready" }));
+      expect(await read()).toMatchObject({ sandboxId: "sandbox-1", environmentId: "env_a", image });
+      await store.withBindingLock("origin", async () => ({ next: "cold", value: undefined }));
+      expect(await read()).toMatchObject({ sandboxId: null, environmentId: null, image: null });
+      // A Sandbox without an Environment, then one adopted with nothing known.
+      await store.withBindingLock("origin", async () => ({ next: { ready: "sandbox-2", environmentId: null, image }, value: undefined }));
+      expect(await read()).toMatchObject({ sandboxId: "sandbox-2", environmentId: null, image });
+      await store.withBindingLock("origin", async () => ({ next: { ready: "sandbox-3" }, value: undefined }));
+      expect(await read()).toMatchObject({ sandboxId: "sandbox-3", environmentId: null, image: null });
     });
     it("reports a binding's Sandbox from its row: cold, creating, ready and unavailable (ADR-0023)", async () => {
       const store = stores.delegationStore;

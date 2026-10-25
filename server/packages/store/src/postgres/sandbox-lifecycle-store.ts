@@ -84,7 +84,7 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
       // moves a reclaiming row, so only this reclamation's own callback matches.
       // Clearing it is a move to Cold, as withBindingLock writes one.
       const result = await client.query(`UPDATE delegation_environments SET sandbox_id=NULL, creating_since=NULL, reclaiming=FALSE,
-          state_since=now(), last_error_code=NULL, last_error_reason=NULL, last_error_at=NULL
+          environment_id=NULL, image=NULL, state_since=now(), last_error_code=NULL, last_error_reason=NULL, last_error_at=NULL
         WHERE id=$1 AND reclaiming=TRUE AND sandbox_id IS NOT DISTINCT FROM $2
           AND date_trunc('milliseconds', creating_since) IS NOT DISTINCT FROM $3::timestamptz RETURNING id`,
       [ticket.bindingId, ticket.sandboxId, ticket.creatingSince]);

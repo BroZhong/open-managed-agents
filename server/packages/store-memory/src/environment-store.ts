@@ -34,6 +34,27 @@ export class InMemoryEnvironmentStore implements EnvironmentStore {
     return env && this.visible(tenantId, env) ? this.view(env) : null;
   }
 
+  async listForSessions(tenantId: string, ids: readonly string[]): Promise<Environment[]> {
+    return [...new Set(ids)].flatMap((id) => {
+      const env = this.environments.get(id);
+      return env && (env.ownerType === "platform" || env.tenantId === tenantId) ? [this.view(env)] : [];
+    });
+  }
+
+  /**
+   * Stands in for the image builder (ADR-0024, "Building") where none runs:
+   * the Environment's active build succeeded with `image`, which now serves
+   * its new Sandboxes, and the Environment is ready.
+   */
+  succeedBuild(environmentId: string, image: string): void {
+    const env = this.environments.get(environmentId);
+    const build = this.builds.find((candidate) => candidate.environmentId === environmentId && (candidate.status === "pending" || candidate.status === "running"));
+    if (!env || !build) throw new Error(`Environment ${environmentId} has no active build`);
+    const now = new Date();
+    Object.assign(build, { status: "succeeded", startedAt: build.startedAt ?? now, finishedAt: now, image });
+    Object.assign(env, { status: "ready", image, updatedAt: now });
+  }
+
   async create(input: EnvironmentStoreCreateInput): Promise<Environment> {
     if (this.environments.has(input.id)) throw new Error(`Environment ${input.id} already exists`);
     this.assertNameFree(input.owner, input.name);

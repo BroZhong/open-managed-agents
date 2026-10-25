@@ -2,8 +2,11 @@ import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, 
 import type { SandboxBinding } from "../src/sandbox-manager.js";
 import type { SandboxSignals } from "../src/sandbox-signals.js";
 
-/** A binding row (ADR-0023): Ready while `sandboxId` is set, Creating while `creatingSince` is. */
-export interface BindingRow { sandboxId: string | null; creatingSince: Date | null }
+/**
+ * A binding row (ADR-0023): Ready while `sandboxId` is set, Creating while
+ * `creatingSince` is; what the Sandbox was created with (ADR-0024) is set with it.
+ */
+export type BindingRow = Omit<SandboxBindingRow, "now">;
 
 /** A controllable database clock. */
 export function databaseClock(start = new Date("2026-10-22T13:20:00Z")) {
@@ -17,7 +20,7 @@ export function databaseClock(start = new Date("2026-10-22T13:20:00Z")) {
  * with the database clock `clock`.
  */
 export function durableBinding(id = "root", clock: () => Date = () => new Date()) {
-  let row: BindingRow = { sandboxId: null, creatingSince: null };
+  let row: BindingRow = { sandboxId: null, environmentId: null, image: null, creatingSince: null };
   let installed: InstalledSkillSet | null = null;
   let queue: Promise<unknown> = Promise.resolve();
   const binding = {
@@ -28,7 +31,11 @@ export function durableBinding(id = "root", clock: () => Date = () => new Date()
         const { value, next } = await work({ ...read, now: clock() });
         // A write committed elsewhere while `work` ran fails the move.
         if (row !== read) throw new SandboxBindingChanged(id);
-        if (next) row = next === "creating" ? { sandboxId: null, creatingSince: clock() } : { sandboxId: next === "cold" ? null : next.ready, creatingSince: null };
+        if (next) {
+          const ready = typeof next === "object" ? next : undefined;
+          row = { sandboxId: ready?.ready ?? null, environmentId: ready?.environmentId ?? null, image: ready?.image ?? null,
+            creatingSince: next === "creating" ? clock() : null };
+        }
         return value;
       });
       queue = result.catch(() => {});
@@ -45,7 +52,9 @@ export function durableBinding(id = "root", clock: () => Date = () => new Date()
     installed: () => installed,
     row: () => row,
     /** A write committed elsewhere: another Runner, a reclamation, a migration. */
-    write: (next: BindingRow) => { row = next; },
+    write: (next: Pick<BindingRow, "sandboxId" | "creatingSince"> & Partial<BindingRow>) => {
+      row = Object.assign(next, { environmentId: next.environmentId ?? null, image: next.image ?? null });
+    },
   };
   return binding satisfies SandboxBinding;
 }

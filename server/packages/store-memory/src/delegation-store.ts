@@ -7,7 +7,7 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private records = new Map<DelegationTable, Map<string, DelegationRecord>>();
   private queue: Promise<void> = Promise.resolve();
   /** Sandbox Binding rows; an absent one is Cold. */
-  private bindings = new Map<string, SandboxBindingRecord>();
+  private bindings = new Map<string, SandboxBindingRecord & Pick<SandboxBindingRow, "environmentId" | "image">>();
   private installedSkills = new Map<string, InstalledSkillSet>();
   private bindingQueues = new Map<string, Promise<void>>();
   constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">,
@@ -72,12 +72,17 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
    */
   withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
     const perform = async () => {
-      let row = this.bindings.get(bindingId) ?? { sandboxId: null, creatingSince: null, stateSince: null, lastError: null };
-      const { value, next, observed } = await work({ sandboxId: row.sandboxId, creatingSince: row.creatingSince, now: this.databaseClock() });
+      let row = this.bindings.get(bindingId) ?? { sandboxId: null, environmentId: null, image: null, creatingSince: null, stateSince: null, lastError: null };
+      const { value, next, observed } = await work({ sandboxId: row.sandboxId, environmentId: row.environmentId, image: row.image,
+        creatingSince: row.creatingSince, now: this.databaseClock() });
       const now = this.databaseClock();
       // As PgDelegationStore writes them: a move begins a new state, a first
       // failure begins unavailability, a ready observation ends it.
-      if (next) row = { sandboxId: typeof next === "object" ? next.ready : null, creatingSince: next === "creating" ? now : null, stateSince: now, lastError: null };
+      if (next) {
+        const ready = typeof next === "object" ? next : undefined;
+        row = { sandboxId: ready?.ready ?? null, environmentId: ready?.environmentId ?? null, image: ready?.image ?? null,
+          creatingSince: next === "creating" ? now : null, stateSince: now, lastError: null };
+      }
       if (observed === "ready") { if (row.lastError) row = { ...row, stateSince: now, lastError: null }; }
       else if (observed) row = { ...row, stateSince: row.lastError ? row.stateSince : now, lastError: { ...observed.failure, at: now } };
       if (next || observed) this.bindings.set(bindingId, row);

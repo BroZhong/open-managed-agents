@@ -66,7 +66,7 @@ function fakeSweeperStores(): SweeperStores {
             if (!rows.has(bindingId)) rows.set(bindingId, { sandboxId: null, creatingSince: null, reclaiming: false });
             const read = { ...rows.get(bindingId)! };
             if (read.reclaiming) throw reclaimingError();
-            const { value, next } = await work({ sandboxId: read.sandboxId, creatingSince: read.creatingSince, now: clock.now() });
+            const { value, next } = await work({ sandboxId: read.sandboxId, environmentId: null, image: null, creatingSince: read.creatingSince, now: clock.now() });
             const row = rows.get(bindingId)!;
             if (row.reclaiming) throw reclaimingError();
             if (row.sandboxId !== read.sandboxId || row.creatingSince?.getTime() !== read.creatingSince?.getTime()) throw new SandboxBindingChanged(bindingId);

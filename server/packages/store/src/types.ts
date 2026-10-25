@@ -65,6 +65,12 @@ export interface Agent {
   mcpServers?: AgentMcpServerConfig[];
   skills?: string[];
   sandbox?: AgentSandboxConfig;
+  /**
+   * The Environment (ADR-0024) a new Session of the Agent runs in unless it
+   * names another. Only a ready one can be bound; absent, its Sandboxes run
+   * the Host's configured image.
+   */
+  environmentId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -107,6 +113,13 @@ export interface Session {
   agent: Agent;
   /** The Workspace this Session is bound to. Immutable after creation. */
   workspaceId: string;
+  /**
+   * The Environment its Sandboxes are created from, frozen at creation
+   * (ADR-0024): the one the creation named, otherwise its Agent's then. A
+   * Child Session has its parent's; a Loop's Session its Agent's at trigger
+   * time. Absent: the Host's configured image.
+   */
+  environmentId?: string;
   /** Set only for Sessions automatically created by a Loop trigger. */
   loopId?: string;
   delegation?: import("./interfaces/delegation-store.js").DelegationOrigin;

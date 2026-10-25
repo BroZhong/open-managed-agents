@@ -319,7 +319,7 @@ export class DefaultSandboxManager implements SandboxManager {
  * until the intent's deadline, by the database clock, it can still produce a
  * Sandbox the gateway does not list yet.
  */
-function creationMayBeInFlight({ creatingSince, now }: SandboxBindingRow): boolean {
+function creationMayBeInFlight({ creatingSince, now }: Pick<SandboxBindingRow, "creatingSince" | "now">): boolean {
   return creatingSince !== null && !intentExpired(creatingSince, now);
 }
 
