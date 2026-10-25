@@ -52,3 +52,11 @@ the same Workspace; there is no Turn transaction or write lock.
 Existing Session sandboxes require rebuilding to use a new image. Agent
 `sandbox.image` overrides remain a platform capability, but this repository
 ships only `auto-story-v2`; retired template names cannot provision a pool.
+
+## Built-in Environments
+
+`environments/<name>/` holds the repository's Built-in Environments
+([ADR-0024](../docs/adr/0024-environments.md)): `environment.json` and the
+`init.sh` that the image builder runs on its Base Image.
+[`video-production`](environments/video-production/README.md) replaces
+`auto-story-v2`.
