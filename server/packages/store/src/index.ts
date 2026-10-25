@@ -206,7 +206,6 @@ export type {
   EnvironmentOwner,
   EnvironmentOwnerType,
   EnvironmentSecretSource,
-  EnvironmentStatus,
   EnvironmentStore,
   EnvironmentStoreCreateInput,
   EnvironmentStoreUpdateInput,

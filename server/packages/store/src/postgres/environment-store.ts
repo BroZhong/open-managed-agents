@@ -8,7 +8,6 @@ import type {
   EnvironmentBuildStatus,
   EnvironmentOwner,
   EnvironmentOwnerType,
-  EnvironmentStatus,
   EnvironmentStore,
   EnvironmentStoreCreateInput,
   EnvironmentStoreUpdateInput,
@@ -25,7 +24,7 @@ interface EnvironmentRow {
   init_script: string;
   env: EnvironmentVariable[];
   secrets: Record<string, string>;
-  status: EnvironmentStatus;
+  status: Environment["status"];
   image: string | null;
   manifest: Record<string, unknown> | null;
   last_build_id: string | null;
