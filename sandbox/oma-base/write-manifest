@@ -1,0 +1,206 @@
+#!/usr/bin/python3 -I
+"""Print the software manifest of this image as JSON on stdout (ADR-0024).
+
+The image builder runs `write-manifest > /opt/oma/manifest.json` after an
+Environment's init script. Read-only: it writes nothing but stdout, and every
+command it runs gets a throwaway HOME, so no cache or log lands in /home/user.
+"""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+# The PATH envd's login shell gives Sandbox commands (Debian /etc/profile).
+COMMAND_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+# name -> version arguments; listed when present on COMMAND_PATH.
+BINARIES = {
+    "node": ["--version"],
+    "npm": ["--version"],
+    "python3": ["--version"],
+    "pip3": ["--version"],
+    "tini": ["--version"],
+    "rg": ["--version"],
+    "fd": ["--version"],
+    "git": ["--version"],
+    "curl": ["--version"],
+    "jq": ["--version"],
+    "ffmpeg": ["-version"],
+    "ffprobe": ["-version"],
+    "vfs-cli": ["--version"],
+    "mediakit-cli": ["--version"],
+    "ossutil": ["version"],
+}
+PYTHON_PROGRAM = """
+import importlib.metadata as m, json, sys
+names = {}
+for d in m.distributions():
+    name = d.metadata.get("Name")
+    if name and name.lower() not in names:
+        names[name.lower()] = {"name": name, "version": d.version}
+print(json.dumps({"executable": sys.executable, "prefix": sys.prefix,
+                  "version": sys.version.split()[0],
+                  "packages": sorted(names.values(), key=lambda p: p["name"].lower())}))
+"""
+
+
+def run(argv, home, timeout=30):
+    env = {"PATH": COMMAND_PATH, "HOME": home, "LANG": "C.UTF-8",
+           "npm_config_cache": os.path.join(home, "npm-cache"), "npm_config_logs_max": "0",
+           "npm_config_update_notifier": "false"}
+    return subprocess.run(argv, env=env, cwd=home, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, timeout=timeout, check=False)
+
+
+def dpkg():
+    out = subprocess.run(["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${db:Status-Abbrev}\n"],
+                         capture_output=True, text=True, check=True).stdout
+    packages = []
+    for line in out.splitlines():
+        name, version, status = (line.split("\t") + ["", ""])[:3]
+        if status.startswith("ii"):
+            packages.append({"name": name, "version": version})
+    return sorted(packages, key=lambda p: p["name"])
+
+
+def interpreters():
+    """The interpreters a command or an init script reaches, and every venv under /opt and the user's venvs."""
+    found = []
+    resolved = shutil.which("python3", path=COMMAND_PATH)
+    for candidate in [resolved, "/opt/venv/bin/python3", "/usr/bin/python3"]:
+        if candidate:
+            found.append(candidate)
+    for root, depth in ((Path("/opt"), 3), (Path("/home/user/.local/venvs"), 1)):
+        if not root.is_dir():
+            continue
+        for level in range(1, depth + 1):
+            for cfg in sorted(root.glob("/".join(["*"] * level) + "/pyvenv.cfg")):
+                python = cfg.parent / "bin" / "python3"
+                if python.exists():
+                    found.append(str(python))
+    return list(dict.fromkeys(found))
+
+
+def pip(home):
+    environments, seen = [], set()
+    for interpreter in interpreters():
+        result = run([interpreter, "-I", "-c", PYTHON_PROGRAM], home, timeout=60)
+        if result.returncode != 0:
+            environments.append({"interpreter": interpreter, "error": result.stderr.strip()[-300:]})
+            continue
+        data = json.loads(result.stdout)
+        if data["prefix"] in seen:
+            continue
+        seen.add(data["prefix"])
+        environments.append({"interpreter": interpreter, **data})
+    return environments
+
+
+def package_json(path):
+    try:
+        data = json.loads(path.read_text())
+        return {"name": data["name"], "version": data["version"]}
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def npm():
+    global_packages = {}
+    for root in (Path("/usr/local/lib/node_modules"), Path("/usr/lib/node_modules")):
+        if not root.is_dir():
+            continue
+        entries = []
+        for child in sorted(root.iterdir()):
+            children = sorted(child.iterdir()) if child.name.startswith("@") and child.is_dir() else [child]
+            for package in children:
+                info = package_json(package / "package.json")
+                if info:
+                    entries.append(info)
+        global_packages[str(root)] = entries
+    projects = {}
+    for lock in sorted(Path("/opt").glob("*/package-lock.json")):
+        try:
+            data = json.loads(lock.read_text())
+        except (OSError, ValueError):
+            continue
+        locked = data.get("packages", {})
+        direct = sorted(locked.get("", {}).get("dependencies", {}))
+        projects[str(lock.parent)] = {
+            "dependencies": [{"name": name, "version": locked.get(f"node_modules/{name}", {}).get("version")}
+                             for name in direct],
+            "lockedPackages": sum(1 for key in locked if key.startswith("node_modules/")),
+        }
+    return {"global": global_packages, "projects": projects}
+
+
+def first_version_line(text):
+    for line in text.splitlines():
+        line = line.strip()
+        if line and any(ch.isdigit() for ch in line):
+            return line[:200]
+    return None
+
+
+def binaries(home):
+    versions = {}
+    for name, args in BINARIES.items():
+        path = shutil.which(name, path=COMMAND_PATH)
+        if not path:
+            continue
+        try:
+            result = run([path, *args], home, timeout=15)
+            versions[name] = {"path": path, "version": first_version_line(result.stdout + "\n" + result.stderr)}
+        except subprocess.TimeoutExpired:
+            versions[name] = {"path": path, "version": None}
+    return versions
+
+
+def local_bin():
+    entries = {}
+    root = Path("/usr/local/bin")
+    for path in sorted(root.iterdir()) if root.is_dir() else []:
+        if path.is_symlink():
+            entries[path.name] = {"symlink": os.readlink(path)}
+        elif path.is_file():
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(block)
+            entries[path.name] = {"sha256": digest.hexdigest(), "bytes": path.stat().st_size}
+    return entries
+
+
+def base_images():
+    root = Path("/opt/oma/images")
+    images = []
+    for path in sorted(root.glob("*.json")) if root.is_dir() else []:
+        try:
+            images.append(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            continue
+    return images
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix="oma-manifest-") as home:
+        manifest = {
+            "schemaVersion": 1,
+            "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "baseImages": base_images(),
+            "dpkg": dpkg(),
+            "pip": pip(home),
+            "npm": npm(),
+            "binaries": binaries(home),
+            "localBin": local_bin(),
+        }
+    json.dump(manifest, sys.stdout, indent=1, sort_keys=False)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
