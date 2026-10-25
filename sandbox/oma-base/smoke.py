@@ -94,8 +94,12 @@ def python_and_mirrors(directory):
     require(registry == "https://registry.npmmirror.com/", f"npm registry: {registry}")
     uris = []
     for path in [Path("/etc/apt/sources.list"), *sorted(Path("/etc/apt/sources.list.d").glob("*"))]:
-        if path.is_file():
-            uris += re.findall(r"(?:URIs:|deb)\s+(?:\[[^]]*\]\s+)?(\S+)", path.read_text())
+        for line in path.read_text().splitlines() if path.is_file() else []:
+            line = line.strip()
+            if line.startswith("URIs:"):
+                uris += line.split()[1:]
+            elif line.startswith(("deb ", "deb-src ")):
+                uris.append(re.sub(r"\[[^]]*\]\s*", "", line).split()[1])
     require(uris and all(uri.startswith("https://mirrors.aliyun.com/") for uri in uris), f"apt sources: {uris}")
     return {"python3": prefix, "pip": "https://mirrors.aliyun.com/pypi/simple/", "npm": registry, "apt": sorted(set(uris))}
 
