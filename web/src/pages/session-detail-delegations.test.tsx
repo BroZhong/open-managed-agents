@@ -28,7 +28,7 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
     const sessionId = url.pathname.match(/\/sessions\/([^/]+)/)?.[1] ?? "";
     const headers = options?.headers as Record<string, string> | undefined;
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-    if (url.pathname.endsWith("/delegations")) return json({ data: executions.filter((execution) => execution.callerToolUseId === url.searchParams.get("tool_use_id")), has_more: false });
+    if (url.pathname.endsWith("/delegations")) return json({ data: url.searchParams.has("tool_use_id") ? executions.filter((execution) => execution.callerToolUseId === url.searchParams.get("tool_use_id")) : [...executions].reverse(), has_more: false });
     if (url.pathname.endsWith("/pending")) return json({ data: [], has_more: false });
     if (url.pathname.endsWith("/skills")) return json({ data: [] });
     if (url.pathname.endsWith("/workspaces")) return json({ data: [] });
@@ -117,6 +117,15 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
   fireEvent.click(screen.getByRole("button", { name: /Agent.*Resumed child task/ }));
   expect(screen.getAllByRole("button", { name: "Agent 1" })).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Agent 2" })).toBeNull();
+  expect(subscriptions.filter((id) => id === "same-child")).toHaveLength(1);
+  expect(screen.getByText("Live child update").closest("[hidden]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "SubAgent" }));
+  const subagents = await screen.findByRole("region", { name: "SubAgent Sessions" });
+  await within(subagents).findByRole("button", { name: "Open SubAgent: Resumed child task" });
+  expect(within(subagents).getAllByRole("listitem")).toHaveLength(2);
+  expect(within(subagents).queryByText("First child task")).toBeNull();
+  fireEvent.click(within(subagents).getByRole("button", { name: "Open SubAgent: Resumed child task" }));
+  expect(screen.getAllByRole("button", { name: "Agent 1" })).toHaveLength(1);
   expect(subscriptions.filter((id) => id === "same-child")).toHaveLength(1);
   expect(screen.getByText("Live child update").closest("[hidden]")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
