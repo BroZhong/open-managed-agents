@@ -2,6 +2,7 @@ import { HTTPException } from "hono/http-exception";
 import {
   EnvironmentNameConflictError,
   newEnvironmentId,
+  type SandboxEnvironmentRecord,
   type Environment,
   type EnvironmentBaseImage,
   type EnvironmentOwner,
@@ -10,7 +11,7 @@ import {
   type EnvironmentVariable,
   type Session,
 } from "@oma-server/store";
-import { ENVIRONMENT_VARIABLE_NAME, isReservedEnvironmentVariable } from "@oma-server/sandbox";
+import { ENVIRONMENT_VARIABLE_NAME, isReservedEnvironmentVariable, type SandboxEnvironments } from "@oma-server/sandbox";
 import { SecretBox, sealedPlaintextBytes } from "./secret-box.js";
 import { publicSession } from "./public-projection.js";
 
@@ -77,6 +78,64 @@ const bytes = (value: string) => Buffer.byteLength(value, "utf8");
  */
 export function environmentSecretScope(env: Pick<Environment, "id" | "tenantId">, key: string): string {
   return `environment:${env.tenantId ?? "platform"}:${env.id}:${key}`;
+}
+
+/**
+ * The Environments Sessions run in, as a Runner resolves them for their
+ * Sandboxes (ADR-0024, "Starting a Sandbox"). Each call reads the
+ * Environment as it is now, by primary key: an edit made on an API pod
+ * reaches every Runner's next command. Variables are resolved only here, at
+ * injection: Tenant secrets opened with the key they were sealed under,
+ * platform secret references from the deployment's platform values (the
+ * base Secret the Runner loads at startup). A reference the deployment does
+ * not provide is left out, and reported once by name.
+ */
+export class SandboxEnvironmentResolver implements SandboxEnvironments {
+  private readonly secrets: SecretBox;
+  private readonly reported = new Set<string>();
+
+  constructor(
+    private readonly store: Pick<EnvironmentStore, "getForSandbox">,
+    encryptionKey: string | undefined,
+    private readonly platformSecrets: Readonly<Record<string, string>>,
+    private readonly logger: Pick<Console, "warn"> = console,
+  ) {
+    this.secrets = new SecretBox(encryptionKey, () => new Error("Environment secrets require OMA_PROVIDER_ENCRYPTION_KEY (32 bytes encoded as hex)."));
+  }
+
+  async image(tenantId: string, environmentId: string): Promise<string | null> {
+    return (await this.store.getForSandbox(tenantId, environmentId))?.image ?? null;
+  }
+
+  async variables(tenantId: string, environmentId: string): Promise<Record<string, string>> {
+    const env = await this.store.getForSandbox(tenantId, environmentId);
+    return env ? this.resolve(env) : {};
+  }
+
+  private resolve(env: SandboxEnvironmentRecord): Record<string, string> {
+    const resolved: Record<string, string> = {};
+    for (const variable of env.env) {
+      if (!("secretRef" in variable)) { resolved[variable.name] = variable.value; continue; }
+      const { source, key } = variable.secretRef;
+      if (source === "platform") {
+        if (Object.hasOwn(this.platformSecrets, key)) resolved[variable.name] = this.platformSecrets[key]!;
+        else this.report(env.id, `${variable.name} refers to platform secret ${key}, which this deployment does not provide`);
+        continue;
+      }
+      const sealed = env.encryptedSecrets[key];
+      if (sealed === undefined) { this.report(env.id, `${variable.name} refers to secret ${key}, which is not stored`); continue; }
+      resolved[variable.name] = this.secrets.open(sealed, environmentSecretScope(env, key));
+    }
+    return resolved;
+  }
+
+  /** Names only, once per Environment and variable: commands run without it. */
+  private report(environmentId: string, problem: string): void {
+    const key = `${environmentId}:${problem}`;
+    if (this.reported.has(key)) return;
+    this.reported.add(key);
+    this.logger.warn(`Environment ${environmentId}: ${problem}; its commands run without it.`);
+  }
 }
 
 /** The API view of an Environment: no Tenant id, no secret ciphertexts. */

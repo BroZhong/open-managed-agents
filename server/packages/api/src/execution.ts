@@ -15,6 +15,7 @@ import { RunnerDispatch } from "./lib/runner-dispatch.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
+import { SandboxEnvironmentResolver } from "./lib/environments.js";
 
 export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
@@ -58,8 +59,12 @@ export async function startExecution(deps: PgStores & {
   // and releases leases; bindings, resource uses and activity live behind it.
   const sandboxes = sandboxManager && workspaceMount ? new DefaultTurnSandboxes({
     manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount, ...sandboxEnvPolicy,
-    // A Session's Environment supplies its image; the configured one serves Sessions without (ADR-0024).
-    sandboxImage: workspaceConfig?.sandboxImage, environments: deps.environmentStore,
+    // A Session's Environment supplies its image and its commands' variables,
+    // platform secret references resolved from the deployment's platform values;
+    // Sessions without one keep the configured image and create-time env (ADR-0024).
+    sandboxImage: workspaceConfig?.sandboxImage,
+    environments: new SandboxEnvironmentResolver(deps.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY,
+      sandboxEnvPolicy.defaultSandboxEnv ?? {}),
     onError: reportDrainFailure,
   }) : undefined;
   const router = new SessionRouter({

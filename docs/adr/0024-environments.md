@@ -202,7 +202,12 @@ Measured on the agent-platform cluster on 2026-10-25:
   and no secret is written into a Sandbox CR. They are not part of the tool
   protocol or the model's context. Order, lowest first: platform defaults, the
   Environment's variables, the Workspace variables; system-reserved names are
-  rejected when the Environment is saved.
+  rejected when the Environment is saved. The Host reads the Environment for
+  each command (one primary-key read) and resolves Tenant secrets and platform
+  secret references only then. A Sandbox of a Session in an Environment is
+  created with the Workspace variables alone; Host-internal commands (the
+  Skill Install, Workspace mount checks, file primitives) do not receive the
+  Environment's variables (#307).
 - `span.sandbox_prepare_*` carries the Environment ID, image digest, whether the
   claim swapped, and its duration.
 - `GET /v1/sessions/{id}` renames ADR-0023's `environment: {state, since,
