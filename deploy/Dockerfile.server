@@ -87,6 +87,8 @@ RUN --mount=type=cache,id=oma-pnpm-${TARGETARCH},target=/root/.local/share/pnpm/
 COPY --from=pi-seed /opt/pi-agent-seed/ /opt/pi-agent-seed/
 COPY adapter/ ./adapter/
 COPY server/ ./server/
+# The Built-in Environment definitions oma-image-builder writes at startup (ADR-0024).
+COPY sandbox/environments/ ./sandbox/environments/
 
 # Re-run install so any manifest not copied above (or workspace linking) settles.
 # With the deps already installed + cached in the store, this is near-instant.

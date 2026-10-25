@@ -40,6 +40,11 @@ patches:
     - {op: replace, path: /data/PG_SCHEMA, value: oma_test}
     - {op: replace, path: /data/OMA_ENVIRONMENT, value: test}
     - {op: replace, path: /data/SANDBOX_TEMPLATE, value: oma-test-sandbox}
+    # oma-test-sandbox runs video-production's image. Without the ImageCache
+    # grant the pool is updated at once; its one replica refills by pulling
+    # the whole image (73-81 s). Switch to acs once oma-image-cache exists.
+    - {op: replace, path: /data/WARM_POOL_ENVIRONMENT, value: env_video_production}
+    - {op: replace, path: /data/WARM_POOL_IMAGE_CACHE, value: none}
 - target:
     kind: Deployment
     name: oma-runner

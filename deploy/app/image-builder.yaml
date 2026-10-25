@@ -45,8 +45,24 @@ data:
   # cluster addresses stay direct. Passed in build.env, never kept in images.
   BUILD_PROXY_URL: http://sing-box.oma-infra.svc.cluster.local:7890
   BUILD_NO_PROXY: localhost,127.0.0.1,::1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com
-  # Verification claims one Sandbox from the Warm Pool (the Runner's pool).
+  # The Built-in Environments written at startup (sandbox/environments in the image).
+  BUILTIN_ENVIRONMENTS_DIR: /app/sandbox/environments
+  # Verification claims one Sandbox from the Warm Pool (the Runner's pool),
+  # and the builder keeps that pool on the image of WARM_POOL_ENVIRONMENT.
   SANDBOX_TEMPLATE: auto-story-v2
+  WARM_POOL_NAMESPACE: sandbox-system
+  # Production keeps auto-story-v2 until its release: no pool updates yet.
+  # With the release: env_video_production, SANDBOX_TEMPLATE oma-sandbox,
+  # deploy/image-builder-warm-pool-rbac.yaml applied.
+  WARM_POOL_ENVIRONMENT: ''
+  # acs: create the new image's ACS ImageCache and update the pool only once
+  # it is Ready (needs the oma-image-cache Secret, deploy/README.md); none:
+  # update the pool at once, every refill pulling the whole image.
+  WARM_POOL_IMAGE_CACHE: acs
+  ALIYUN_REGION: cn-shanghai
+  # The network the ImageCache puller uses: the cluster pods' (#299 bench).
+  IMAGE_CACHE_SECURITY_GROUP_ID: sg-uf6bikdzvy9di9y8wp89
+  IMAGE_CACHE_VSWITCH_IDS: vsw-uf6kw2gmpn1psc4yqpgqa,vsw-uf6xsc4rp8k5cpjgcelmu,vsw-uf6x0tny2rxn2lffpc2ro
   E2B_API_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:8080
   E2B_SANDBOX_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:7788
   NO_PROXY: localhost,127.0.0.1,sandbox-manager.sandbox-system.svc.cluster.local
@@ -148,6 +164,20 @@ spec:
             secretKeyRef:
               name: oma-secrets
               key: E2B_API_KEY
+        # A RAM user allowed only acc:CreateImageCache and acc:ListImageCaches
+        # (deploy/README.md); used when WARM_POOL_IMAGE_CACHE=acs.
+        - name: IMAGE_CACHE_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oma-image-cache
+              key: ACCESS_KEY_ID
+              optional: true
+        - name: IMAGE_CACHE_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-image-cache
+              key: ACCESS_KEY_SECRET
+              optional: true
         readinessProbe:
           httpGet:
             path: /ready

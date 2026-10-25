@@ -159,6 +159,49 @@ abrupt stop it reclaims them when their leases expire (90 s) and removes the
 earlier attempts' pods. A build fails after 60 minutes; a script failure is
 final, an infrastructure failure is retried twice.
 
+At startup, before it claims anything, the builder:
+
+1. writes every Built-in Environment of `sandbox/environments/<name>/`
+   (shipped in the Server image) by its fixed id: a new one is created and
+   built; a changed init script or Base Image queues a rebuild; changed
+   variables, name or description apply without a build; an unchanged one is
+   left alone, so restarts create and build nothing;
+2. queues a rebuild of every Environment, built-in or a Tenant's, whose
+   latest build finished on another digest of its Base Image than the one
+   configured now (each build records the digest it ran on). Each rebuild is
+   its own build: one failing leaves the others, and every Environment keeps
+   serving its current image until its rebuild succeeds.
+
+It then keeps the Warm Pool (`SANDBOX_TEMPLATE` in `WARM_POOL_NAMESPACE`) on
+the image of `WARM_POOL_ENVIRONMENT` (`env_video_production`), so its
+Sessions claim without a swap: after each successful build of that
+Environment, at startup and every 30 s it compares the pool's `sandbox`
+container image with the Environment's and patches the SandboxSet (a JSON
+patch of that one field). `WARM_POOL_IMAGE_CACHE` decides what comes first:
+
+| `WARM_POOL_IMAGE_CACHE` | Behaviour |
+| --- | --- |
+| `acs` | Create an ACS ImageCache for the new image (`oma-<environment>-<digest prefix>`, on the cluster pods' security group and vSwitches, about 4 min) and patch the pool only once it is `Ready`; until then, or if it fails (`warm_pool … state=failed`), the pool keeps its image. |
+| `none` | Patch the pool at once and log `warm_pool_cold_refill`: until a cache exists every refill pulls the whole image (1.9 GB, 73–81 s in #299). |
+
+Pods match an existing cache by themselves (the pool template's
+`image.alibabacloud.com/enable-image-cache: "true"`); nothing in the cluster
+creates one for a new image (#299: 13 refills, no `matched-image-caches`).
+Caches are created through the ACS OpenAPI (`acc` 2024-04-02, as the bench
+did with `aliyun acc create-image-cache`), which needs an Alibaba Cloud
+credential the deployment does not have yet. To use `acs`, the maintainer
+creates a RAM user with only:
+
+```json
+{"Version": "1", "Statement": [{"Effect": "Allow",
+  "Action": ["acc:CreateImageCache", "acc:ListImageCaches"], "Resource": "*"}]}
+```
+
+and stores its key as the Secret `oma-image-cache` (`ACCESS_KEY_ID`,
+`ACCESS_KEY_SECRET`) in the builder's namespace. Old caches are not deleted
+(that would need `acc:DeleteImageCache`). Today oma-test runs `none` (one
+replica) and production updates no pool until its release.
+
 | Configuration (`oma-image-builder-config`) | |
 | --- | --- |
 | `BASE_IMAGE_OMA_BASE`, `BASE_IMAGE_OMA_MEDIA` | The Base Images by digest; equal to `sandbox/oma-{base,media}/image.lock.json` (checked by `environments.test.mjs`) |
@@ -169,6 +212,9 @@ final, an infrastructure failure is retried twice.
 | `BUILD_PROXY_URL`, `BUILD_NO_PROXY` | sing-box for GitHub downloads, with the Aliyun mirrors and cluster addresses direct; given to the init script through `build.env`, never kept in an image |
 | `SANDBOX_TEMPLATE`, `E2B_*` | The Runners' Warm Pool and gateway, for the verification claim |
 | `BUILD_NAMESPACE` | The builder's own namespace (downward API) |
+| `BUILTIN_ENVIRONMENTS_DIR` | `/app/sandbox/environments`, the Built-in Environments in the image |
+| `WARM_POOL_ENVIRONMENT`, `WARM_POOL_NAMESPACE`, `WARM_POOL_IMAGE_CACHE` | The Environment whose image the pool runs (empty: no pool updates), the pool's namespace, and `acs` or `none` (below) |
+| `ALIYUN_REGION`, `IMAGE_CACHE_SECURITY_GROUP_ID`, `IMAGE_CACHE_VSWITCH_IDS` | Where an ACS ImageCache's puller runs (`acs` only) |
 
 The builder holds PG, the Workspace OSS keys (for logs) and the E2B key; no
 encryption key and no Sandbox base Secret: Environment secrets never reach a
@@ -184,12 +230,31 @@ export KUBECONFIG=~/.kube/agent-platform-config
 kubectl apply -f deploy/environments/test/image-builder-warm-pool-rbac.yaml
 ```
 
-**Release order:** Base Images (rebuild, then update the two digests above),
-then the image builder — wait until the Environments it rebuilds are ready
-(`oma-cli environment list`) — then the Runner, whose Pi version must match the
-new Base Images. A build's progress: `oma-cli environment logs --environment-id
-<id> --follow`, or the builder's `environment_build_start`/`environment_build_end`
-log lines.
+**Release order:** Base Images, then the image builder — wait until the
+Environments it rebuilds are ready — then the Runner, whose Pi version must
+match the new Base Images. Sandboxes keep their Environment's previous image
+until its rebuild is ready, so a Runner released early would pair a new Pi
+with old images.
+
+To bump a Base Image (for example a Pi upgrade):
+
+1. Build and push it from its recipe (`sandbox/oma-base` or `sandbox/oma-media`,
+   on vfs-dev; `oma-media` builds on `oma-base`, so a new `oma-base` usually
+   means a new `oma-media` too) and commit the new `image.lock.json`.
+2. Set `BASE_IMAGE_OMA_BASE` / `BASE_IMAGE_OMA_MEDIA` in
+   `deploy/app/image-builder.yaml` to the lock files' `ref`
+   (`environments.test.mjs` fails until they match) and release the builder
+   only (`render.mjs` with the new `BUILDER_VERSION`, the other images
+   unchanged).
+3. The restarted builder queues a rebuild of every Environment on the changed
+   Base Image (`base_image_rebuild environment=…` log lines). Wait until each is
+   ready: `oma-cli environment list` (status), `oma-cli environment logs
+   --environment-id <id> --follow`, or the builder's
+   `environment_build_end … outcome=` lines. A failed one keeps serving its
+   previous image; fix its script and `oma-cli environment rebuild`.
+4. When `video-production` is ready the builder points the Warm Pool at its
+   image (`warm_pool_updated`), after its ImageCache with `acs`.
+5. Release the Runner (and API/Web) on the new Server image.
 
 ## Image pipeline
 

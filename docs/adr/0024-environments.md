@@ -160,7 +160,12 @@ Measured on the agent-platform cluster on 2026-10-25:
   never `ARG` or `ENV`, which would land in the image history or config. The
   manifest is written before ownership is fixed, so nothing it writes stays
   root-owned, and only files not already owned by `user` are changed, so
-  `/home/user` is not copied into the new layer.
+  `/home/user` is not copied into the new layer. The generated file differs
+  from this shape in one respect (#303): a third bind mount, `init-trap.sh`,
+  is sourced through `BASH_ENV` and sets an `ERR` trap that prints the
+  script's failing line and command, and both `RUN`s print a per-attempt
+  marker on failure, so the log shows where a script failed and the builder
+  tells a script failure (never retried) from an infrastructure one.
 
 - The script runs as root in `/home/user`, cannot reach any Workspace, sees the
   Environment's plain and platform-default variables (not its secrets), and
@@ -188,7 +193,11 @@ Measured on the agent-platform cluster on 2026-10-25:
   mount; its image is the image of `video-production`. When that Environment
   becomes ready, the builder creates an ACS ImageCache for the new image, waits
   until it is ready, and only then patches the pool's image: without a matching
-  cache every refill pulls the whole image (1.9 GB, 73–81 s in #299).
+  cache every refill pulls the whole image (1.9 GB, 73–81 s in #299). Creating
+  a cache is an ACS OpenAPI call (pods only match existing caches), so it needs
+  a RAM credential; until one is granted a deployment may run with
+  `WARM_POOL_IMAGE_CACHE=none`, which patches at once and accepts the cold
+  refills (#305, deploy/README.md).
 - The Host creates every Sandbox from the pool and always passes the
   Environment's image digest as `e2b.agents.kruise.io/image`. A matching image is
   a plain claim; any other is swapped in place, pulling only the layers above

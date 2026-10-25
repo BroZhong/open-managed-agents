@@ -180,8 +180,14 @@ test("each environment runs one image builder with pinned Base Images, buildah a
     assert.match(builder, /- src\/builder-server\.ts$/m);
     assert.match(builder, /fieldPath: metadata\.namespace/);
     // The builder holds no secret it does not use: no encryption key, no Sandbox base Secret.
-    const secretKeys = [...builder.matchAll(/^\s+key: (\S+)$/gm)].map((match) => match[1]).sort();
-    assert.deepEqual(secretKeys, ["E2B_API_KEY", "E2B_DOMAIN", "PG_PASSWORD", "WORKSPACE_OSS_ACCESS_KEY_ID", "WORKSPACE_OSS_ACCESS_KEY_SECRET"], env);
+    const secretKeys = [...builder.matchAll(/^\s+key: (\S+)\n\s+name: (\S+)$/gm)].map((match) => `${match[2]}/${match[1]}`).sort();
+    assert.deepEqual(secretKeys, [
+      "oma-image-cache/ACCESS_KEY_ID", "oma-image-cache/ACCESS_KEY_SECRET",
+      "oma-secrets/E2B_API_KEY", "oma-secrets/E2B_DOMAIN", "oma-secrets/PG_PASSWORD",
+      "oma-secrets/WORKSPACE_OSS_ACCESS_KEY_ID", "oma-secrets/WORKSPACE_OSS_ACCESS_KEY_SECRET",
+    ], env);
+    // The ImageCache credential is optional: only WARM_POOL_IMAGE_CACHE=acs needs it.
+    assert.equal((builder.match(/name: oma-image-cache\n\s+optional: true/g) ?? []).length, 2, env);
     assert.doesNotMatch(builder + cm, /OMA_PROVIDER_ENCRYPTION_KEY|base-secret|SANDBOX_BASE_SECRET/);
   }
 });
@@ -214,4 +220,29 @@ test("each image builder may read and patch only its environment's Warm Pool", (
     assert.equal((text.match(/apiGroups/g) ?? []).length, 1, file);
     assert.match(text, new RegExp(`kind: ServiceAccount\\n  name: oma-image-builder\\n  namespace: ${namespace}\\n?$`), file);
   }
+});
+
+test("the image builder writes the built-ins shipped in the Server image", () => {
+  const dockerfile = readFileSync(new URL("deploy/Dockerfile.server", root), "utf8");
+  const ignore = readFileSync(new URL("deploy/Dockerfile.server.dockerignore", root), "utf8").split("\n");
+  assert.match(dockerfile, /^WORKDIR \/app$/m);
+  assert.match(dockerfile, /^COPY sandbox\/environments\/ \.\/sandbox\/environments\/$/m);
+  assert.ok(ignore.indexOf("!sandbox/environments") > ignore.indexOf("sandbox"), "the dockerignore re-includes sandbox/environments after excluding sandbox");
+  for (const env of ["production", "test"]) {
+    assert.equal(field(configMap(render(env), "oma-image-builder-config"), "BUILTIN_ENVIRONMENTS_DIR"), "/app/sandbox/environments", env);
+  }
+});
+
+test("only oma-test's builder keeps its Warm Pool on video-production, on the pool its RBAC names", () => {
+  const test = configMap(render("test"), "oma-image-builder-config");
+  assert.equal(field(test, "WARM_POOL_ENVIRONMENT"), "env_video_production");
+  assert.equal(field(test, "WARM_POOL_NAMESPACE"), "sandbox-system");
+  assert.equal(field(test, "WARM_POOL_IMAGE_CACHE"), "none");
+  const rbac = readFileSync(new URL("deploy/environments/test/image-builder-warm-pool-rbac.yaml", root), "utf8");
+  assert.match(rbac, new RegExp(`resourceNames: \\[${field(test, "SANDBOX_TEMPLATE")}\\]`));
+  // Production serves from auto-story-v2 until its release: no pool updates.
+  const production = configMap(render("production"), "oma-image-builder-config");
+  assert.equal(field(production, "WARM_POOL_ENVIRONMENT"), "");
+  assert.equal(field(production, "WARM_POOL_IMAGE_CACHE"), "acs");
+  for (const key of ["IMAGE_CACHE_SECURITY_GROUP_ID", "IMAGE_CACHE_VSWITCH_IDS", "ALIYUN_REGION"]) assert.ok(field(production, key), key);
 });
