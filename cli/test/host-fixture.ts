@@ -2,7 +2,7 @@
 // Never shipped in the npm package; no production configuration is loaded.
 import { serve } from "../../server/packages/api/node_modules/@hono/node-server/dist/index.mjs";
 import { createApp } from "../../server/packages/api/src/app.js";
-import { createMemoryStores } from "../../server/packages/store-memory/src/index.js";
+import { createMemoryStores, InMemoryEnvironmentBuildLogStore } from "../../server/packages/store-memory/src/index.js";
 import { InProcessEventStreamHub } from "../../server/packages/event-log/src/index.js";
 import { SessionRouter } from "../../server/packages/session-router/src/index.js";
 import { EnvironmentService } from "../../server/packages/api/src/lib/environments.js";
@@ -85,6 +85,7 @@ const app = createApp({
   sessionRouter: router,
   environmentService: new EnvironmentService(stores.environmentStore, "ab".repeat(32), {
     inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+    logs: new InMemoryEnvironmentBuildLogStore(),
   }),
 });
 const server = serve(

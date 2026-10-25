@@ -22,7 +22,7 @@ Corresponding flags override environment values. No production URL is built in.
 Use `schema <command path>` for the complete contract and `doctor` for read-only
 diagnostics. [Bundled guide](guides/oma-cli.md) documents all workflows and recovery.
 
-`oma-cli environment create|get|list|update|delete` defines what Sandboxes run:
+`oma-cli environment create|get|list|update|delete|rebuild|logs` defines what Sandboxes run:
 a Base Image (`oma-base`, or `oma-media` with FFmpeg), an init script
 (`--init-script @init.sh`) and variables (`--env NAME=VALUE`, `--env-file`,
 `--secret NAME=VALUE`, `--secret-file`; secrets are never shown again);
@@ -32,7 +32,9 @@ commands start as login shells, so export a variable every command should
 inherit from `/etc/profile.d/<name>.sh` as `export FOO="${FOO:-value}"`.
 `oma-cli agent update --environment <id>` (or `--no-environment`) binds a ready
 Environment an Agent's new Sessions run in; `session create --environment <id>`
-overrides it for one Session. See the guide's Environments section.
+overrides it for one Session. `environment logs --follow` prints the build log
+every 2 s until the build ends; `environment rebuild` builds the current
+definition again. See the guide's Environments section.
 
 To upgrade an installation, install the newly verified tarball or the corresponding npm version.
 Before any manual registry release: confirm package ownership, update version and

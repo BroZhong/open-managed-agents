@@ -168,3 +168,82 @@ test("environment list, get and delete", async () => {
     await f.close();
   }
 });
+
+/** A Host whose latest build's log grows by one page per read until it fails. */
+const buildHost = () => {
+  const pages = ["==> Pulling the Base Image\n", "[oma] init script failed at line 2: false (exit status 1)\n"];
+  const build = (status) => ({ id: "envb_2", status, createdAt: "2026-10-26T00:00:00Z", startedAt: null, finishedAt: null,
+    errorCode: status === "failed" ? "environment_build_script_failed" : null, errorMessage: status === "failed" ? "The init script failed at line 2" : null });
+  let reads = 0;
+  return fixture((req, res) => {
+    const url = new URL(req.url, "http://x");
+    // Each reader that starts from the beginning sees the build from its start.
+    if (url.searchParams.get("offset") === "0") reads = 0;
+    if (req.method === "POST" && url.pathname.endsWith("/build")) return json(res, { ...existing, status: "pending", lastBuild: build("pending") }, 202);
+    if (url.pathname.endsWith("/log")) {
+      const offset = Number(url.searchParams.get("offset"));
+      const shown = pages.slice(0, Math.min(++reads, pages.length)).join("");
+      const finished = reads >= pages.length;
+      const bytes = Buffer.from(shown);
+      return json(res, { build: build(finished ? "failed" : "running"), finished, text: bytes.subarray(offset).toString(), offset, nextOffset: bytes.length, truncated: false });
+    }
+    return json(res, existing);
+  });
+};
+
+test("environment rebuild queues a build", async () => {
+  const f = await buildHost();
+  try {
+    const r = await run(["environment", "rebuild", "--environment-id", "env_1"], auth(f));
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(f.requests.map((x) => [x.method, x.url]), [["POST", "/prefix/v1/environments/env_1/build"]]);
+    assert.equal(r.data().data.lastBuild.status, "pending");
+    const dry = await run(["environment", "rebuild", "--environment-id", "env_1", "--dry-run"], auth(f));
+    assert.equal(dry.code, 10, dry.stderr);
+    assert.equal(f.requests.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("environment logs reads once, or follows the build every 2 s from its offset until it ends", async () => {
+  const f = await buildHost();
+  try {
+    const once = await run(["environment", "logs", "--environment-id", "env_1"], auth(f));
+    assert.equal(once.code, 0, once.stderr);
+    assert.equal(f.requests[0].url, "/prefix/v1/environments/env_1/log?offset=0");
+    assert.deepEqual(once.data().data, {
+      build: { id: "envb_2", status: "running", createdAt: "2026-10-26T00:00:00Z", startedAt: null, finishedAt: null, errorCode: null, errorMessage: null },
+      finished: false, text: "==> Pulling the Base Image\n", offset: 0, nextOffset: 27, truncated: false,
+    });
+    const started = Date.now();
+    const follow = await run(["environment", "logs", "--environment-id", "env_1", "--follow"], auth(f));
+    assert.equal(follow.code, 0, follow.stderr);
+    assert.ok(Date.now() - started >= 1900, "polls every 2 s");
+    assert.deepEqual(f.requests.slice(1).map((x) => x.url), [
+      "/prefix/v1/environments/env_1/log?offset=0",
+      "/prefix/v1/environments/env_1/log?build_id=envb_2&offset=27",
+    ]);
+    const lines = follow.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(lines.map((line) => [line.kind, line.offset, line.text]), [
+      ["log", 0, "==> Pulling the Base Image\n"],
+      ["log", 27, "[oma] init script failed at line 2: false (exit status 1)\n"],
+      ["result", undefined, undefined],
+    ]);
+    assert.deepEqual(lines[2].data.build, { id: "envb_2", status: "failed", createdAt: "2026-10-26T00:00:00Z", startedAt: null, finishedAt: null,
+      errorCode: "environment_build_script_failed", errorMessage: "The init script failed at line 2" });
+    const raw = await run(["environment", "logs", "--environment-id", "env_1", "--build-id", "envb_2", "--follow", "--raw"], auth(f));
+    assert.equal(raw.code, 0, raw.stderr);
+    assert.deepEqual(f.requests.slice(-2).map((x) => x.url), [
+      "/prefix/v1/environments/env_1/log?build_id=envb_2&offset=0",
+      "/prefix/v1/environments/env_1/log?build_id=envb_2&offset=27",
+    ]);
+    assert.equal(raw.stdout, "==> Pulling the Base Image\n[oma] init script failed at line 2: false (exit status 1)\n");
+    for (const args of [["--follow", "--field", "text"], ["--follow", "--format", "table"]]) {
+      const bad = await run(["environment", "logs", "--environment-id", "env_1", ...args], auth(f));
+      assert.equal(bad.code, 2, bad.stderr);
+    }
+  } finally {
+    await f.close();
+  }
+});

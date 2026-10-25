@@ -407,6 +407,14 @@ test("CLI defines Environments against the real Host: pending, copied, secrets n
     assert.equal(updated.lastBuild.id, env.lastBuild.id);
     const rebuilt = await call(["environment", "update", "--environment-id", env.id, "--base-image", "oma-media"]);
     assert.notEqual(rebuilt.lastBuild.id, env.lastBuild.id);
+    const again = await call(["environment", "rebuild", "--environment-id", env.id]);
+    assert.equal(again.status, "pending");
+    assert.notEqual(again.lastBuild.id, rebuilt.lastBuild.id);
+    const log = await call(["environment", "logs", "--environment-id", env.id]);
+    assert.deepEqual(log, { build: again.lastBuild, finished: false, text: "", offset: 0, nextOffset: 0, truncated: false });
+    const superseded = await call(["environment", "logs", "--environment-id", env.id, "--build-id", rebuilt.lastBuild.id, "--follow"]);
+    assert.deepEqual(superseded, { build: { ...rebuilt.lastBuild, status: "superseded", finishedAt: superseded.build.finishedAt }, finished: true, nextOffset: 0 });
+    assert.equal((await call(["environment", "rebuild", "--environment-id", "env_video_production"], 4)).subtype, "environment_read_only");
     assert.equal((await call(["environment", "update", "--environment-id", "env_video_production", "--name", "x"], 4)).subtype, "environment_read_only");
     assert.equal((await call(["environment", "create", "--name", "bad", "--base-image", "oma-base", "--env", "PATH=/x"], 2)).subtype, "environment_env_reserved");
     const copy = await call(["environment", "create", "--from", "env_video_production"]);

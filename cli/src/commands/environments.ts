@@ -1,8 +1,9 @@
-import { id, string, type Command, type Context, type Flag, type Values } from "../types.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { boolean, id, string, type Command, type Context, type Flag, type Result, type Values } from "../types.js";
 import { invalid } from "../errors.js";
 import { textInput } from "../input.js";
 import { pick } from "../http.js";
-import { base, plan, write } from "./common.js";
+import { base, enc, plan, write } from "./common.js";
 
 type Variable = { name: string; value?: string; secretRef?: { source: string; key: string } };
 
@@ -122,6 +123,39 @@ async function save(c: Context, action: "create" | "update"): Promise<{ data: un
   return write(c, step);
 }
 
+/** How often `environment logs --follow` polls; the image builder writes the log about as often. */
+export const LOG_POLL_MS = 2_000;
+
+type LogPage = { build: Values; finished: boolean; text: string; offset: number; nextOffset: number; truncated: boolean };
+
+/** One read of a build's log; `follow` polls from `nextOffset` until the build ends. */
+async function logs(c: Context): Promise<Result> {
+  const read = (buildId: string | undefined, offset: number): Promise<LogPage> =>
+    c.http.request(`${base(c, "environment")}/log?${buildId ? `build_id=${enc(buildId)}&` : ""}offset=${offset}`);
+  let page = await read(c.flags["build-id"], 0);
+  if (!c.flags.follow) return { data: page, raw: page.text };
+  const emit = (current: LogPage) => {
+    if (c.flags.raw) {
+      if (current.truncated) process.stderr.write("[oma-cli] The build log keeps its last 1 MiB; earlier output was dropped.\n");
+      if (current.text) c.write(current.text);
+      return;
+    }
+    if (current.text || current.truncated) {
+      c.write(JSON.stringify({ kind: "log", buildId: current.build.id, offset: current.offset, truncated: current.truncated, text: current.text }) + "\n");
+    }
+  };
+  emit(page);
+  // The Host reads the status before the log, so the page that says finished holds the whole log.
+  while (!page.finished) {
+    await sleep(LOG_POLL_MS, undefined, { signal: c.signal }).catch(() => c.signal.throwIfAborted());
+    page = await read(page.build.id, page.nextOffset);
+    emit(page);
+  }
+  const data = { build: page.build, finished: true, nextOffset: page.nextOffset };
+  if (!c.flags.raw) c.write(JSON.stringify({ kind: "result", ok: true, command: c.command.path, data, meta: {} }) + "\n");
+  return { data: null, silent: true };
+}
+
 export const environments: Command[] = [
   {
     path: "environment list",
@@ -171,6 +205,37 @@ export const environments: Command[] = [
     },
     run: (c) => save(c, action),
   })),
+  {
+    path: "environment rebuild",
+    description: "Build the Environment's current Base Image and init script again; Sandboxes keep its image until the build succeeds",
+    flags: id("environment"),
+    write: true,
+    effects: "Queues a build of the Environment and supersedes its unfinished one",
+    api: ["POST /v1/environments/{id}/build"],
+    examples: ["oma-cli environment rebuild --environment-id example-id && oma-cli environment logs --environment-id example-id --follow"],
+    run: (c) => write(c, { method: "POST", path: `${base(c, "environment")}/build` }),
+  },
+  {
+    path: "environment logs",
+    description: "Read an Environment Build's log, the latest build unless --build-id; --follow prints it as it grows (every 2 s) until the build ends",
+    flags: {
+      ...id("environment"),
+      "build-id": string("One of the Environment's builds; default its latest"),
+      follow: boolean("Poll every 2 s until the build has ended"),
+      raw: boolean("Only the log text, without the envelope"),
+    },
+    api: ["GET /v1/environments/{id}/log"],
+    output: "data: build, finished, text, offset, nextOffset, truncated. --follow: NDJSON {kind:log,text,…} lines, then {kind:result,data:{build}}; with --raw only the text",
+    examples: [
+      "oma-cli environment logs --environment-id example-id --follow --raw",
+      "oma-cli environment logs --environment-id example-id --build-id envb_example --field build.errorMessage",
+    ],
+    validate: (f) => {
+      if (f.follow && f.field) invalid("--follow streams NDJSON or --raw text; it does not take --field", "--field");
+      if (f.follow && f.format && f.format !== "ndjson") invalid("--follow streams NDJSON or --raw text", "--format");
+    },
+    run: logs,
+  },
   {
     path: "environment delete",
     description: "Delete your Environment; Sandboxes already using its image keep it. Built-ins cannot be deleted.",

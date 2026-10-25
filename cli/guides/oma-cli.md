@@ -164,6 +164,8 @@ oma-cli environment create --from env_video_production --name video
 oma-cli environment get --environment-id env-example
 oma-cli environment update --environment-id env-example --env FOO=bar --unset OLD
 oma-cli environment update --environment-id env-example --init-script @init.sh
+oma-cli environment logs --environment-id env-example --follow --raw
+oma-cli environment rebuild --environment-id env-example
 oma-cli environment delete --environment-id env-example --yes
 oma-cli agent update --agent-id agent-example --environment env-example
 oma-cli agent update --agent-id agent-example --no-environment
@@ -197,6 +199,20 @@ secrets and the platform secrets of a built-in, which no other way provides.
 The platform reserves names it injects or a command's shell needs (HOME, PATH,
 USER, SHELL, PWD, the Workspace variables, OMA_*, E2B_*, ENVD_*, BASH_*) and
 provides PIP_INDEX_URL and NPM_CONFIG_REGISTRY defaults, which you may override.
+
+The image builder builds each pending Environment (status building), checks
+the image in a Sandbox and only then makes it ready; a failed build leaves
+status failed and keeps the previous image serving. `environment logs` reads
+the latest build's log (`--build-id` another): `data.build` has its status and
+`errorMessage`, `text` the log from `offset`, `nextOffset` where to continue.
+`--follow` polls every 2 s until the build has ended, streaming NDJSON
+`{"kind":"log",…,"text"}` lines and a final `{"kind":"result","data":{"build"}}`,
+or only the text with `--raw`; a script failure's line is in the log and in
+`errorMessage`. A build keeps its last 1 MiB of log (`truncated` when earlier
+output was dropped). `environment rebuild` builds the current definition again
+(built-ins are rebuilt by the platform), superseding an unfinished build, as a
+new init script or Base Image does. A build times out after 60 minutes; a
+script failure is final, an infrastructure failure is retried twice.
 
 The init script runs once per build as root in /home/user with bash -euo
 pipefail; it can use apt-get, pip and npm (pointed at Aliyun mirrors) and sees
