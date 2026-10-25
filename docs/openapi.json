@@ -898,7 +898,7 @@
               "null"
             ],
             "minLength": 1,
-            "description": "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in."
+            "description": "Bind an Environment that serves an image, whatever a rebuild in progress or a failed one (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it has never built successfully). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production under the same rule; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Existing Sessions keep the Environment they were created in."
           }
         },
         "required": [
@@ -995,7 +995,7 @@
               "null"
             ],
             "minLength": 1,
-            "description": "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in."
+            "description": "Bind an Environment that serves an image, whatever a rebuild in progress or a failed one (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it has never built successfully). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production under the same rule; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Existing Sessions keep the Environment they were created in."
           }
         }
       },
@@ -1241,7 +1241,7 @@
           "id",
           "name"
         ],
-        "description": "Null: the Session runs in no Environment; its Sandboxes run the Host's configured image."
+        "description": "Null only for a Session created while its Agent ran without a Sandbox; a Sandbox it needs later runs in its Agent's Environment."
       },
       "AgentFileList": {
         "type": "object",
@@ -5675,7 +5675,7 @@
             }
           },
           "409": {
-            "description": "The Environment is not ready (environment_not_ready)",
+            "description": "The Environment, or the default video-production, has never built successfully (environment_not_ready)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5986,7 +5986,7 @@
             }
           },
           "409": {
-            "description": "The Environment is not ready (environment_not_ready)",
+            "description": "The Environment, or the default video-production, has never built successfully (environment_not_ready)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9629,7 +9629,7 @@
                   "environmentId": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "A ready Environment to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too."
+                    "description": "An Environment that serves an image to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too."
                   },
                   "environment_id": {
                     "type": "string",
@@ -9696,7 +9696,7 @@
             }
           },
           "409": {
-            "description": "Workspace has been deleted, or the Environment is not ready (environment_not_ready)",
+            "description": "Workspace has been deleted, or the Environment has never built successfully (environment_not_ready)",
             "content": {
               "application/json": {
                 "schema": {

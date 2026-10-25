@@ -79,6 +79,19 @@ await stores.environmentStore.create({
   encryptedSecrets: {},
 });
 await stores.environmentStore.buildNow("env_cli_tools", "registry.example/welltop/oma-environments@sha256:" + "d".repeat(64));
+// The default new Sandboxed Agents run in: built, as the image builder leaves it.
+await stores.environmentStore.buildNow("env_video_production", "registry.example/welltop/oma-environments@sha256:" + "e".repeat(64));
+// One that never built: it can be bound to nothing.
+await stores.environmentStore.create({
+  id: "env_cli_unbuilt",
+  owner: { ownerType: "tenant", tenantId: "dev" },
+  name: "cli-unbuilt",
+  description: "",
+  baseImage: "oma-base",
+  initScript: "false\n",
+  env: [],
+  encryptedSecrets: {},
+});
 const app = createApp({
   ...stores,
   eventStreamHub: hub,

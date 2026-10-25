@@ -45,18 +45,20 @@ const sandboxed = (sandbox: unknown) => (sandbox as { enabled?: unknown } | unde
  * A Sandboxed Agent always has one: naming none binds the default,
  * video-production. Without `environments` none can be bound.
  */
-export function agentRoutes(agentStore: AgentStore, environments?: Pick<EnvironmentService, "ready" | "defaultFor">): OpenAPIHono<Env> {
+export function agentRoutes(agentStore: AgentStore, environments?: Pick<EnvironmentService, "bindable" | "defaultFor">): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
   /**
-   * The Environment an Agent is bound to by a write that sends
-   * `requested` (undefined when it sends none): a ready one the Tenant can
-   * see; `current`, the Agent's binding, kept as it is whatever it is
-   * building, so an edit that resends it binds nothing new; the default for a
-   * Sandboxed Agent that has none; null (an Agent without a Sandbox only)
+   * The Environment an Agent is bound to by a write that sends `requested`
+   * (undefined when it sends none). Every binding, a resent one too, must
+   * serve an image (`EnvironmentService.bindable`). A Sandboxed Agent that
+   * has none gets the default; null (an Agent without a Sandbox only)
    * unbinds. Undefined: no change.
    */
   const binding = async (tenantId: string, requested: unknown, inSandbox: boolean, current?: string): Promise<string | null | undefined> => {
-    if (requested === undefined) return inSandbox && !current ? await environments?.defaultFor(tenantId) : undefined;
+    if (requested === undefined) {
+      if (!inSandbox || current || !environments) return undefined;
+      return environments.defaultFor(tenantId);
+    }
     if (requested === null) {
       if (inSandbox) throw new EnvironmentError(400, "environment_required", "A Sandboxed Agent runs in an Environment: name one, or send none for video-production");
       return null;
@@ -64,9 +66,8 @@ export function agentRoutes(agentStore: AgentStore, environments?: Pick<Environm
     if (typeof requested !== "string" || !requested) {
       throw new EnvironmentError(400, "validation_error", "environmentId must be an Environment id or null");
     }
-    if (requested === current) return requested;
     if (!environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
-    return (await environments.ready(tenantId, requested)).id;
+    return (await environments.bindable(tenantId, requested)).id;
   };
 
   // POST /v1/agents — Create agent

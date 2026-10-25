@@ -64,7 +64,7 @@ export interface Agent {
   /**
    * The Environment (ADR-0024) a new Session of the Agent runs in unless it
    * names another. Every Sandboxed Agent has one (`video-production` unless
-   * it names another); only a ready one can be bound.
+   * it names another); only one that serves an image can be bound.
    */
   environmentId?: string;
   createdAt: Date;

@@ -31,7 +31,7 @@ export interface SessionRouteDeps {
   /** The Sandbox bindings; without them a Session is returned without its Sandbox state. */
   sandboxes?: Pick<DelegationStore, "sandbox">;
   /** Environments (ADR-0024): a Session is created in one and shows it. Without them none can be chosen. */
-  environments?: Pick<EnvironmentService, "ready" | "ofSessions">;
+  environments?: Pick<EnvironmentService, "bindable" | "ofSessions">;
 }
 
 /** The documented SessionSandbox shape. */
@@ -126,10 +126,10 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       return c.json({ error: "Agent not found" }, 404);
     }
     // The Session freezes its Environment now (ADR-0024): the one named, which
-    // must be ready, otherwise its Agent's, whatever that is building.
+    // must serve an image, otherwise its Agent's.
     if (environmentIdInput !== undefined) {
       if (!deps.environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
-      await deps.environments.ready(tenant.tenantId, environmentIdInput);
+      await deps.environments.bindable(tenant.tenantId, environmentIdInput);
     }
     const environmentId = environmentIdInput ?? agent.environmentId;
 

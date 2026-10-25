@@ -15,6 +15,7 @@ import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
 import { SandboxEnvironmentResolver } from "./lib/environments.js";
+import { PlatformSecrets } from "./lib/platform-secrets.js";
 
 export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
@@ -26,8 +27,10 @@ export async function startExecution(deps: PgStores & {
     setGlobalDispatcher(new ProxyAgent(proxyUrl));
   }
   const workspaceConfig = deps.local ? undefined : workspaceConfigFromEnv(process.env);
-  // The platform values Environments' platform secret references resolve to (ADR-0024).
-  const platformSecrets = deps.local ? {} : await sandboxBaseEnvFromKubernetes(process.env);
+  // The platform values Environments' platform secret references resolve to
+  // (ADR-0024), refreshed every minute so a rotation needs no restart.
+  const platformSecrets = deps.local ? PlatformSecrets.of({}) : await PlatformSecrets.load(() => sandboxBaseEnvFromKubernetes(process.env));
+  platformSecrets.start(Number(process.env.PLATFORM_SECRETS_REFRESH_MS ?? 60_000));
   const modelProviders = new ModelProviderService(deps.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
   const piAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviders.configureRuntime(deps.sessionStore) });
   // The packaged mock emits model spans and text chunks; lifecycle events stay
@@ -92,5 +95,5 @@ export async function startExecution(deps: PgStores & {
     environment: native.environment, sandboxSignals: native.hints,
   }) : undefined;
   sweeper?.start();
-  return { router, ready: () => dispatch.ready, stop: async () => { await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };
+  return { router, ready: () => dispatch.ready, stop: async () => { platformSecrets.stop(); await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };
 }

@@ -30,8 +30,9 @@ a Base Image (`oma-base`, or `oma-media` with FFmpeg), an init script
 per build as root in /home/user and may use apt-get, pip and npm. Sandbox
 commands start as login shells, so export a variable every command should
 inherit from `/etc/profile.d/<name>.sh` as `export FOO="${FOO:-value}"`.
-`oma-cli agent create|update --environment <id>` binds a ready Environment an
-Agent's new Sessions run in (a new Agent defaults to `env_video_production`);
+`oma-cli agent create|update --environment <id>` binds the Environment an
+Agent's new Sessions run in, one that has built (a new Agent defaults to
+`env_video_production`);
 `session create --environment <id>` overrides it for one Session.
 `environment logs --follow` prints the build log every 2 s until the build
 ends; `environment rebuild` builds the current definition again. See the

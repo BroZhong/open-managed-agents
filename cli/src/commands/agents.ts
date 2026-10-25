@@ -39,7 +39,7 @@ const config: Record<string, Flag> = {
 const configFlags = Object.fromEntries(
   Object.entries(config).map(([k, v]) => [k, { ...v, field: k }]),
 );
-/** The ready Environment an Agent's new Sessions run in; a new Agent that names none runs in env_video_production. */
+/** The Environment an Agent's new Sessions run in (one that serves an image); a new Agent that names none runs in env_video_production. */
 const environmentFields: Record<string, Flag> = {
   environmentId: string("Environment ID"),
 };
@@ -56,8 +56,8 @@ for (const action of ["create", "update"] as const)
       }),
       environment: string(
         action === "create"
-          ? "Ready Environment ID new Sessions run in (default env_video_production)"
-          : "Ready Environment ID new Sessions run in",
+          ? "Environment ID new Sessions run in, one that has built (default env_video_production)"
+          : "Environment ID new Sessions run in, one that has built",
         { field: "environmentId" },
       ),
     },

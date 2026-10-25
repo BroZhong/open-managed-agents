@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, EMPTY_SKILL_SET, PLATFORM_DEFAULT_ENV, WORKSPACE_ENV } from "@oma-server/sandbox";
 import { EnvironmentService, SandboxEnvironmentResolver } from "../src/lib/environments.js";
+import { PlatformSecrets } from "../src/lib/platform-secrets.js";
 
 const KEY = "cd".repeat(32);
 const CANARY = "sk-canary-" + "a1b2".repeat(8);
@@ -14,7 +15,7 @@ const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvNa
  * resolved at injection, as an Environment created and edited through the
  * API leaves them.
  */
-async function setup(platform: Record<string, string> = { VFS_TOKEN: "platform-vfs" }) {
+async function setup(platform: Pick<PlatformSecrets, "values" | "generation"> = PlatformSecrets.of({ VFS_TOKEN: "platform-vfs" })) {
   const stores = createMemoryStores();
   const service = new EnvironmentService(stores.environmentStore, KEY);
   await stores.environmentStore.create({
@@ -52,12 +53,30 @@ describe("SandboxEnvironmentResolver", () => {
     expect(await resolver.image("t2", "env_video_production")).toBe(IMAGE);
   });
 
+  it("resolves platform references from the values as last refreshed, and reports a missing one again after each refresh", async () => {
+    let values: Record<string, string> = { VFS_TOKEN: "first" };
+    const platform = await PlatformSecrets.load(async () => values);
+    const { service, resolver, warn } = await setup(platform);
+    const copy = await service.create("t1", { from: "env_video_production", name: "mine" });
+    expect(await resolver.variables("t1", copy.id)).toEqual({ VFS_TOKEN: "first" });
+    await resolver.variables("t1", copy.id);
+    expect(warn).toHaveBeenCalledOnce();
+    // Rotated: the next command gets the new value; the missing reference is logged once more.
+    values = { VFS_TOKEN: "rotated" };
+    await platform.refresh();
+    expect(await resolver.variables("t1", copy.id)).toEqual({ VFS_TOKEN: "rotated" });
+    await resolver.variables("t1", copy.id);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls.every(([line]) => String(line).includes("GEMINI_API_KEY refers to platform secret GEMINI_API_KEY"))).toBe(true);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/first|rotated/);
+  });
+
   it("refuses to open Tenant secrets without the key they were sealed under", async () => {
     const { stores, service } = await setup();
     const env = await service.create("t1", { name: "secret", baseImage: "oma-base",
       env: [{ name: "API_TOKEN", secretRef: { source: "environment", key: "API_TOKEN" }, value: CANARY }] });
-    await expect(new SandboxEnvironmentResolver(stores.environmentStore, "ef".repeat(32), {}).variables("t1", env.id)).rejects.toThrow();
-    await expect(new SandboxEnvironmentResolver(stores.environmentStore, undefined, {}).variables("t1", env.id)).rejects.toThrow("OMA_PROVIDER_ENCRYPTION_KEY");
+    await expect(new SandboxEnvironmentResolver(stores.environmentStore, "ef".repeat(32), PlatformSecrets.of({})).variables("t1", env.id)).rejects.toThrow();
+    await expect(new SandboxEnvironmentResolver(stores.environmentStore, undefined, PlatformSecrets.of({})).variables("t1", env.id)).rejects.toThrow("OMA_PROVIDER_ENCRYPTION_KEY");
   });
 });
 

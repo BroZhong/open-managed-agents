@@ -272,7 +272,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       201: jsonResponse(AgentSchema, "Agent created"),
       400: errorResponse("Invalid Agent configuration, a removed sandbox field (sandbox_image_removed, sandbox_env_removed), or no Environment for a Sandboxed Agent (environment_required)"),
       404: errorResponse("Environment not found (environment_not_found)"),
-      409: errorResponse("The Environment is not ready (environment_not_ready)"),
+      409: errorResponse("The Environment, or the default video-production, has never built successfully (environment_not_ready)"),
     },
   }),
   protectedRoute({
@@ -322,7 +322,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       200: jsonResponse(AgentSchema, "Agent updated"),
       400: errorResponse("Invalid Agent configuration, a removed sandbox field (sandbox_image_removed, sandbox_env_removed), or no Environment for a Sandboxed Agent (environment_required)"),
       404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
-      409: errorResponse("The Environment is not ready (environment_not_ready)"),
+      409: errorResponse("The Environment, or the default video-production, has never built successfully (environment_not_ready)"),
     },
   }),
   protectedRoute({
@@ -992,7 +992,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
             .string({ error: "environmentId must be an Environment id" })
             .min(1, { error: "environmentId must be an Environment id" })
             .optional()
-            .openapi({ description: "A ready Environment to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too." }),
+            .openapi({ description: "An Environment that serves an image to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too." }),
           environment_id: z
             .string({ error: "environmentId must be an Environment id" })
             .min(1, { error: "environmentId must be an Environment id" })
@@ -1004,7 +1004,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       201: jsonResponse(SessionSchema, "Session created"),
       400: errorResponse("Invalid Session input"),
-      409: errorResponse("Workspace has been deleted, or the Environment is not ready (environment_not_ready)"),
+      409: errorResponse("Workspace has been deleted, or the Environment has never built successfully (environment_not_ready)"),
       404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
     },
   }),

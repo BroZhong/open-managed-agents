@@ -134,7 +134,7 @@ export const CreateAgentInputSchema = z
       .nullable()
       .optional()
       .openapi({
-        description: "Bind a ready Environment (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it is not ready). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Resending the Agent's current Environment keeps it, whatever it is building. Existing Sessions keep the Environment they were created in.",
+        description: "Bind an Environment that serves an image, whatever a rebuild in progress or a failed one (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it has never built successfully). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production under the same rule; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Existing Sessions keep the Environment they were created in.",
       }),
   })
   .openapi("CreateAgentInput");
@@ -348,7 +348,7 @@ export const SessionSchema = z
     title: z.string().optional(),
     agent: AgentSchema,
     workspaceId: z.string(),
-    environment: SessionEnvironmentSchema.nullable().openapi({ description: "Null: the Session runs in no Environment; its Sandboxes run the Host's configured image." }),
+    environment: SessionEnvironmentSchema.nullable().openapi({ description: "Null only for a Session created while its Agent ran without a Sandbox; a Sandbox it needs later runs in its Agent's Environment." }),
     loopId: z.string().optional(),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,

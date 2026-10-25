@@ -12,7 +12,7 @@ const agentBody = { name: "Bound", model: "m", system: "s", runtime: "pi-agent" 
  * resource" and "Starting a Sandbox"), through the API: a built-in and a
  * Tenant Environment that are ready, and one still pending its first build.
  */
-async function setup() {
+async function setup(options: { builtInImage?: boolean } = {}) {
   const stores = createMemoryStores();
   const environments = new EnvironmentService(stores.environmentStore, KEY, {
     inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
@@ -44,7 +44,7 @@ async function setup() {
     if (ready) await stores.environmentStore.buildNow(env.id, IMAGE);
     return env;
   };
-  const builtIn = await environment("platform", "video-production");
+  const builtIn = await environment("platform", "video-production", options.builtInImage !== false);
   const own = await environment("t1", "tools");
   const pending = await environment("t1", "unbuilt", false);
   const foreign = await environment("t2", "theirs");
@@ -113,6 +113,40 @@ describe("Agents bound to an Environment (ADR-0024)", () => {
     expect(await call("DELETE", `/v1/environments/${own.id}`)).toMatchObject({ status: 200 });
     expect(await call("POST", `/v1/agents/${agent.id}`, { environmentId: own.id })).toMatchObject({ status: 404, body: { code: "environment_not_found" } });
     expect((await call("GET", `/v1/agents/${agent.id}`)).body).toMatchObject({ environmentId: "env_video_production" });
+  });
+
+  it("binds and runs Sessions in an Environment that serves an image whatever its rebuild: building, or failed (ADR-0024)", async () => {
+    const { stores, call, own } = await setup();
+    // A rebuild is queued, then one fails: the Environment keeps serving its image.
+    expect(await call("POST", `/v1/environments/${own.id}`, { initScript: "apt-get install -y jq\n" })).toMatchObject({ body: { status: "pending" } });
+    const agent = await call("POST", "/v1/agents", { ...agentBody, environmentId: own.id });
+    expect(agent).toMatchObject({ status: 201, body: { environmentId: own.id } });
+    for (let claimed; (claimed = await stores.environmentStore.claimBuild("builder", 60_000));) {
+      if (claimed.build.environmentId === own.id) {
+        expect(await stores.environmentStore.failBuild(claimed.lease, { code: "script_failed", message: "exit 1" })).toBe(true);
+        break;
+      }
+    }
+    expect((await call("GET", `/v1/environments/${own.id}`)).body).toMatchObject({ status: "failed", image: IMAGE });
+    expect(await call("POST", "/v1/sessions", { agent: agent.body.id, environmentId: own.id })).toMatchObject({ status: 201, body: { environment: { id: own.id } } });
+    expect(await call("POST", `/v1/agents/${agent.body.id}`, { name: "Again", environmentId: own.id })).toMatchObject({ status: 200 });
+  });
+
+  it("refuses to save a Sandboxed Agent without an Environment when video-production serves no image or does not exist", async () => {
+    const { stores, call, builtIn } = await setup();
+    await stores.environmentStore.update({ ownerType: "platform" }, builtIn.id, { initScript: "true\n# changed\n" });
+    // Still serving its image while it rebuilds: the default binds.
+    expect(await call("POST", "/v1/agents", agentBody)).toMatchObject({ status: 201, body: { environmentId: builtIn.id } });
+    await stores.environmentStore.delete({ ownerType: "platform" }, builtIn.id);
+    expect(await call("POST", "/v1/agents", agentBody)).toMatchObject({ status: 409, body: { code: "environment_not_ready" } });
+    // An Agent without a Sandbox needs none.
+    expect(await call("POST", "/v1/agents", { ...agentBody, sandbox: { enabled: false } })).toMatchObject({ status: 201 });
+  });
+
+  it("refuses a built-in default that never built", async () => {
+    const { stores, call } = await setup({ builtInImage: false });
+    expect((await stores.environmentStore.get("t1", "env_video_production"))?.image).toBeNull();
+    expect(await call("POST", "/v1/agents", agentBody)).toMatchObject({ status: 409, body: { code: "environment_not_ready" } });
   });
 
   it("keeps an Agent's Environment while it rebuilds: an edit that resends it is not a new binding", async () => {

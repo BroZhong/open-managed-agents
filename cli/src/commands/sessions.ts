@@ -78,7 +78,7 @@ export const sessions: Command[] = [
       "workspace-name": string("New Workspace name", {
         field: "workspace_name",
       }),
-      environment: string("Ready Environment ID instead of the Agent's", {
+      environment: string("Environment ID instead of the Agent's, one that has built", {
         field: "environmentId",
       }),
     },

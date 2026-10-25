@@ -18,6 +18,7 @@ import {
 import { ENVIRONMENT_VARIABLE_NAME, isReservedEnvironmentVariable, type SandboxEnvironments } from "@oma-server/sandbox";
 import { SecretBox, sealedPlaintextBytes } from "./secret-box.js";
 import { publicSession } from "./public-projection.js";
+import type { PlatformSecrets } from "./platform-secrets.js";
 
 /** Bytes, not characters: the limits bound what the builder and Sandboxes receive. */
 export const ENVIRONMENT_ENV_MAX_BYTES = 32 * 1024;
@@ -90,18 +91,19 @@ export function environmentSecretScope(env: Pick<Environment, "id" | "tenantId">
  * Environment as it is now, by primary key: an edit made on an API pod
  * reaches every Runner's next command. Variables are resolved only here, at
  * injection: Tenant secrets opened with the key they were sealed under,
- * platform secret references from the deployment's platform values (the
- * base Secret the Runner loads at startup). A reference the deployment does
- * not provide is left out, and reported once by name.
+ * platform secret references from the platform values as last refreshed. A
+ * reference the deployment does not provide is left out, and logged by name
+ * once per refresh of the platform values.
  */
 export class SandboxEnvironmentResolver implements SandboxEnvironments {
   private readonly secrets: SecretBox;
-  private readonly reported = new Set<string>();
+  private reported = new Set<string>();
+  private reportedGeneration = -1;
 
   constructor(
     private readonly store: Pick<EnvironmentStore, "getForSandbox">,
     encryptionKey: string | undefined,
-    private readonly platformSecrets: Readonly<Record<string, string>>,
+    private readonly platformSecrets: Pick<PlatformSecrets, "values" | "generation">,
     private readonly logger: Pick<Console, "warn"> = console,
   ) {
     this.secrets = new SecretBox(encryptionKey, () => new Error("Environment secrets require OMA_PROVIDER_ENCRYPTION_KEY (32 bytes encoded as hex)."));
@@ -122,7 +124,8 @@ export class SandboxEnvironmentResolver implements SandboxEnvironments {
       if (!("secretRef" in variable)) { resolved[variable.name] = variable.value; continue; }
       const { source, key } = variable.secretRef;
       if (source === "platform") {
-        if (Object.hasOwn(this.platformSecrets, key)) resolved[variable.name] = this.platformSecrets[key]!;
+        const platform = this.platformSecrets.values();
+        if (Object.hasOwn(platform, key)) resolved[variable.name] = platform[key]!;
         else this.report(env.id, `${variable.name} refers to platform secret ${key}, which this deployment does not provide`);
         continue;
       }
@@ -133,8 +136,13 @@ export class SandboxEnvironmentResolver implements SandboxEnvironments {
     return resolved;
   }
 
-  /** Names only, once per Environment and variable: commands run without it. */
+  /** Names only, once per Environment, variable and refresh of the platform values: commands run without it. */
   private report(environmentId: string, problem: string): void {
+    const generation = this.platformSecrets.generation();
+    if (generation !== this.reportedGeneration) {
+      this.reported = new Set();
+      this.reportedGeneration = generation;
+    }
     const key = `${environmentId}:${problem}`;
     if (this.reported.has(key)) return;
     this.reported.add(key);
@@ -190,25 +198,30 @@ export class EnvironmentService {
 
   /**
    * The Environment an Agent is bound to or a Session created in (ADR-0024):
-   * one the Tenant can see (404 `environment_not_found`) that is ready (409
-   * `environment_not_ready`).
+   * one the Tenant can see (404 `environment_not_found`) that serves an image,
+   * whatever a rebuild in progress or a failed one (409
+   * `environment_not_ready`: it never built successfully).
    */
-  async ready(tenantId: string, id: string): Promise<Environment> {
+  async bindable(tenantId: string, id: string): Promise<Environment> {
     const env = await this.visible(tenantId, id);
-    if (env.status !== "ready") {
+    if (env.image === null) {
       throw new EnvironmentError(409, "environment_not_ready",
-        `Environment ${env.name} is ${env.status}; only a ready Environment can be bound to an Agent or chosen for a Session.`);
+        `Environment ${env.name} has never built successfully (${env.status}); it can be bound once a build has produced its image.`);
     }
     return env;
   }
 
   /**
    * The Environment a Sandboxed Agent that names none is bound to
-   * (ADR-0024): the built-in video-production, ready or still building;
-   * undefined on a Host that does not have it.
+   * (ADR-0024): the built-in video-production, under the same rule.
    */
-  async defaultFor(tenantId: string): Promise<string | undefined> {
-    return (await this.store.get(tenantId, DEFAULT_ENVIRONMENT_ID))?.id;
+  async defaultFor(tenantId: string): Promise<string> {
+    return (await this.bindable(tenantId, DEFAULT_ENVIRONMENT_ID).catch((error: unknown) => {
+      if (error instanceof EnvironmentError && error.code === "environment_not_found") {
+        throw new EnvironmentError(409, "environment_not_ready", "The built-in video-production Environment is not available yet; name another Environment or retry once it has built.");
+      }
+      throw error;
+    })).id;
   }
 
   /**

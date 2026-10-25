@@ -174,9 +174,10 @@ oma-cli session create --agent-id agent-example --environment env_video_producti
 An Agent runs its new Sessions in its Environment: `--environment` binds one,
 and a new Agent that names none runs in the built-in `env_video_production`.
 An Agent's Sandbox image and variables are its Environment's; there is no
-Agent-level image or variable. Only a ready Environment can be
-bound or passed to `session create --environment`, which overrides the
-Agent's for that Session (exit 5, `environment_not_ready`, otherwise). A
+Agent-level image or variable. Only an Environment that serves an image
+(whatever a rebuild in progress or a failed one) can be bound or passed to
+`session create --environment`, which overrides the Agent's for that Session
+(exit 5, `environment_not_ready`, when it never built successfully). A
 Session keeps the Environment it was created with for its lifetime, as its
 Child Sessions do; `session get` and `session list` show it as
 `environment: {id, name}`. After a rebuild, new Sandboxes run the new image
