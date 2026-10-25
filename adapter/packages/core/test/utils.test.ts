@@ -140,6 +140,24 @@ describe("isSpanEvent", () => {
     expect(isSpanEvent(end)).toBe(true);
   });
 
+  it("returns true for the Host's Sandbox preparation spans", () => {
+    const start: SessionEvent = {
+      id: "sevt_abc",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      type: "span.sandbox_prepare_start",
+      prepareId: "1.1",
+    };
+    const end: SessionEvent = {
+      ...start,
+      type: "span.sandbox_prepare_end",
+      outcome: "failed",
+      durationMs: 1200,
+      code: "sandbox_unavailable",
+    };
+    expect(isSpanEvent(start)).toBe(true);
+    expect(isSpanEvent(end)).toBe(true);
+  });
+
   it("returns false for non-span events", () => {
     const event: SessionEvent = {
       id: "sevt_abc",

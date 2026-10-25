@@ -42,10 +42,11 @@ describe.skipIf(!url)("RedisSessionSignals on a real Redis", () => {
     runner.publish({ sessionId: "s", kind: "chunk", chunk: { type: "agent.message_chunk", data: { text: "a" }, deltaId: "1-0" } });
     api.publish({ sessionId: "s", kind: "check" });
     runner.publish({ sessionId: "s", kind: "durable" });
-    await until(() => controls.length === 2 && outputs.length === 2);
+    runner.publish({ sessionId: "binding", kind: "environment" });
+    await until(() => controls.length === 3 && outputs.length === 2);
     await new Promise(r => setTimeout(r, 50)); // and nothing else arrives
 
-    expect(controls.map(s => s.kind)).toEqual(["wake", "check"]);
+    expect(controls.map(s => s.kind)).toEqual(["wake", "check", "environment"]);
     expect(outputs).toEqual([
       { sessionId: "s", kind: "chunk", chunk: { type: "agent.message_chunk", data: { text: "a" }, deltaId: "1-0" } },
       { sessionId: "s", kind: "durable" },

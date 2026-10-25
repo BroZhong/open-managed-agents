@@ -5,9 +5,10 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 
 test("database migrations have unique ordered prefixes", () => {
-  const names = readdirSync(new URL("deploy/migrations/", root))
-    .filter((name) => name.endsWith(".sql"))
-    .sort();
+  const files = readdirSync(new URL("deploy/migrations/", root)).filter((name) => name.endsWith(".sql"));
+  // A rollback sits next to the migration it undoes: <migration>.rollback.sql.
+  const rollbacks = files.filter((name) => name.endsWith(".rollback.sql"));
+  const names = files.filter((name) => !rollbacks.includes(name)).sort();
   const prefixes = names.map((name) => {
     const match = /^(\d{4})_[a-z0-9_]+\.sql$/.exec(name);
     assert.ok(match, `migration filename is not canonical: ${name}`);
@@ -15,6 +16,9 @@ test("database migrations have unique ordered prefixes", () => {
   });
 
   assert.equal(new Set(prefixes).size, prefixes.length, `duplicate migration prefix: ${names.join(", ")}`);
+  for (const rollback of rollbacks) {
+    assert.ok(names.includes(rollback.replace(/\.rollback\.sql$/, ".sql")), `rollback without its migration: ${rollback}`);
+  }
 });
 
 test("the public API prefix bypasses the Web SPA fallback", () => {

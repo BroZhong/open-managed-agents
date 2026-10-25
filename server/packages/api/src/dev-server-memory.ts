@@ -37,9 +37,9 @@ async function main() {
 
   // In-memory development has no real OSS mount. Use the full server with
   // Workspace OSS configuration to exercise sandbox-backed execution.
-  // Keep Host env translation identical to the full server even though the
-  // in-memory entrypoint has no real SandboxManager.
-  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
+  // Keep Host env validation identical to the full server even though the
+  // in-memory entrypoint has no Sandbox to hand the policy to.
+  sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     delegationStore: stores.delegationStore,
@@ -48,7 +48,6 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter: runtimeAdapters({ "pi-agent": configuredPiAgentAdapter, mock: mockAdapter }),
-    ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

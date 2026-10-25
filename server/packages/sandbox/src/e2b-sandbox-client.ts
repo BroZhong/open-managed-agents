@@ -1,4 +1,4 @@
-import { Sandbox, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
+import { ApiClient, AuthenticationError, ConnectionConfig, RateLimitError, Sandbox, SandboxError, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
 import {
   WORKSPACE_MOUNT_PROBE,
   WORKSPACE_MOUNT_PROBE_CLEANUP,
@@ -10,14 +10,23 @@ import {
 import { ExecAbortedBeforeStartError, SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import { createSandboxFileSystem } from "./sandbox-file-system.js";
-import { SANDBOX_RUNNING_SECONDS } from "./sandbox-client.js";
+import {
+  CLAIM_SECONDS,
+  CREATE_REQUEST_MS,
+  SANDBOX_RUNNING_SECONDS,
+  SandboxCreateRejected,
+  WAIT_READY_SECONDS,
+  listedSandbox,
+} from "./sandbox-client.js";
 import type {
+  ListedSandbox,
   SandboxClient,
   SandboxCreateOptions,
   SandboxExecChunk,
   SandboxExecOptions,
   SandboxFileEntry,
   SandboxHandle,
+  SandboxListFilter,
 } from "./sandbox-client.js";
 
 export interface E2BCommandResult {
@@ -94,6 +103,26 @@ export type CreateSandboxFn = (
 
 const DEFAULT_TEMPLATE = "auto-story-v2";
 
+/** Client timeouts of the control-plane calls other than create; each is one short gateway step. */
+const CONTROL_REQUEST_MS = {
+  /**
+   * The gateway bounds a resume only by this request; a timed-out connect
+   * leaves the resume running. The 2026-10-10 lifecycle verification measured
+   * 0.7–0.8 s from Paused and 30 ms from Running.
+   */
+  connect: 60_000,
+  /** Read from the manager's cache. */
+  getInfo: 20_000,
+  /** One Kubernetes delete; the deletion is confirmed afterwards by getInfo. */
+  kill: 30_000,
+  /** One Kubernetes patch of the deadline. */
+  setTimeout: 30_000,
+  /** One page, read from the manager's cache: 8 pages of 100 took 141 ms in-cluster on 2026-10-23. */
+  list: 20_000,
+} as const;
+/** The gateway's largest page. */
+const LIST_PAGE_LIMIT = 100;
+
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.agentry.welltop.tech"); SDK resolves api.<domain>. */
   domain: string;
@@ -106,12 +135,10 @@ export interface E2BSandboxClientOptions {
    * pass a fake so the client can be exercised with no network.
    */
   createSandbox?: CreateSandboxFn;
-  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number; timeoutMs: number }) => Promise<E2BSandbox>;
+  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number; timeoutMs: number; signal: AbortSignal }) => Promise<E2BSandbox>;
   getSandboxInfo?: (id: string) => Promise<{ state: string }>;
   killSandbox?: (id: string) => Promise<unknown>;
   setSandboxTimeout?: (id: string, timeoutMs: number) => Promise<void>;
-  /** Slightly exceeds ALB 180s so its timeout response can reach the SDK. */
-  requestTimeoutMs?: number;
   /** Host OSS readback proves the mount writes into the exact trusted prefix. */
   verifyWorkspaceProbe: (
     target: WorkspaceMountTarget,
@@ -142,7 +169,6 @@ export class E2BSandboxClient implements SandboxClient {
   private readonly getSandboxInfo: NonNullable<E2BSandboxClientOptions["getSandboxInfo"]>;
   private readonly killSandbox: NonNullable<E2BSandboxClientOptions["killSandbox"]>;
   private readonly setSandboxTimeout: NonNullable<E2BSandboxClientOptions["setSandboxTimeout"]>;
-  private readonly requestTimeoutMs: number;
   private readonly verifyWorkspaceProbe: E2BSandboxClientOptions["verifyWorkspaceProbe"];
   private readonly creationMetadata = new Map<string, Record<string, string>>();
   /** id -> live sandbox handle, so subsequent ops resolve the instance. */
@@ -171,29 +197,31 @@ export class E2BSandboxClient implements SandboxClient {
     this.defaultTemplate = opts.defaultTemplate ?? DEFAULT_TEMPLATE;
     this.createSandbox = opts.createSandbox ?? defaultCreateSandbox;
     this.connectSandbox = opts.connectSandbox ?? ((id, options) => Sandbox.connect(id, options));
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? 185_000;
     this.verifyWorkspaceProbe = opts.verifyWorkspaceProbe;
-    const control = { apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs };
-    this.getSandboxInfo = opts.getSandboxInfo ?? (id => Sandbox.getInfo(id, control));
-    this.killSandbox = opts.killSandbox ?? (id => Sandbox.kill(id, control));
-    this.setSandboxTimeout = opts.setSandboxTimeout ?? ((id, timeoutMs) => Sandbox.setTimeout(id, timeoutMs, control));
+    const control = { apiKey: this.apiKey, domain: this.domain };
+    this.getSandboxInfo = opts.getSandboxInfo ??
+      (id => Sandbox.getInfo(id, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.getInfo }));
+    this.killSandbox = opts.killSandbox ??
+      (id => Sandbox.kill(id, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.kill }));
+    this.setSandboxTimeout = opts.setSandboxTimeout ??
+      ((id, timeoutMs) => Sandbox.setTimeout(id, timeoutMs, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.setTimeout }));
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
     const template = resolveTemplate(opts.image, this.defaultTemplate);
     const sandbox = await this.createSandbox(template, {
-      requestTimeoutMs: this.requestTimeoutMs,
+      requestTimeoutMs: CREATE_REQUEST_MS,
       apiKey: this.apiKey,
       domain: this.domain,
       metadata: { ...opts.metadata,
         'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
-        'e2b.agents.kruise.io/claim-timeout-seconds': '150',
-        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '150',
+        'e2b.agents.kruise.io/claim-timeout-seconds': String(CLAIM_SECONDS),
+        'e2b.agents.kruise.io/wait-ready-timeout-seconds': String(WAIT_READY_SECONDS),
       },
       lifecycle: { onTimeout: 'pause', autoResume: false },
       ...(opts.env ? { envs: opts.env } : {}),
       timeoutMs: (opts.timeoutSeconds ?? SANDBOX_RUNNING_SECONDS) * 1000,
-    });
+    }).catch(createFailed);
     this.sandboxes.set(sandbox.sandboxId, sandbox);
     this.creationMetadata.set(sandbox.sandboxId, { ...opts.metadata });
     return { id: sandbox.sandboxId };
@@ -206,7 +234,7 @@ export class E2BSandboxClient implements SandboxClient {
     try {
       const sandbox = this.require(id);
       const requested = this.creationMetadata.get(id) ?? {};
-      const info = await sandbox.getInfo({ requestTimeoutMs: 20_000 });
+      const info = await sandbox.getInfo({ requestTimeoutMs: CONTROL_REQUEST_MS.getInfo });
       const volume = JSON.parse(
         requested["e2b.agents.kruise.io/csi-volume-config"] ?? "null",
       )?.[0];
@@ -401,8 +429,12 @@ export class E2BSandboxClient implements SandboxClient {
   async reconnect(id: string, metadata: Record<string, string>): Promise<boolean> {
     let sandbox: E2BSandbox;
     try {
+      // A handle keeps the requestTimeoutMs it was opened with as the default
+      // of its data-plane requests (file transfers, command start). Give it the
+      // same default as a created handle and bound the connect itself by signal.
       sandbox = await this.connectSandbox(id, {
-        apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs, timeoutMs: SANDBOX_RUNNING_SECONDS * 1000,
+        apiKey: this.apiKey, domain: this.domain, timeoutMs: SANDBOX_RUNNING_SECONDS * 1000,
+        requestTimeoutMs: CREATE_REQUEST_MS, signal: AbortSignal.timeout(CONTROL_REQUEST_MS.connect),
       });
     } catch (error) {
       if (error instanceof SandboxNotFoundError) { this.forget(id); return false; }
@@ -413,6 +445,35 @@ export class E2BSandboxClient implements SandboxClient {
     // regular mount verifier independently checks the gateway's authorization.
     this.creationMetadata.set(id, { ...metadata });
     return true;
+  }
+
+  async listSandboxes(filter: SandboxListFilter): Promise<ListedSandbox[]> {
+    // The SDK's client keeps the request on its own dispatcher (no HTTP proxy)
+    // and on the gateway E2B_API_URL names, as every other call here.
+    const { api } = new ApiClient(new ConnectionConfig({ apiKey: this.apiKey, domain: this.domain }));
+    // The gateway unescapes `metadata` once more before splitting it into
+    // pairs (upstream pkg/servers/e2b/list.go), so each key and value is
+    // escaped here and the whole once more as a query parameter. The SDK's
+    // paginator escapes them twice, which the gateway reads as other keys.
+    // No labels sends no `metadata`: every Sandbox of the API key (the sweeper's list).
+    const metadata = Object.entries(filter.metadata)
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&") || undefined;
+    const listed: ListedSandbox[] = [];
+    let nextToken: string | undefined;
+    do {
+      const { data, response } = await api.GET("/v2/sandboxes", {
+        params: { query: { metadata, state: [...filter.states], limit: LIST_PAGE_LIMIT, nextToken } },
+        signal: AbortSignal.timeout(CONTROL_REQUEST_MS.list),
+      });
+      // The body may echo metadata, which can hold credentials (#260): report the status only.
+      if (!response.ok || !data) throw new Error(`Sandbox list answered HTTP ${response.status}`);
+      for (const entry of data) {
+        const sandbox = listedSandbox(entry);
+        if (sandbox) listed.push(sandbox);
+      }
+      nextToken = response.headers.get("x-next-token") || undefined;
+    } while (nextToken);
+    return listed;
   }
 
   async destroy(id: string): Promise<void> {
@@ -698,6 +759,20 @@ export function parseFindOutput(stdout: string): SandboxFileEntry[] {
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));
   return entries;
+}
+
+/**
+ * Rethrow a failed create as {@link SandboxCreateRejected} when the gateway
+ * answered it with an HTTP status, otherwise (a timeout, a lost connection)
+ * as it is. The SDK keeps the status only in its error: AuthenticationError
+ * for 401, RateLimitError for 429, and for every other status a SandboxError
+ * whose message is "<status>: <the answer's message>" (its handleApiError).
+ */
+function createFailed(error: unknown): never {
+  if (error instanceof AuthenticationError) throw new SandboxCreateRejected(401);
+  if (error instanceof RateLimitError) throw new SandboxCreateRejected(429);
+  const status = error instanceof SandboxError ? /^([1-5]\d\d): /.exec(error.message)?.[1] : undefined;
+  throw status === undefined ? error : new SandboxCreateRejected(Number(status));
 }
 
 /** Default factory over the real e2b SDK. */

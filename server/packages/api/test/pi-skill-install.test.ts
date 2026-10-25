@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent } from "@oma-server/store";
@@ -61,8 +61,10 @@ it("ends a Pi Turn whose first tool call finds the Skill Install failed: the cal
   sandbox.skillInstallFault = (stage) => { if (stage === "switch") throw new Error("No space left on device"); };
   const errors: unknown[] = [];
   const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => pi,
-    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox }),
-    workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
+      bindings: stores.delegationStore, sessions: stores.sessionStore,
+      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+      onError: ({ error }) => errors.push(error) }),
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20, onDrainError: ({ error }) => errors.push(error) });
 
   await stores.pendingEventStore.enqueue(session.id, { type: "user.message", data: { content: [{ type: "text", text: "use the writer Skill" }] }, sessionThreadId: "sthr_primary" });

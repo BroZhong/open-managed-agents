@@ -72,6 +72,28 @@ export class ExecAbortedBeforeStartError extends Error {
 }
 
 /**
+ * An operation that did not run because the executor's environment was not
+ * available: it could not be connected, verified or created (ADR-0023). The
+ * Adapter returns it to the model as a tool error whose `details` carry
+ * `code` and the error's other details, so the model can retry, and anyone
+ * reading the Turn's events can tell it from a failure of the tool itself.
+ * A tool's own failure (an exit code, a missing file) is never one.
+ */
+export class ToolEnvironmentError extends Error {
+  constructor(
+    /** Machine-readable, stable: what a client and the model match on. */
+    readonly code: string,
+    message: string,
+    /** More machine-readable fields, beside `code`, for the tool result's details. */
+    readonly details: Readonly<Record<string, string>> = {},
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ToolEnvironmentError";
+  }
+}
+
+/**
  * Canonical model-visible root of a sandboxed Agent's writable Workspace.
  *
  * Pi's custom tools, Pi session context, and the concrete SandboxManager must

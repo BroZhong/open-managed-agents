@@ -31,8 +31,8 @@ async function expectTerminated(outcome: Outcome, logAtTermination: StoredEvent[
   expect(await outcome.stores.pendingEventStore.count(outcome.sessionId)).toBe(0);
   // Not one row after the termination, so no terminal event and no repair either.
   expect(outcome.log.map((event) => event.seq)).toEqual(logAtTermination.map((event) => event.seq));
-  // The cleanup sweep of a live Runner disposed the Sandbox the lost one left.
-  expect(outcome.disposals.filter((runner) => runner > 0)).not.toEqual([]);
+  // The cleanup sweep of a live Runner reclaimed the Sandbox the lost one left.
+  expect(outcome.reclamations.filter((runner) => runner > 0)).not.toEqual([]);
 }
 
 describe("G1 the Session is terminated while its Runner is lost", () => {
@@ -95,7 +95,7 @@ describe("G8 a parent Session is terminated while its child's Runner is lost", (
     // The parent's Runner learned of the termination as a lost lease and
     // stopped: termination stopping it is no drain failure.
     expect(outcome.errors).toEqual([]);
-    expect(outcome.disposals).not.toEqual([]);
+    expect(outcome.reclamations).not.toEqual([]);
   });
 });
 

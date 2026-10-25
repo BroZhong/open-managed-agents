@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, FakeSandboxClient, isSkillInstallCommand, type SandboxExecChunk, type SandboxExecOptions, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, isSkillInstallCommand, type SandboxExecChunk, type SandboxExecOptions, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
 import type { SandboxActivity } from "@oma-server/store";
 import { SANDBOX_WORKSPACE_ROOT, type Adapter, type ExecExitResult } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -38,7 +38,7 @@ function deferred<T = void>() {
 function localSandbox() {
   const local = new LocalToolExecutor({ root });
   const commands: SandboxCommand[] = [];
-  let disposed = false;
+  let reclaimed = false;
   const session: SandboxSession = {
     fileSystem: local.fileSystem,
     async *exec(command, options) {
@@ -54,10 +54,9 @@ function localSandbox() {
     list: (glob) => local.list(glob),
     prepare: async () => {},
     checkWorkspace: async () => {},
-    dispose: async () => { disposed = true; },
   };
-  const manager: SandboxManager = { open: () => session, list: async () => [], reclaim: async () => {} };
-  return { manager, commands, disposed: () => disposed };
+  const manager: SandboxManager = { open: () => session, list: async () => [], reclaim: async () => { reclaimed = true; return true; } };
+  return { manager, commands, reclaimed: () => reclaimed };
 }
 
 /**
@@ -105,8 +104,8 @@ function managedSandbox(options: {
       return session;
     }
   }
-  const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox() });
-  return { manager, commands, finished, sessions, disposed: () => false };
+  const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox(), environment: "test" });
+  return { manager, commands, finished, sessions, reclaimed: () => false };
 }
 
 /** Pi's managed bash, driven with the Turn signal exactly as Pi aborts its running tools. */
@@ -147,8 +146,9 @@ async function harness<S extends { manager: SandboxManager } = ReturnType<typeof
   // A Delegation Store makes the Router fence the Sandbox executor, as in production.
   const router = new SessionRouter({
     ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-    sandboxManager: sandbox.manager,
-    workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+    sandboxes: new DefaultTurnSandboxes({ manager: sandbox.manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
+      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+      onError: ({ error }) => errors.push(error) }),
     pendingClaimLeaseMs: options.leaseMs ?? 30000,
     pendingClaimRenewIntervalMs: options.leaseMs ? Math.floor(options.leaseMs / 3) : 1000,
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
@@ -208,12 +208,12 @@ describe("cancelling a running Sandbox tool through the fenced executor", () => 
     await tool.settled;
     await running;
 
-    // No SIGTERM helper and no transport kill: disposing the Sandbox is
+    // No SIGTERM helper and no transport kill: reclaiming the Sandbox is
     // termination's own cleanup, so the execution was left to run undisturbed.
     expect(h.sandbox.commands).toHaveLength(1);
     expect(frames(h.sandbox.commands[0]).at(-1)?.type).toBe("result");
     expect(h.sandbox.commands[0].exit).toEqual({ exitCode: 0 });
-    expect(h.sandbox.disposed()).toBe(true);
+    expect(h.sandbox.reclaimed()).toBe(true);
   }, 15000);
 
   it("sends nothing to the running execution after the lease is lost", async () => {

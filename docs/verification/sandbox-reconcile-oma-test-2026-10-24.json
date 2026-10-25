@@ -1,0 +1,972 @@
+{
+ "date": "2026-10-24",
+ "environment": "oma-test",
+ "image": "oma-server:afcea76b87ed",
+ "runs": {
+  "run1-gpt-5.6-sol-200": {
+   "model": "openai-codex/gpt-5.6-sol",
+   "tenant": "reconcile-1792833080721",
+   "submit": {
+    "burst": 200,
+    "created": 200,
+    "accepted": 200,
+    "submitMs": {
+     "count": 200,
+     "min": 42,
+     "p50": 92,
+     "p95": 246,
+     "max": 308
+    },
+    "window": [
+     "2026-10-24T10:02:53.567Z",
+     "2026-10-24T10:02:54.030Z"
+    ]
+   },
+   "restartAt": {
+    "rollout-restart": "2026-10-24T10:04:02.000Z"
+   },
+   "summary": {
+    "sessions": 200,
+    "submitted": 200,
+    "completed": 200,
+    "sandboxUsed": 41,
+    "answered": 41,
+    "endedSandboxUnavailable": [],
+    "sessionErrorsByCode": {
+     "pi_agent_error": 159
+    },
+    "toolErrorsByCode": {},
+    "sessionsWithEnvironmentToolErrors": 0,
+    "takeovers": {
+     "sessions": 0,
+     "byReason": {},
+     "beforeFirstSandboxUse": 0
+    },
+    "prepare": {
+     "spans": 41,
+     "open": 0,
+     "byOutcome": {
+      "ready": 41
+     },
+     "byCode": {},
+     "okMs": {
+      "count": 41,
+      "min": 507,
+      "p50": 38082,
+      "p95": 40491,
+      "max": 41941
+     },
+     "allMs": {
+      "count": 41,
+      "min": 507,
+      "p50": 38082,
+      "p95": 40491,
+      "max": 41941
+     },
+     "retries": 0,
+     "sessionsWithRetries": 0
+    },
+    "bindings": {
+     "byState": {
+      "cold": 159,
+      "ready": 41
+     },
+     "stuckCreatingPastDeadline": [],
+     "withoutSandbox": [
+      "sess_IBuminQxG7w8j_OfFhoNp",
+      "sess_N-cgiLvlXOcaDqmY4q429",
+      "sess_OqCPBgaw3UpTZd6bsXAdx",
+      "sess_Cy4M6t7Hqu0M729WJ3Y_e",
+      "sess_snesq0bm5bn5Xbs0In9KT",
+      "sess_0yk6VcgDUQ5aGpfR6Pxwt",
+      "sess_cdhHIlyWq1uqiAdu77SPc",
+      "sess_6F69AxAGP-Ot0cKizVqO9",
+      "sess_x6Ml9dg2Uyy_08hYw-tmt",
+      "sess_VTVgDPat7lvunwP7bOQlh",
+      "sess_A6gn-W6s28RGFuloPbikd",
+      "sess_5gn2pjmF7iP9fvvWMZCOV",
+      "sess_ZDp5g_MYKMhQkAXb6dHF2",
+      "sess_kAw1RoeOmQFnW2Q6B7gro",
+      "sess_fz6Hx1jE8l_85QMPTEIvt",
+      "sess_KKSLW3zZHsfTy45FN4AxD",
+      "sess_OmfH8y8t2A7EyaLTgv_TN",
+      "sess_Z6UaDr8X5AhQ-RDBWR_bB",
+      "sess_fERNGdkL6z-_mYkOddztd",
+      "sess_k3FNxAuF0Lvs1WUBEBiCu",
+      "sess_ZHZ_LGWoi-1tzM4Po8b_B",
+      "sess_Rlf9SS6vaMAuTLDSbKqRr",
+      "sess_DIR6WOz0BYBlopg9M_msJ",
+      "sess_Eu0R3yGEF4q6nwi2kjQfi",
+      "sess_P0seyUFt7aNhxFRjAqtJJ",
+      "sess_EdmV3OGXM8_eNP18wRq8J",
+      "sess_HmIRN4rsyMdpflNgysdol",
+      "sess_OiYYTqD5VcgdX1ItxH1HM",
+      "sess_ijoZIqa_Lh7QoND1SEbGz",
+      "sess_rN94SqefidtHtmO0Rn6cp",
+      "sess_XfQaPjoKkn8e1CSSXs6Jf",
+      "sess_6RmEZMNcpM8wIEuPZAxv3",
+      "sess_SSJ0IKV2EDRNQQUaMHZu1",
+      "sess_RdQMmZHiAF7VoI2e9jc8r",
+      "sess_Lv_58GK7_RlRTsg8N9oBH",
+      "sess_pO9Z2Tw51cSGdsXJVTttD",
+      "sess_nOMTKgOj54Yx6QW93gK6u",
+      "sess_DJdKogqw_RYchxLjiwxHj",
+      "sess_1j0Q5oKW30AUFJgSCnnai",
+      "sess_KDzfr1jRkVr-u_Fh0BeX9",
+      "sess_o45yVgh-my2fi3MHwKjYj",
+      "sess_o-SgCDo1Q4zctjxUCYIay",
+      "sess_GlJSXnboskfM_NU9k_si4",
+      "sess_nm6E4LcDqpANKYwdkh7Y5",
+      "sess_fKpfw2k8jb1ash0eNOwoF",
+      "sess_c3UlbfD2dTasNAOlLveb7",
+      "sess_k6MseAjd4V-iOEannI1a3",
+      "sess_C4AdYGMYR-kmGEimSqYtZ",
+      "sess_-bFXw246VnIaokXVcRSTO",
+      "sess_ryNZo0I2BGMduCQIF2RsK",
+      "sess_uZYNvfCiB08kMYV__oQkU",
+      "sess_dMV5fx_C0KVMpZQuy96Fi",
+      "sess_niB65kQTOq6cGHpsggmis",
+      "sess_mNXNvWrM7YIYhlcQe4shL",
+      "sess_cekNt5XnGw2yqeDfkNdd4",
+      "sess_lNJ45bWbNiejDZ9B0_EYz",
+      "sess_WiAi76mNv1N1wPUsizqhd",
+      "sess_RJMBmiha3H3LWiLt3zKD8",
+      "sess_yVT8hvu-qCRFZe4LHKczT",
+      "sess_9G8hblv0Vrl-bYbeLURwr",
+      "sess_AK5BAsDmF6M1mSxTGL1gq",
+      "sess_uXXVjRbuvrf6UB7Pc8DW1",
+      "sess_JH4Ije3EZElpc-_3NMB7B",
+      "sess_2dx46EYO1pf_2MH7cUqe6",
+      "sess_EEQemIPxd_HPONBuCGtNo",
+      "sess_8ENO1DdxVRlaegut_4O0W",
+      "sess_rgdCJ8jah19XpP5Ca9DZ7",
+      "sess_fWBlj_zjyiww-zcHI4syO",
+      "sess_OSQeT0p3it7R95y71SFAS",
+      "sess_4dUOwUSRxFbxsCCzxYj2f",
+      "sess_NO3djww5RBSCBHInx_Gy9",
+      "sess_aeeJvqnXacMG6oENeRylU",
+      "sess_9KsXu5ZQp-JLiTZ2eULFn",
+      "sess_Z4ThIdV3WjjBfrbTAXAqM",
+      "sess_7iNThXYmn4vSw8Xhtm9xi",
+      "sess_FoPK9W7LWsXYhyvZLYdM2",
+      "sess_ymTKvWZ-QB_97BFag6t-r",
+      "sess_qCxVoSfX4IG7d4kTJ11Ca",
+      "sess_by1FQ7LL_80jfVY1npPuE",
+      "sess_qRfh-31B-dyPUSuTxHh-e",
+      "sess_nb1FjT1bXNmVFpD7cDaL7",
+      "sess_0eE8-CALvG5tNHb3YvwPf",
+      "sess_bVM0OsQ8_UUfK_LO363Dd",
+      "sess_iEeQN4WGQFzJ8qU8OcGCn",
+      "sess_BFnppLJRV6GtX6E4h1Jyj",
+      "sess_eNz0YPYsFOVyptZI6APuR",
+      "sess_yo3Cl-Gs74WYCUO9yXPPN",
+      "sess_PJGYi72L0zjvFvsfzZqo3",
+      "sess_kKolY6TTZeiA7y4DTq0pc",
+      "sess_9O6Vng0VRJzzzHx2MmuP_",
+      "sess_tXa06retW1VlAXr4L5BYq",
+      "sess_UYbq6bslgFNJwnpcRCRaC",
+      "sess_szICGN3wM_uusbN-XWcSM",
+      "sess_WR8yuNh6RZWutK_ztJ-KM",
+      "sess_jqQmNEdIIiWjGYmzTWlFy",
+      "sess_Zx_laPgCsT2K8r-QxSkB5",
+      "sess_vHLoM5I-NrtdwTwUwQzMr",
+      "sess_QrsFoCqda9KfTeYn-qFEm",
+      "sess_zyn0ksglQ5Bc_ln0EDcu1",
+      "sess_WzRoS5z5ntI3O36GCaSVw",
+      "sess_C4L3_g5ivk1I-Lh202dFz",
+      "sess_K1PPW6_gwxzjmNIBHp4VB",
+      "sess_LMzZ1drMljZ5KyldxhFjj",
+      "sess_sX6tt-14xKmMMzuKcA7-G",
+      "sess_NT_Bv2_Cagr8v5msUNKzp",
+      "sess_F9paypow8i25A9u7nF8fE",
+      "sess_GlQhmSuIf4okOQ8U0YqXs",
+      "sess_icNxr1LFLFdiVKHVrs8r1",
+      "sess_qG0Qysl_rDn-e26w7t0eB",
+      "sess_lmDVvx94oWH1IffYpJveJ",
+      "sess_gSr4P6HItAr9oFH1_tkSA",
+      "sess_hTOjePQto43pCQFj6F_Qw",
+      "sess_bAYcdacQ32JLm0l8herb9",
+      "sess_ITgc-nz7beBSc_VGuKacf",
+      "sess_0Js8-HjYtQQGHeimKG7SO",
+      "sess_o0ayEN2Qtdi8o3wib422u",
+      "sess_ldeaWZO7rThbM-Xfkhaay",
+      "sess_tfjvV-bCv3UFF1AlginJj",
+      "sess_BYkKyuyJPPkkhYmpc8Mkc",
+      "sess_jRtr64lYktk9VETDNq9M6",
+      "sess_69TKP9eIM2CqNJD0J1IOX",
+      "sess_pu-KgTsSQTS6Kikoo5wG3",
+      "sess__Pdydp0XqKeAhWTUNDIDJ",
+      "sess_gvt1pknS7Dmn2P-N4vwoo",
+      "sess_V1fodPEyPnbE-gX-yZLtu",
+      "sess_2UkalB-wSGLmMawB5QRSZ",
+      "sess_elyeZ1_SghxrSl6xu0kt9",
+      "sess_w2l4qN0KsoTl1DS7S9OGw",
+      "sess_0Am3qxnfPRvIC1WrsFzdI",
+      "sess_NGdwS9vxJ0xaUwX2D95fy",
+      "sess_W0cMGrJfFYLj78uL65KQj",
+      "sess_Y-2fyA-yZMZ8W8C28J2j7",
+      "sess_t9aS8slPLwGVcM_KznubL",
+      "sess__3Iq3wZH_nZkUNNyCa2VJ",
+      "sess_neNpwev7vnCXog9SejuBd",
+      "sess_WBeW_RFdA-7mDOY2xcecY",
+      "sess_O3QcGVJ_HpEmRr6eVsoaF",
+      "sess_u6mHrSHHQiCc_aOzHVnNb",
+      "sess_KK7snloWoAlYb1pt8jRAS",
+      "sess_zJmnL7UXKG0qjwIwSn8Pu",
+      "sess_-4UUGdApokjXDu9_i2Ld3",
+      "sess_7HhUjK9ftwxmXnk0rCN30",
+      "sess_7La1N89SGYeGIEUyBigW-",
+      "sess_tziZqidKSZ4AvFoV_yLdj",
+      "sess_DCg4dSpePS36G8mnzgHTQ",
+      "sess_nsLrG5t7QGvBWX-AG0I_A",
+      "sess_9gfdKVjKW72RBLC-EaOtk",
+      "sess_HgrODrLXpjQ5kAvAB2r93",
+      "sess_AfV9UTJEgMofpvdZjzyF7",
+      "sess_IQ2zC_qzN0gaJH32GEnlE",
+      "sess_BvCjEjRT85zXgHewl2--h",
+      "sess_HMRyERloEmcleSAi4qrYY",
+      "sess_c4y4i85t6hcVT18AbMSVQ",
+      "sess_JtPqOBtBHaq3g9h6NUPTI",
+      "sess_URCPassg20ETpRv02eGBx",
+      "sess__bWnlgrdzOA1ogGaq1aNV",
+      "sess_imKULw0RnMIVoOkYUQzNe",
+      "sess_xYy6z30jL7PPgVb6eFFvh",
+      "sess_j3iJoap3v8GQVbtP3p-54"
+     ],
+     "reclaiming": []
+    },
+    "creatingToReadySampledMs": {
+     "count": 36,
+     "min": 36694,
+     "p50": 40318,
+     "p95": 43581,
+     "max": 43722
+    },
+    "environment": {
+     "byState": {
+      "cold": 159,
+      "ready": 41
+     },
+     "lastErrorCodes": {}
+    },
+    "notCompleted": [],
+    "notUsed": [
+     "sess_IBuminQxG7w8j_OfFhoNp",
+     "sess_N-cgiLvlXOcaDqmY4q429",
+     "sess_OqCPBgaw3UpTZd6bsXAdx",
+     "sess_Cy4M6t7Hqu0M729WJ3Y_e",
+     "sess_snesq0bm5bn5Xbs0In9KT",
+     "sess_0yk6VcgDUQ5aGpfR6Pxwt",
+     "sess_cdhHIlyWq1uqiAdu77SPc",
+     "sess_6F69AxAGP-Ot0cKizVqO9",
+     "sess_x6Ml9dg2Uyy_08hYw-tmt",
+     "sess_VTVgDPat7lvunwP7bOQlh",
+     "sess_A6gn-W6s28RGFuloPbikd",
+     "sess_5gn2pjmF7iP9fvvWMZCOV",
+     "sess_ZDp5g_MYKMhQkAXb6dHF2",
+     "sess_kAw1RoeOmQFnW2Q6B7gro",
+     "sess_fz6Hx1jE8l_85QMPTEIvt",
+     "sess_KKSLW3zZHsfTy45FN4AxD",
+     "sess_OmfH8y8t2A7EyaLTgv_TN",
+     "sess_Z6UaDr8X5AhQ-RDBWR_bB",
+     "sess_fERNGdkL6z-_mYkOddztd",
+     "sess_k3FNxAuF0Lvs1WUBEBiCu",
+     "sess_ZHZ_LGWoi-1tzM4Po8b_B",
+     "sess_Rlf9SS6vaMAuTLDSbKqRr",
+     "sess_DIR6WOz0BYBlopg9M_msJ",
+     "sess_Eu0R3yGEF4q6nwi2kjQfi",
+     "sess_P0seyUFt7aNhxFRjAqtJJ",
+     "sess_EdmV3OGXM8_eNP18wRq8J",
+     "sess_HmIRN4rsyMdpflNgysdol",
+     "sess_OiYYTqD5VcgdX1ItxH1HM",
+     "sess_ijoZIqa_Lh7QoND1SEbGz",
+     "sess_rN94SqefidtHtmO0Rn6cp",
+     "sess_XfQaPjoKkn8e1CSSXs6Jf",
+     "sess_6RmEZMNcpM8wIEuPZAxv3",
+     "sess_SSJ0IKV2EDRNQQUaMHZu1",
+     "sess_RdQMmZHiAF7VoI2e9jc8r",
+     "sess_Lv_58GK7_RlRTsg8N9oBH",
+     "sess_pO9Z2Tw51cSGdsXJVTttD",
+     "sess_nOMTKgOj54Yx6QW93gK6u",
+     "sess_DJdKogqw_RYchxLjiwxHj",
+     "sess_1j0Q5oKW30AUFJgSCnnai",
+     "sess_KDzfr1jRkVr-u_Fh0BeX9",
+     "sess_o45yVgh-my2fi3MHwKjYj",
+     "sess_o-SgCDo1Q4zctjxUCYIay",
+     "sess_GlJSXnboskfM_NU9k_si4",
+     "sess_nm6E4LcDqpANKYwdkh7Y5",
+     "sess_fKpfw2k8jb1ash0eNOwoF",
+     "sess_c3UlbfD2dTasNAOlLveb7",
+     "sess_k6MseAjd4V-iOEannI1a3",
+     "sess_C4AdYGMYR-kmGEimSqYtZ",
+     "sess_-bFXw246VnIaokXVcRSTO",
+     "sess_ryNZo0I2BGMduCQIF2RsK",
+     "sess_uZYNvfCiB08kMYV__oQkU",
+     "sess_dMV5fx_C0KVMpZQuy96Fi",
+     "sess_niB65kQTOq6cGHpsggmis",
+     "sess_mNXNvWrM7YIYhlcQe4shL",
+     "sess_cekNt5XnGw2yqeDfkNdd4",
+     "sess_lNJ45bWbNiejDZ9B0_EYz",
+     "sess_WiAi76mNv1N1wPUsizqhd",
+     "sess_RJMBmiha3H3LWiLt3zKD8",
+     "sess_yVT8hvu-qCRFZe4LHKczT",
+     "sess_9G8hblv0Vrl-bYbeLURwr",
+     "sess_AK5BAsDmF6M1mSxTGL1gq",
+     "sess_uXXVjRbuvrf6UB7Pc8DW1",
+     "sess_JH4Ije3EZElpc-_3NMB7B",
+     "sess_2dx46EYO1pf_2MH7cUqe6",
+     "sess_EEQemIPxd_HPONBuCGtNo",
+     "sess_8ENO1DdxVRlaegut_4O0W",
+     "sess_rgdCJ8jah19XpP5Ca9DZ7",
+     "sess_fWBlj_zjyiww-zcHI4syO",
+     "sess_OSQeT0p3it7R95y71SFAS",
+     "sess_4dUOwUSRxFbxsCCzxYj2f",
+     "sess_NO3djww5RBSCBHInx_Gy9",
+     "sess_aeeJvqnXacMG6oENeRylU",
+     "sess_9KsXu5ZQp-JLiTZ2eULFn",
+     "sess_Z4ThIdV3WjjBfrbTAXAqM",
+     "sess_7iNThXYmn4vSw8Xhtm9xi",
+     "sess_FoPK9W7LWsXYhyvZLYdM2",
+     "sess_ymTKvWZ-QB_97BFag6t-r",
+     "sess_qCxVoSfX4IG7d4kTJ11Ca",
+     "sess_by1FQ7LL_80jfVY1npPuE",
+     "sess_qRfh-31B-dyPUSuTxHh-e",
+     "sess_nb1FjT1bXNmVFpD7cDaL7",
+     "sess_0eE8-CALvG5tNHb3YvwPf",
+     "sess_bVM0OsQ8_UUfK_LO363Dd",
+     "sess_iEeQN4WGQFzJ8qU8OcGCn",
+     "sess_BFnppLJRV6GtX6E4h1Jyj",
+     "sess_eNz0YPYsFOVyptZI6APuR",
+     "sess_yo3Cl-Gs74WYCUO9yXPPN",
+     "sess_PJGYi72L0zjvFvsfzZqo3",
+     "sess_kKolY6TTZeiA7y4DTq0pc",
+     "sess_9O6Vng0VRJzzzHx2MmuP_",
+     "sess_tXa06retW1VlAXr4L5BYq",
+     "sess_UYbq6bslgFNJwnpcRCRaC",
+     "sess_szICGN3wM_uusbN-XWcSM",
+     "sess_WR8yuNh6RZWutK_ztJ-KM",
+     "sess_jqQmNEdIIiWjGYmzTWlFy",
+     "sess_Zx_laPgCsT2K8r-QxSkB5",
+     "sess_vHLoM5I-NrtdwTwUwQzMr",
+     "sess_QrsFoCqda9KfTeYn-qFEm",
+     "sess_zyn0ksglQ5Bc_ln0EDcu1",
+     "sess_WzRoS5z5ntI3O36GCaSVw",
+     "sess_C4L3_g5ivk1I-Lh202dFz",
+     "sess_K1PPW6_gwxzjmNIBHp4VB",
+     "sess_LMzZ1drMljZ5KyldxhFjj",
+     "sess_sX6tt-14xKmMMzuKcA7-G",
+     "sess_NT_Bv2_Cagr8v5msUNKzp",
+     "sess_F9paypow8i25A9u7nF8fE",
+     "sess_GlQhmSuIf4okOQ8U0YqXs",
+     "sess_icNxr1LFLFdiVKHVrs8r1",
+     "sess_qG0Qysl_rDn-e26w7t0eB",
+     "sess_lmDVvx94oWH1IffYpJveJ",
+     "sess_gSr4P6HItAr9oFH1_tkSA",
+     "sess_hTOjePQto43pCQFj6F_Qw",
+     "sess_bAYcdacQ32JLm0l8herb9",
+     "sess_ITgc-nz7beBSc_VGuKacf",
+     "sess_0Js8-HjYtQQGHeimKG7SO",
+     "sess_o0ayEN2Qtdi8o3wib422u",
+     "sess_ldeaWZO7rThbM-Xfkhaay",
+     "sess_tfjvV-bCv3UFF1AlginJj",
+     "sess_BYkKyuyJPPkkhYmpc8Mkc",
+     "sess_jRtr64lYktk9VETDNq9M6",
+     "sess_69TKP9eIM2CqNJD0J1IOX",
+     "sess_pu-KgTsSQTS6Kikoo5wG3",
+     "sess__Pdydp0XqKeAhWTUNDIDJ",
+     "sess_gvt1pknS7Dmn2P-N4vwoo",
+     "sess_V1fodPEyPnbE-gX-yZLtu",
+     "sess_2UkalB-wSGLmMawB5QRSZ",
+     "sess_elyeZ1_SghxrSl6xu0kt9",
+     "sess_w2l4qN0KsoTl1DS7S9OGw",
+     "sess_0Am3qxnfPRvIC1WrsFzdI",
+     "sess_NGdwS9vxJ0xaUwX2D95fy",
+     "sess_W0cMGrJfFYLj78uL65KQj",
+     "sess_Y-2fyA-yZMZ8W8C28J2j7",
+     "sess_t9aS8slPLwGVcM_KznubL",
+     "sess__3Iq3wZH_nZkUNNyCa2VJ",
+     "sess_neNpwev7vnCXog9SejuBd",
+     "sess_WBeW_RFdA-7mDOY2xcecY",
+     "sess_O3QcGVJ_HpEmRr6eVsoaF",
+     "sess_u6mHrSHHQiCc_aOzHVnNb",
+     "sess_KK7snloWoAlYb1pt8jRAS",
+     "sess_zJmnL7UXKG0qjwIwSn8Pu",
+     "sess_-4UUGdApokjXDu9_i2Ld3",
+     "sess_7HhUjK9ftwxmXnk0rCN30",
+     "sess_7La1N89SGYeGIEUyBigW-",
+     "sess_tziZqidKSZ4AvFoV_yLdj",
+     "sess_DCg4dSpePS36G8mnzgHTQ",
+     "sess_nsLrG5t7QGvBWX-AG0I_A",
+     "sess_9gfdKVjKW72RBLC-EaOtk",
+     "sess_HgrODrLXpjQ5kAvAB2r93",
+     "sess_AfV9UTJEgMofpvdZjzyF7",
+     "sess_IQ2zC_qzN0gaJH32GEnlE",
+     "sess_BvCjEjRT85zXgHewl2--h",
+     "sess_HMRyERloEmcleSAi4qrYY",
+     "sess_c4y4i85t6hcVT18AbMSVQ",
+     "sess_JtPqOBtBHaq3g9h6NUPTI",
+     "sess_URCPassg20ETpRv02eGBx",
+     "sess__bWnlgrdzOA1ogGaq1aNV",
+     "sess_imKULw0RnMIVoOkYUQzNe",
+     "sess_xYy6z30jL7PPgVb6eFFvh",
+     "sess_j3iJoap3v8GQVbtP3p-54"
+    ],
+    "workspaceFiles": {
+     "checked": 41,
+     "matching": 41
+    }
+   },
+   "checks": [
+    {
+     "check": "burst: every submitted Session completed its Turn",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "submitted": 200,
+      "completed": 200,
+      "notCompleted": []
+     }
+    },
+    {
+     "check": "burst: no binding Creating past creating_since + 180 s",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "stuck": [],
+      "count": 0
+     }
+    },
+    {
+     "check": "burst: no Turn ended with sandbox_unavailable",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "count": 0,
+      "sessions": []
+     }
+    },
+    {
+     "check": "burst: Sessions that used their Sandbox ≥ 100%",
+     "ok": false,
+     "acceptance": true
+    },
+    {
+     "check": "burst: final answers carry the marker",
+     "ok": false,
+     "acceptance": false,
+     "details": {
+      "answered": 41,
+      "completed": 200
+     }
+    },
+    {
+     "check": "burst: the rolling restart took over Turns",
+     "ok": false,
+     "acceptance": false,
+     "details": {
+      "sessions": 0,
+      "byReason": {},
+      "beforeFirstSandboxUse": 0
+     }
+    }
+   ]
+  },
+  "run2-deepseek-flash-200": {
+   "model": "deepseek/deepseek-flash",
+   "tenant": "reconcile-1792836553155",
+   "submit": {
+    "burst": 200,
+    "created": 200,
+    "accepted": 200,
+    "submitMs": {
+     "count": 200,
+     "min": 29,
+     "p50": 78,
+     "p95": 213,
+     "max": 244
+    },
+    "window": [
+     "2026-10-24T10:09:24.914Z",
+     "2026-10-24T10:09:25.290Z"
+    ]
+   },
+   "restartAt": {
+    "rollout-restart": "2026-10-24T10:09:35.000Z",
+    "kill": "2026-10-24T10:15:36.230Z"
+   },
+   "summary": {
+    "sessions": 200,
+    "submitted": 200,
+    "completed": 200,
+    "sandboxUsed": 200,
+    "answered": 200,
+    "endedSandboxUnavailable": [],
+    "sessionErrorsByCode": {},
+    "toolErrorsByCode": {
+     "sandbox_unavailable": 15,
+     "none": 29
+    },
+    "sessionsWithEnvironmentToolErrors": 11,
+    "takeovers": {
+     "sessions": 25,
+     "byReason": {
+      "released": 30
+     },
+     "beforeFirstSandboxUse": 24
+    },
+    "prepare": {
+     "spans": 245,
+     "open": 0,
+     "byOutcome": {
+      "ready": 217,
+      "failed": 15,
+      "aborted": 13
+     },
+     "byCode": {
+      "sandbox_unavailable": 15
+     },
+     "okMs": {
+      "count": 217,
+      "min": 224,
+      "p50": 42552,
+      "p95": 66304,
+      "max": 106454
+     },
+     "allMs": {
+      "count": 245,
+      "min": 224,
+      "p50": 42551,
+      "p95": 67450,
+      "max": 106454
+     },
+     "retries": 28,
+     "sessionsWithRetries": 19
+    },
+    "bindings": {
+     "byState": {
+      "ready": 200
+     },
+     "stuckCreatingPastDeadline": [],
+     "withoutSandbox": [],
+     "reclaiming": []
+    },
+    "creatingToReadySampledMs": {
+     "count": 195,
+     "min": 35773,
+     "p50": 44846,
+     "p95": 69853,
+     "max": 185034
+    },
+    "environment": {
+     "byState": {
+      "ready": 200
+     },
+     "lastErrorCodes": {}
+    },
+    "notCompleted": [],
+    "notUsed": [],
+    "workspaceFiles": {
+     "checked": 200,
+     "matching": 200
+    }
+   },
+   "checks": [
+    {
+     "check": "burst: every submitted Session completed its Turn",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "submitted": 200,
+      "completed": 200,
+      "notCompleted": []
+     }
+    },
+    {
+     "check": "burst: no binding Creating past creating_since + 180 s",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "stuck": [],
+      "count": 0
+     }
+    },
+    {
+     "check": "burst: no Turn ended with sandbox_unavailable",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "count": 0,
+      "sessions": []
+     }
+    },
+    {
+     "check": "burst: Sessions that used their Sandbox ≥ 100%",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "used": 200,
+      "submitted": 200,
+      "notUsed": []
+     }
+    },
+    {
+     "check": "burst: final answers carry the marker",
+     "ok": true,
+     "acceptance": false,
+     "details": {
+      "answered": 200,
+      "completed": 200
+     }
+    },
+    {
+     "check": "burst: the rolling restart took over Turns",
+     "ok": true,
+     "acceptance": false,
+     "details": {
+      "sessions": 25,
+      "byReason": {
+       "released": 30
+      },
+      "beforeFirstSandboxUse": 24
+     }
+    }
+   ]
+  },
+  "run3-deepseek-flash-400": {
+   "model": "deepseek/deepseek-flash",
+   "tenant": "reconcile-1792837143610",
+   "submit": {
+    "burst": 400,
+    "created": 400,
+    "accepted": 400,
+    "submitMs": {
+     "count": 400,
+     "min": 16,
+     "p50": 72,
+     "p95": 201,
+     "max": 265
+    },
+    "window": [
+     "2026-10-24T10:19:08.114Z",
+     "2026-10-24T10:19:08.801Z"
+    ]
+   },
+   "restartAt": {
+    "rollout-restart": "2026-10-24T10:19:20.000Z"
+   },
+   "summary": {
+    "sessions": 400,
+    "submitted": 400,
+    "completed": 400,
+    "sandboxUsed": 399,
+    "answered": 398,
+    "endedSandboxUnavailable": [
+     "sess_53wRfjbPK01LwdZGD_ZHJ"
+    ],
+    "sessionErrorsByCode": {
+     "sandbox_unavailable": 1
+    },
+    "toolErrorsByCode": {
+     "none": 186,
+     "sandbox_unavailable": 90
+    },
+    "sessionsWithEnvironmentToolErrors": 89,
+    "takeovers": {
+     "sessions": 101,
+     "byReason": {
+      "released": 189
+     },
+     "beforeFirstSandboxUse": 98
+    },
+    "prepare": {
+     "spans": 678,
+     "open": 0,
+     "byOutcome": {
+      "ready": 407,
+      "aborted": 181,
+      "failed": 90
+     },
+     "byCode": {
+      "sandbox_unavailable": 90
+     },
+     "okMs": {
+      "count": 407,
+      "min": 251,
+      "p50": 49036,
+      "p95": 308923,
+      "max": 316782
+     },
+     "allMs": {
+      "count": 678,
+      "min": 251,
+      "p50": 72094,
+      "p95": 419651,
+      "max": 421644
+     },
+     "retries": 270,
+     "sessionsWithRetries": 93
+    },
+    "bindings": {
+     "byState": {
+      "ready": 399,
+      "cold": 1
+     },
+     "stuckCreatingPastDeadline": [],
+     "withoutSandbox": [
+      "sess_53wRfjbPK01LwdZGD_ZHJ"
+     ],
+     "reclaiming": []
+    },
+    "creatingToReadySampledMs": {
+     "count": 309,
+     "min": 5399,
+     "p50": 46935,
+     "p95": 82231,
+     "max": 182098
+    },
+    "environment": {
+     "byState": {
+      "ready": 399,
+      "unavailable": 1
+     },
+     "lastErrorCodes": {
+      "sandbox_unavailable": 1
+     }
+    },
+    "notCompleted": [],
+    "notUsed": [
+     "sess_53wRfjbPK01LwdZGD_ZHJ"
+    ],
+    "workspaceFiles": {
+     "checked": 399,
+     "matching": 399
+    }
+   },
+   "checks": [
+    {
+     "check": "burst: every submitted Session completed its Turn",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "submitted": 400,
+      "completed": 400,
+      "notCompleted": []
+     }
+    },
+    {
+     "check": "burst: no binding Creating past creating_since + 180 s",
+     "ok": true,
+     "acceptance": true,
+     "details": {
+      "stuck": [],
+      "count": 0
+     }
+    },
+    {
+     "check": "burst: no Turn ended with sandbox_unavailable",
+     "ok": false,
+     "acceptance": true,
+     "details": {
+      "count": 1,
+      "sessions": [
+       "sess_53wRfjbPK01LwdZGD_ZHJ"
+      ]
+     }
+    },
+    {
+     "check": "burst: Sessions that used their Sandbox ≥ 100%",
+     "ok": false,
+     "acceptance": true,
+     "details": {
+      "used": 399,
+      "submitted": 400,
+      "notUsed": [
+       "sess_53wRfjbPK01LwdZGD_ZHJ"
+      ]
+     }
+    },
+    {
+     "check": "burst: final answers carry the marker",
+     "ok": false,
+     "acceptance": false,
+     "details": {
+      "answered": 398,
+      "completed": 400
+     }
+    },
+    {
+     "check": "burst: the rolling restart took over Turns",
+     "ok": true,
+     "acceptance": false,
+     "details": {
+      "sessions": 101,
+      "byReason": {
+       "released": 189
+      },
+      "beforeFirstSandboxUse": 98
+     }
+    }
+   ]
+  }
+ },
+ "kill": {
+  "summary": {
+   "msIntentToKill": 13302,
+   "msKillToTakeover": 26277,
+   "msTakeoverToTool": 143256,
+   "msIntentToTool": 182835,
+   "resumed": [
+    {
+     "ts": "2026-10-24T10:16:02.507Z",
+     "seq": 14,
+     "reason": "expired",
+     "generation": 2
+    }
+   ],
+   "toolErrors": [
+    {
+     "name": "bash",
+     "code": null,
+     "source": "host",
+     "ts": "2026-10-24T10:16:02.516Z"
+    }
+   ],
+   "sessionErrors": [],
+   "prepares": 2,
+   "prepareRetries": 1,
+   "finalText": "RESULT:reconcile-1792836553155-kill",
+   "binding": {
+    "state": "ready",
+    "sandboxId": "sandbox-system--oma-scale-test-20261021-fn729",
+    "creatingSince": null,
+    "pastDeadline": false,
+    "reclaiming": false,
+    "dbNow": "2026-10-24T10:18:30.529Z",
+    "extra": {
+     "state_since": "2026-10-24T18:18:23.089265+08:00",
+     "last_error_at": null,
+     "last_error_code": null,
+     "skills_set_hash": "39bd81253647ecd67f7f191ab79114b7bee84427fb395ede5f555d59621cad6e",
+     "last_error_reason": null,
+     "skills_generation": 1792837103562,
+     "skills_sandbox_id": "sandbox-system--oma-scale-test-20261021-fn729"
+    }
+   },
+   "environment": {
+    "state": "ready",
+    "since": "2026-10-24T10:18:23.089Z",
+    "last_error": null
+   }
+  },
+  "checks": [
+   {
+    "check": "kill: Turn completed",
+    "ok": true,
+    "acceptance": true
+   },
+   {
+    "check": "kill: takeover recorded after the kill",
+    "ok": true,
+    "acceptance": true
+   },
+   {
+    "check": "kill: Sandbox used successfully after the kill",
+    "ok": true,
+    "acceptance": true
+   },
+   {
+    "check": "kill: tool use resumed within 180 s of the takeover",
+    "ok": true,
+    "acceptance": true
+   },
+   {
+    "check": "kill: tool use resumed within 180 s + 60 s of the creation intent",
+    "ok": true,
+    "acceptance": true
+   },
+   {
+    "check": "kill: no Turn ended with sandbox_unavailable",
+    "ok": true,
+    "acceptance": true
+   },
+   {
+    "check": "kill: the takeover followed lease expiry",
+    "ok": true,
+    "acceptance": false
+   },
+   {
+    "check": "kill: final answer reports the marker",
+    "ok": true,
+    "acceptance": false
+   }
+  ]
+ },
+ "cleanup": [
+  {
+   "check": "cleanup: Sessions terminated",
+   "ok": true,
+   "acceptance": false,
+   "details": {
+    "count": 200,
+    "failures": []
+   }
+  },
+  {
+   "check": "cleanup: termination cleared every binding of this run",
+   "ok": true,
+   "acceptance": false,
+   "details": {
+    "at": "2026-10-24T10:32:32.208Z",
+    "sessions": 200,
+    "cleanupRows": 200,
+    "cleanupCompleted": 200,
+    "bindings": 200,
+    "bindingsLeft": []
+   }
+  },
+  {
+   "check": "cleanup: Sessions terminated",
+   "ok": true,
+   "acceptance": false,
+   "details": {
+    "count": 201,
+    "failures": []
+   }
+  },
+  {
+   "check": "cleanup: termination cleared every binding of this run",
+   "ok": true,
+   "acceptance": false,
+   "details": {
+    "at": "2026-10-24T10:32:11.774Z",
+    "sessions": 201,
+    "cleanupRows": 201,
+    "cleanupCompleted": 201,
+    "bindings": 201,
+    "bindingsLeft": []
+   }
+  },
+  {
+   "check": "cleanup: Sessions terminated",
+   "ok": true,
+   "acceptance": false,
+   "details": {
+    "count": 400,
+    "failures": []
+   }
+  },
+  {
+   "check": "cleanup: termination cleared every binding of this run",
+   "ok": true,
+   "acceptance": false,
+   "details": {
+    "at": "2026-10-24T10:36:04.739Z",
+    "sessions": 400,
+    "cleanupRows": 400,
+    "cleanupCompleted": 400,
+    "bindings": 400,
+    "bindingsLeft": []
+   }
+  }
+ ]
+}

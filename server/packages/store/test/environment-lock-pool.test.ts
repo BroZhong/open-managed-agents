@@ -25,7 +25,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded
       await new Promise(resolve => setTimeout(resolve, 50));
       await pool.query("SELECT 1");
       inside--;
-      return { sandboxId: `sandbox-${binding}`, value: binding };
+      return { next: { ready: `sandbox-${binding}` }, value: binding };
     })));
     expect(results).toEqual(bindings);
     // Unrelated bindings proceed concurrently beyond the pool size.
@@ -38,20 +38,26 @@ describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded
 
   it("serializes one binding in process and rejects a concurrent durable writer", async () => {
     const order: string[] = [];
-    await Promise.all([1, 2].map(n => stores.delegationStore.withEnvironmentLock("serial", async id => {
-      order.push(`start-${n}:${id}`);
+    await Promise.all([1, 2].map(n => stores.delegationStore.withEnvironmentLock("serial", async ({ sandboxId }) => {
+      order.push(`start-${n}:${sandboxId}`);
       await new Promise(resolve => setTimeout(resolve, 20));
       order.push(`end-${n}`);
-      return { sandboxId: `sandbox-${n}`, value: undefined };
+      return { next: { ready: `sandbox-${n}` }, value: undefined };
     })));
     expect(order).toEqual(["start-1:null", "end-1", "start-2:sandbox-1", "end-2"]);
 
     const other = await createPgStores(pool, { ensureSchema: false });
-    await expect(stores.delegationStore.withEnvironmentLock("serial", async id => {
+    await expect(stores.delegationStore.withEnvironmentLock("serial", async ({ sandboxId }) => {
       // Another Runner commits a different binding while this callback runs.
-      await other.delegationStore.withEnvironmentLock("serial", async () => ({ sandboxId: "foreign", value: undefined }));
-      return { sandboxId: `${id}-replaced`, value: undefined };
+      await other.delegationStore.withEnvironmentLock("serial", async () => ({ next: { ready: "foreign" }, value: undefined }));
+      return { next: { ready: `${sandboxId}-replaced` }, value: undefined };
     })).rejects.toThrow("changed concurrently");
-    expect(await stores.delegationStore.withEnvironmentLock("serial", async id => ({ sandboxId: id, value: id }))).toBe("foreign");
+    expect(await stores.delegationStore.withEnvironmentLock("serial", async ({ sandboxId }) => ({ value: sandboxId }))).toBe("foreign");
+    // An intent another Runner committed meanwhile also fails a move.
+    await expect(stores.delegationStore.withEnvironmentLock("serial", async () => {
+      await other.delegationStore.withEnvironmentLock("serial", async () => ({ next: "creating", value: undefined }));
+      return { next: "cold", value: undefined };
+    })).rejects.toThrow("changed concurrently");
+    expect(await stores.delegationStore.withEnvironmentLock("serial", async ({ creatingSince }) => ({ value: creatingSince }))).toBeInstanceOf(Date);
   });
 });

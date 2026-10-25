@@ -6,6 +6,7 @@ import { PendingEventClaimLostError, packSkillBundle } from "@oma-server/store";
 import {
   FakeSandboxClient,
   DefaultSandboxManager,
+  DefaultTurnSandboxes,
 } from "@oma-server/sandbox";
 import type {
   PendingEventStore,
@@ -123,8 +124,9 @@ const legacyAgent: Agent = {
 
 /**
  * Wire the real Sandbox Manager with a shared mounted Workspace and an
- * in-memory Skill Bundle store. The Router still owns the complete
- * Session lifecycle and emits the durable completion/error events.
+ * in-memory Skill Bundle store, behind the Turn Sandboxes over the in-memory
+ * environment bindings. The Router still owns the complete Session
+ * lifecycle and emits the durable completion/error events.
  */
 function createDeps(opts: {
   adapter: Adapter;
@@ -139,7 +141,7 @@ function createDeps(opts: {
     Record<string, Readonly<Record<string, string>>>
   >;
 }) {
-  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
+  const { eventLogStore, pendingEventStore, sessionStore, delegationStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
   const skillBundleStore = opts.skillBundleStore ?? new InMemorySkillBundleStore();
@@ -147,7 +149,7 @@ function createDeps(opts: {
   const sandboxManager =
     opts.withManager === false
       ? undefined
-      : new DefaultSandboxManager({ sandboxClient, skillBundleStore });
+      : new DefaultSandboxManager({ sandboxClient, skillBundleStore, environment: "test" });
 
   const router = new SessionRouter({
     interruptedAdapterDrainTimeoutMs: opts.interruptedAdapterDrainTimeoutMs,
@@ -156,17 +158,21 @@ function createDeps(opts: {
     sessionStore,
     eventStreamHub,
     resolveAdapter: () => opts.adapter,
-    sandboxManager,
-    workspaceMount: {
-      bucket: "agentry",
-      agentName: "agentry-workspace",
-      pvName: "agentry-workspace-oss",
-      credentialProviderName: "agentry-oss-rw",
-    },
+    sandboxes: sandboxManager && new DefaultTurnSandboxes({
+      manager: sandboxManager,
+      bindings: delegationStore,
+      sessions: sessionStore,
+      workspaceMount: {
+        bucket: "agentry",
+        agentName: "agentry-workspace",
+        pvName: "agentry-workspace-oss",
+        credentialProviderName: "agentry-oss-rw",
+      },
+      defaultSandboxEnv: opts.defaultSandboxEnv,
+      managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
+    }),
     skillStore: opts.skillStore,
     agentStore: opts.agentStore,
-    defaultSandboxEnv: opts.defaultSandboxEnv,
-    managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
   });
 
   return {
@@ -895,11 +901,13 @@ describe("SessionRouter — Workspace availability after completed writes", () =
   it("does not probe after a completed answer; verifies the next Turn and recovers without replay", async () => {
     const sandboxClient = new FakeSandboxClient();
     let adapterRuns = 0;
+    const toolErrors: unknown[] = [];
     const adapter: Adapter = {
       async run(input) {
         const write = journalWriter(input);
         adapterRuns++;
-        await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`);
+        // A tool error, as Pi returns it to the model: the Turn goes on.
+        await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`).catch((error: unknown) => { toolErrors.push(error); });
         if (adapterRuns === 1) sandboxClient.setMountFailure(sandboxClient.created[0], "storage offline");
         await write({
           id: `answer-${adapterRuns}`, timestamp: "2026-09-14T00:00:00.000Z", type: "agent.message",
@@ -930,18 +938,23 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     await router.handleNewEvent(session.id, sandboxedAgent);
     expect(adapterRuns).toBe(1);
 
+    // The next Turn runs: its tool fails with the environment failure, and
+    // the Turn, its environment never ready again, ends with sandbox_unavailable.
     await enqueue(pendingEventStore, session.id, "cannot execute while unavailable");
     await router.handleNewEvent(session.id, sandboxedAgent);
-    expect(adapterRuns).toBe(1);
-    expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data).toContainEqual(expect.objectContaining({
-      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "sandbox_prepare_failed" }) }),
-    }));
+    expect(adapterRuns).toBe(2);
+    expect(toolErrors).toEqual([expect.objectContaining({ name: "SandboxUnavailable", code: "sandbox_unavailable", reason: "mount" })]);
+    const errors = async () => (await eventLogStore.getEvents(session.id, { limit: 100 })).data.filter((event) => event.type === "session.error");
+    expect((await errors()).map((event) => (event.data as { error: { code: string } }).error.code)).toEqual(["sandbox_unavailable"]);
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-1");
     sandboxClient.setMountFailure(sandboxClient.created[0]);
     await enqueue(pendingEventStore, session.id, "retry after recovery");
     await router.handleNewEvent(session.id, sandboxedAgent);
-    expect(adapterRuns).toBe(2);
+    expect(adapterRuns).toBe(3);
+    expect(toolErrors).toHaveLength(1);
+    expect(await errors()).toHaveLength(1);
     expect(sandboxClient.created).toHaveLength(1);
-    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-2");
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-3");
     expect((await sessionStore.getById(session.id))?.status).toBe("idle");
   });
 
@@ -1210,9 +1223,25 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     expect(adapterRan).toBe(false);
     expect(sandboxClient.created).toHaveLength(0);
     expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data).toContainEqual(expect.objectContaining({
-      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "sandbox_prepare_failed" }) }),
+      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "skills_invalid",
+        message: expect.stringMatching(names.length === 2 ? /duplicate name: same/ : /not one safe directory name/) }) }),
     }));
     expect((await sessionStore.getById(session.id))?.status).toBe("idle");
+  });
+
+  it("leaves the Turn of an Agent whose Skills could not be read to the claim's retry, not to skills_invalid", async () => {
+    const skillStore = new InMemorySkillStore();
+    vi.spyOn(skillStore, "getById").mockRejectedValue(new Error("database unavailable"));
+    let adapterRan = false;
+    const adapter: Adapter = { async run() { adapterRan = true; return "finished"; } };
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({ adapter, skillStore });
+    const agent = { ...sandboxedAgent, skills: ["skill_1"] };
+    const session = await sessionStore.create({ tenantId: "tenant_1", agentId: agent.id, agent, workspaceId: "ws_1" });
+    await enqueue(pendingEventStore, session.id, "load equipped Skills");
+    await expect(router.handleNewEvent(session.id, agent)).rejects.toThrow("database unavailable");
+    expect(adapterRan).toBe(false);
+    expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data.filter((stored) => stored.type === "session.error")).toEqual([]);
+    expect(await pendingEventStore.peek(session.id)).not.toBeNull();
   });
 
   it("an existing Session picks up live Agent system, newly equipped Skills, and MCP", async () => {

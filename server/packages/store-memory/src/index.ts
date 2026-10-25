@@ -48,7 +48,15 @@ export interface MemoryStores {
   delegationStore: InMemoryDelegationStore;
 }
 
-export function createMemoryStores(): MemoryStores {
+export interface MemoryStoresOptions {
+  /**
+   * Stands in for PostgreSQL's now() where a store writes and judges it: the
+   * environment bindings' creation intents (ADR-0023). Default: system time.
+   */
+  databaseClock?: () => Date;
+}
+
+export function createMemoryStores(options: MemoryStoresOptions = {}): MemoryStores {
   let sessionStore!: InMemorySessionStore;
   let eventLogStore!: InMemoryEventLogStore;
   const pendingEventStore = new InMemoryPendingEventStore(async (sessionId) => {
@@ -101,6 +109,6 @@ export function createMemoryStores(): MemoryStores {
     userStore: new InMemoryUserStore(),
     workspaceStore,
     loopStore,
-    delegationStore: new InMemoryDelegationStore(sessionStore, pendingEventStore, eventLogStore, workspaceStore),
+    delegationStore: new InMemoryDelegationStore(sessionStore, pendingEventStore, eventLogStore, workspaceStore, options.databaseClock),
   };
 }

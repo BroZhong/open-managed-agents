@@ -170,7 +170,8 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     const options = sdkSeam.resourceLoaderOptions[0];
     expect(options.noSkills).toBe(true);
     expect(options.additionalSkillPaths).toBeUndefined();
-    expect(options.extensionFactories).toHaveLength(3);
+    // The Turn journal, the image budget, the executor's environment errors and the Skill commands.
+    expect(options.extensionFactories).toHaveLength(4);
     expect(options.appendSystemPrompt).toEqual([
       "BASE",
       expect.stringContaining("<available_skills>"),

@@ -191,6 +191,20 @@ never implicitly replay the uncertain command. Completed OSS writes survive;
 local processes, memory and dependencies need not. No OMA idle scanner or
 never-timeout policy remains. See ADR-0019 and `docs/sandbox-lifecycle-deployment.md`.
 
+The environment binding records intent; whether a Sandbox exists is the
+gateway's answer. A binding is Ready (it names a Sandbox), Creating (an intent
+committed at a database-clock time) or Cold. A Creating binding past its
+180-second intent deadline is Unresolved: the next use asks the gateway for the
+Sandboxes labelled with the binding and adopts one or returns it to Cold, so
+no create outcome, known or not, blocks a Session. See ADR-0023.
+`GET /v1/sessions/{id}` reports the binding as the Session's environment:
+cold, creating or ready as above, or unavailable while the binding records
+the last **Environment failure** of its current state.
+
+**Environment failure**:
+A tool call that did not run because the Session's Sandbox was not ready: it could not be connected, its Workspace mount verified, or it created. It is a tool error whose result carries `details.code` `sandbox_unavailable` and a `details.reason`, which the model may retry; it never ends the **Turn** by itself. A Turn prepares its Sandbox beside the model's first request, and each preparation is visible as `span.sandbox_prepare_start`/`_end`. A Turn in which a tool call met one, and whose environment never became ready again, ends with `session.error` `sandbox_unavailable`, written only at the Turn's end; a failed preparation no tool call waited for shows in its span only. See ADR-0023 and `docs/sandbox-lifecycle-deployment.md`.
+_Avoid_: prepare failure, sandbox_prepare_failed
+
 **Environment Spec**:
 The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and the **Skill Set** to install. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
 _Avoid_: config, sandbox config, environment, EnvVars
@@ -200,7 +214,7 @@ The home of a **Workspace**'s persistent files. The Host accesses it through `Ar
 _Avoid_: sync engine, baseline, checkpoint publisher
 
 **Skill Install**:
-Placing one **Skill Set** version into a Sandbox at `/skills/<name>/`. The environment binding records which Sandbox and which Skill Set hash were last installed; when both match the current ones the install is skipped with no OSS or Sandbox call, which is why **Child Sessions** sharing the binding never reinstall an unchanged set. Otherwise the Sandbox downloads the bundles itself through short-lived presigned URLs for the OSS internal endpoint (it holds no OSS credentials), extracts them into a version directory that is owned by root and read-only, and atomically switches the `/skills` symlink to it; the binding is updated only after complete success. A change takes effect at the start of the next **Turn**; Turns sharing the Sandbox may see the new version after the switch, but never a half-installed tree. The install runs beside inference, the first tool call waits for it, and a failure ends the Turn with `skills_install_failed` (a Turn that never used the Sandbox keeps its answer); each install that runs is visible as `span.skills_install_start`/`_end` in the Session's events. Names must be safe single directory components, unique among the Agent's equipped Skills; `/skills` lies outside the Workspace mount and is never written back. See ADR-0022.
+Placing one **Skill Set** version into a Sandbox at `/skills/<name>/`. The environment binding records which Sandbox and which Skill Set hash were last installed; when both match the current ones the install is skipped with no OSS or Sandbox call, which is why **Child Sessions** sharing the binding never reinstall an unchanged set. Otherwise the Sandbox downloads the bundles itself through short-lived presigned URLs for the OSS internal endpoint (it holds no OSS credentials), extracts them into a version directory that is owned by root and read-only, and atomically switches the `/skills` symlink to it; the binding is updated only after complete success. A change takes effect at the start of the next **Turn**; Turns sharing the Sandbox may see the new version after the switch, but never a half-installed tree. The install runs beside inference, the first tool call waits for it, and a failure ends the Turn with `skills_install_failed` (a Turn that never used the Sandbox keeps its answer); each install that runs is visible as `span.skills_install_start`/`_end` in the Session's events. Names must be safe single directory components, unique among the Agent's equipped Skills, or the Turn ends with `skills_invalid` before it runs; `/skills` lies outside the Workspace mount and is never written back. See ADR-0022.
 _Avoid_: projection, sync, refresh, mount (nothing is copied on every Turn and nothing is mounted)
 
 ## Example Dialogue

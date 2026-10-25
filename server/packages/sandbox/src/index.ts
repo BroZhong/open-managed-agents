@@ -9,7 +9,36 @@ export type {
   SandboxExecChunk,
   SandboxExecOptions,
   SandboxFileEntry,
+  SandboxListFilter,
+  ListedSandbox,
 } from "./sandbox-client.js";
+
+export {
+  CLAIM_SECONDS,
+  WAIT_READY_SECONDS,
+  CREATE_REQUEST_MS,
+  INTENT_DEADLINE_SECONDS,
+  SandboxCreateRejected,
+} from "./sandbox-client.js";
+
+export {
+  SANDBOX_BINDING_LABEL,
+  SANDBOX_ENVIRONMENT_LABEL,
+  SWEEP_MAX_KILLS,
+  selectSweep,
+  type SandboxEnvironment,
+  type SweepBinding,
+  type SweepOptions,
+  type SweepDecision,
+  type SweepKillReason,
+  type SweepKeepReason,
+  type SweepCounts,
+  type SweepSelection,
+} from "./sandbox-sweep.js";
+
+export { killSandboxes, killBindingSandboxes, type SandboxKills } from "./sandbox-kill.js";
+
+export { SandboxSweeper, SWEEP_INTERVAL_MS, SWEEP_JITTER_MS, type SandboxSweeperDeps, type SweepRound } from "./sandbox-sweeper.js";
 
 export {
   E2BSandboxClient,
@@ -24,6 +53,7 @@ export {
   FakeSandboxClient,
   type FakeSandboxClientOptions,
   type FakeSkillInstallFault,
+  type FakeCreateFault,
 } from "./fake-sandbox-client.js";
 
 export {
@@ -54,6 +84,10 @@ export {
 export {
   DefaultSandboxManager,
   SandboxSessionClosed,
+  SandboxUnavailable,
+  type SandboxUnavailableReason,
+  type SandboxPrepareObserver,
+  type SandboxPrepareOutcome,
   type SandboxManager,
   type SandboxSession,
   type SandboxManagerDeps,
@@ -63,3 +97,19 @@ export {
   type PrepareOptions,
   type SkillInstallObserver,
 } from "./sandbox-manager.js";
+
+export { BINDING_REREAD_MS, type EnvironmentSignals } from "./environment-signals.js";
+
+export {
+  DefaultTurnSandboxes,
+  isSandboxedAgent,
+  type TurnSandboxes,
+  type TurnSandboxesDeps,
+  type SandboxLease,
+  type SandboxLeaseRequest,
+  type TurnSettlement,
+} from "./turn-sandboxes.js";
+
+export { skillsInstallFailedText, type TurnExecutorGuard } from "./turn-executor.js";
+
+export { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";

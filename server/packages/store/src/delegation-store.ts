@@ -1,9 +1,9 @@
 import { nanoid } from "nanoid";
-import type { DelegationStore, DelegationExecution, DelegationAcceptInput, DelegationCaller, DelegationCommand, DelegationOutcome, DelegationWait, InstalledSkillSet, ResourceUseLease, SkillSetRecordOutcome } from "./interfaces/delegation-store.js";
+import type { DelegationStore, DelegationExecution, DelegationAcceptInput, DelegationCaller, DelegationCommand, DelegationOutcome, DelegationWait, EnvironmentBinding, EnvironmentFailure, EnvironmentLockResult, EnvironmentStatus, InstalledSkillSet, ResourceUseLease, SkillSetRecordOutcome } from "./interfaces/delegation-store.js";
 import type { SessionStore } from "./interfaces/session-store.js";
 import type { PendingEventStore, PendingEventFence } from "./interfaces/pending-event-store.js";
 import type { EventLogStoreAppendInput } from "./interfaces/event-log-store.js";
-import type { StoredEvent } from "./types.js";
+import type { Session, StoredEvent } from "./types.js";
 import { PendingEventClaimLostError } from "./errors.js";
 
 export type DelegationTable = "executions" | "waits" | "commands" | "resource_uses";
@@ -25,9 +25,17 @@ const identity = (caller: DelegationCaller) => JSON.stringify([caller.tenantId, 
 const callerFilter = (caller: DelegationCaller) => ({ tenantId: caller.tenantId, callerSessionId: caller.callerSessionId, callerTurnId: caller.callerTurnId, callerToolUseId: caller.callerToolUseId });
 export abstract class TransactionalDelegationStore implements DelegationStore {
   protected abstract transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T>;
-  abstract withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  abstract withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
   abstract installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
   abstract recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
+  /** The binding's row as `environment` reads it, without its lock; undefined before its first use. */
+  protected abstract environmentRecord(bindingId: string): Promise<EnvironmentRecord | undefined>;
+  async environment(bindingId: string): Promise<EnvironmentStatus> {
+    const row = await this.environmentRecord(bindingId);
+    if (!row) return { state: "cold", since: null, lastError: null };
+    const state = row.lastError ? "unavailable" : row.sandboxId !== null ? "ready" : row.creatingSince !== null ? "creating" : "cold";
+    return { state, since: row.stateSince, lastError: row.lastError };
+  }
   private async execution(tx: DelegationTransaction, id: string): Promise<DelegationExecution> {
     const row = (await tx.read<DelegationExecution>("executions", { id }))[0];
     if (!row) throw new Error("Delegation execution not found");
@@ -372,3 +380,17 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
   }
 }
 export function delegationFenceLost(sessionId: string, fence: PendingEventFence): never { throw new PendingEventClaimLostError(sessionId, fence.eventId, fence.ownerId, fence.generation); }
+/**
+ * A binding's row as the Session API reads it (ADR-0023): what it records,
+ * when its state began and its last environment failure (migration 0025).
+ */
+export interface EnvironmentRecord {
+  sandboxId: string | null;
+  creatingSince: Date | null;
+  stateSince: Date | null;
+  lastError: (EnvironmentFailure & { at: Date }) | null;
+}
+/** The binding a Session's Sandbox is reached through: its root's, which a Child Session shares. */
+export function environmentBindingId(session: Pick<Session, "id" | "delegation">): string {
+  return session.delegation?.sandboxSessionId ?? session.id;
+}

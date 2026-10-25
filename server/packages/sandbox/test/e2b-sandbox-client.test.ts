@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
-import { SandboxNotFoundError } from 'e2b';
+import { Sandbox, SandboxNotFoundError } from 'e2b';
 import {
   E2BSandboxClient,
   parseFindOutput,
@@ -11,6 +11,7 @@ import {
   type E2BCommandHandle,
 } from "../src/e2b-sandbox-client.js";
 import type { SandboxExecChunk } from "../src/sandbox-client.js";
+import { CLAIM_SECONDS, CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SandboxCreateRejected, WAIT_READY_SECONDS } from "../src/index.js";
 
 /** A recorded `commands.run` call. */
 interface RunCall {
@@ -283,9 +284,13 @@ describe('managed Sandbox lifetime and exit evidence', () => {
       metadata: { 'oma.dev/binding': 'parent',
         'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
         'e2b.agents.kruise.io/claim-timeout-seconds': '150',
-        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '150' },
+        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '135' },
     });
     expect(factoryCalls[0].opts.metadata).not.toHaveProperty('e2b.agents.kruise.io/never-timeout');
+  });
+  it('derives every creation budget from the gateway claim timeout', () => {
+    expect([WAIT_READY_SECONDS, CLAIM_SECONDS, CREATE_REQUEST_MS / 1000, INTENT_DEADLINE_SECONDS])
+      .toEqual([135, 150, 170, 180]);
   });
   it('retains uncertainty after a lost command stream, even if a later command exits', async () => {
     const { client, sandboxes } = makeClient();
@@ -387,11 +392,11 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].template).toBe("configured-template");
   });
 
-  it("create leaves mount provisioning to CSI and gives ALB cold starts enough request time", async () => {
+  it("create leaves mount provisioning to CSI and waits past the gateway's claim timeout", async () => {
     const { client, sandboxes, factoryCalls } = makeClient();
     await client.create();
     expect(sandboxes[0].runCalls).toEqual([]);
-    expect(factoryCalls[0].opts.requestTimeoutMs).toBe(185_000);
+    expect(factoryCalls[0].opts.requestTimeoutMs).toBe(170_000);
   });
 
   const target = {
@@ -877,6 +882,7 @@ describe("resolveTemplate", () => {
 });
 
 describe('direct lifecycle control-plane operations', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it('deletes an uncached Paused identity without connecting, and requires deletion confirmation', async () => {
     const kill = vi.fn(async () => true);
     const info = vi.fn().mockResolvedValueOnce({ state: 'paused' }).mockRejectedValueOnce(new SandboxNotFoundError('missing'));
@@ -894,7 +900,29 @@ describe('direct lifecycle control-plane operations', () => {
     await client.reconnect('same-id', {});
     await client.reconnect('same-id', {});
     expect(connect).toHaveBeenCalledTimes(2);
-    expect(connect).toHaveBeenLastCalledWith('same-id', expect.objectContaining({ timeoutMs: 86400000, requestTimeoutMs: 185000 }));
+    expect(connect).toHaveBeenLastCalledWith('same-id', expect.objectContaining({ timeoutMs: 86400000 }));
+  });
+  it('bounds connect by its own signal and gives the handle the same request default as a created one', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const connect = vi.fn(async (_id: string, _opts: { signal: AbortSignal; requestTimeoutMs: number }) => new FakeSandbox('same-id'));
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
+    await client.reconnect('same-id', {});
+    expect(timeout).toHaveBeenCalledWith(60_000);
+    expect(connect.mock.calls[0][1].signal).toBe(timeout.mock.results[0].value);
+    expect(connect.mock.calls[0][1].requestTimeoutMs).toBe(170_000);
+  });
+  it('bounds every other control-plane call by its own timeout, shorter than create', async () => {
+    const getInfo = vi.spyOn(Sandbox, 'getInfo').mockResolvedValueOnce({ state: 'running' } as Awaited<ReturnType<typeof Sandbox.getInfo>>)
+      .mockRejectedValueOnce(new SandboxNotFoundError('missing'));
+    const kill = vi.spyOn(Sandbox, 'kill').mockResolvedValue(true);
+    const setTimeout = vi.spyOn(Sandbox, 'setTimeout').mockResolvedValue();
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {} });
+    expect(await client.state('id')).toBe('running');
+    await client.setTimeout('id', 1800);
+    await client.destroy('id');
+    expect(getInfo).toHaveBeenCalledWith('id', expect.objectContaining({ apiKey: 'fixture', requestTimeoutMs: 20_000 }));
+    expect(setTimeout).toHaveBeenCalledWith('id', 1_800_000, expect.objectContaining({ requestTimeoutMs: 30_000 }));
+    expect(kill).toHaveBeenCalledWith('id', expect.objectContaining({ requestTimeoutMs: 30_000 }));
   });
 });
 
@@ -907,5 +935,115 @@ describe('environmental stream failure', () => {
     expect(sandboxes[0].processKill).not.toHaveBeenCalled();
     expect(sandboxes[0].processDisconnect).toHaveBeenCalledOnce();
     expect(client.hasUncertainExecution(id)).toBe(true);
+  });
+});
+
+describe("listing Sandboxes from the gateway (ADR-0023)", () => {
+  /**
+   * A gateway on localhost that parses `metadata` as upstream
+   * pkg/servers/e2b/list.go does: the query string's decoding, one more
+   * unescape, then a split into key=value pairs, no further decoding.
+   */
+  async function gateway(pages: Array<{ body: unknown[]; next?: string }>) {
+    const { createServer } = await import("node:http");
+    const requests: Array<{ url: URL; apiKey?: string; metadata: Record<string, string> }> = [];
+    const server = createServer((request, response) => {
+      const url = new URL(request.url!, "http://gateway");
+      const metadata = Object.fromEntries(decodeURIComponent(url.searchParams.get("metadata") ?? "").split("&")
+        .filter(Boolean).map((pair) => pair.split("=", 2) as [string, string]));
+      requests.push({ url, apiKey: request.headers["x-api-key"] as string | undefined, metadata });
+      const page = pages[requests.length - 1];
+      if (!page) { response.writeHead(500).end(JSON.stringify({ message: "secret annotation" })); return; }
+      response.writeHead(200, { "content-type": "application/json", ...(page.next ? { "x-next-token": page.next } : {}) });
+      response.end(JSON.stringify(page.body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    vi.stubEnv("E2B_API_URL", `http://127.0.0.1:${port}`);
+    return { requests, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  }
+  const entry = (sandboxID: string, extra: Record<string, unknown> = {}) => ({
+    sandboxID, templateID: "auto-story-v2", state: "running", metadata: { "oma.dev/binding": "sesn_1" },
+    startedAt: "2026-10-22T13:20:10Z", endAt: "2026-10-23T13:20:10Z", cpuCount: 2, memoryMB: 4096, ...extra,
+  });
+  const client = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", verifyWorkspaceProbe: async () => {} });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("filters by exact labels the gateway can parse, follows x-next-token and maps the year-1 deadline to none", async () => {
+    const server = await gateway([
+      { body: [entry("sbx-a"), entry("sbx-b", { state: "paused", endAt: "0001-01-01T00:00:00Z" })], next: "page-2" },
+      { body: [entry("sbx-c", { metadata: null })] },
+    ]);
+    try {
+      const listed = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" }, states: ["running", "paused"] });
+      expect(listed).toEqual([
+        { sandboxId: "sbx-a", state: "running", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
+        { sandboxId: "sbx-b", state: "paused", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: null },
+        { sandboxId: "sbx-c", state: "running", metadata: {}, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
+      ]);
+      expect(server.requests.map(({ metadata }) => metadata)).toEqual(Array(2).fill({ "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" }));
+      expect(server.requests.map(({ url }) => [url.searchParams.get("state"), url.searchParams.get("limit"), url.searchParams.get("nextToken")]))
+        .toEqual([["running,paused", "100", null], ["running,paused", "100", "page-2"]]);
+      expect(server.requests.every(({ apiKey }) => apiKey === "gateway-key")).toBe(true);
+    } finally { await server.close(); }
+  });
+
+  it("lists every Sandbox of the API key, across pages, when no label filters", async () => {
+    const server = await gateway([{ body: [entry("sbx-a")], next: "page-2" }, { body: [entry("sbx-b", { metadata: { "oma.dev/environment": "production" } })] }]);
+    try {
+      const listed = await client().listSandboxes({ metadata: {}, states: ["running", "paused"] });
+      expect(listed.map(({ sandboxId }) => sandboxId)).toEqual(["sbx-a", "sbx-b"]);
+      expect(server.requests.map(({ url }) => url.searchParams.has("metadata"))).toEqual([false, false]);
+      expect(server.requests.map(({ url }) => url.searchParams.get("nextToken"))).toEqual([null, "page-2"]);
+    } finally { await server.close(); }
+  });
+
+  it("fails on a gateway error without repeating its body", async () => {
+    const server = await gateway([]);
+    try {
+      const failure = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1" }, states: ["running"] }).catch((error: Error) => error);
+      expect(failure).toEqual(new Error("Sandbox list answered HTTP 500"));
+    } finally { await server.close(); }
+  });
+});
+
+describe("classifying a failed create by the gateway's answer (ADR-0023)", () => {
+  /** A gateway on localhost that answers every create with `answer`. */
+  async function gateway(answer: (response: import("node:http").ServerResponse) => void) {
+    const { createServer } = await import("node:http");
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => answer(response));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    vi.stubEnv("E2B_API_URL", `http://127.0.0.1:${port}`);
+    return { close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }) };
+  }
+  /** The real SDK's create, as production calls it. */
+  const create = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", verifyWorkspaceProbe: async () => {} })
+    .create({ metadata: { "oma.dev/binding": "sesn_1" } }).catch((error: unknown) => error);
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it.each([400, 401, 403, 409, 429, 500, 503])("reports an HTTP %i answer by its status alone", async (status) => {
+    const server = await gateway((response) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify({ code: status, message: "claim failed: secret annotation" }));
+    });
+    try {
+      const failure = await create();
+      expect(failure).toBeInstanceOf(SandboxCreateRejected);
+      expect(failure).toMatchObject({ status, message: `Sandbox create answered HTTP ${status}` });
+      expect(JSON.stringify(failure) + String(failure)).not.toMatch(/secret/);
+    } finally { await server.close(); }
+  });
+
+  it("reports a connection lost before any answer as no answer at all", async () => {
+    const server = await gateway((response) => { response.socket?.destroy(); });
+    try {
+      const failure = await create();
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(SandboxCreateRejected);
+    } finally { await server.close(); }
   });
 });

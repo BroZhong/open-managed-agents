@@ -8,6 +8,22 @@ including time spent pausing, not a guaranteed 24 hours after completion.
 The original gate's delayed-pause evidence remains valid; this is a contract
 clarification, not a claim that the platform was fixed.
 
+Partly superseded and revised by [ADR-0023](0023-sandbox-binding-reconciliation.md)
+(2026-10-24):
+
+- **Superseded:** "Faults and persistence" — an ambiguous create or binding
+  commit no longer blocks automatic replacement and no longer needs an operator.
+  The binding records a creation intent with a deadline; past it, OMA lists the
+  gateway's Sandboxes by `oma.dev/binding` and adopts, clears or deduplicates.
+- **Superseded:** "Decision" — "no … adoption phase" and "no OMA idle clock or
+  reclamation scanner": OMA adopts by binding, termination reclaims every
+  Sandbox the gateway lists for the binding, and every Runner runs a sweeper.
+  There is still no idle clock in OMA; deadlines stay on the platform.
+- **Revised:** the 185 s client request budget (slightly longer than ALB's
+  180 s) — the Runner calls the gateway in-cluster, and the budgets derive from
+  the 150 s claim timeout: wait-ready 135 s < claim 150 s < create request
+  170 s < intent deadline 180 s.
+
 ## Decision
 
 > **Revised by [ADR-0022](0022-skill-bundles.md):** "refreshes Skills" below

@@ -152,7 +152,13 @@ export const PG_COSTS: Record<string, Cost> = {
   // Two open-state scans (partial indexes, 0021) joined to sessions; a transaction only when something is found.
   "delegationStore.reconcileTerminatedExecutions": (facts) => [ix("SELECT", "delegation_executions"), ix("SELECT", "delegation_waits"),
     ...(((facts.result as unknown[]) ?? []).length ? delegationTx(0, EXECUTION_BY_ID, ...TX_SESSION, ...TX_SESSION) : [])],
-  "delegationStore.withEnvironmentLock": fixed([...tx(...ENVIRONMENT_ROW), ...tx(...ENVIRONMENT_ROW, pk("UPDATE", "delegation_environments"))]),
+  // A callback that throws (a Turn waiting for another's create) leaves after the
+  // snapshot; the UPDATE runs only when the callback moves the row or records an
+  // environment failure or the recovery from one (#290), counted as always.
+  "delegationStore.withEnvironmentLock": (facts) => facts.failed ? tx(...ENVIRONMENT_ROW)
+    : [...tx(...ENVIRONMENT_ROW), ...tx(...ENVIRONMENT_ROW, pk("UPDATE", "delegation_environments"))],
+  // GET /v1/sessions/{id}: one autocommitted read, no lock (#290).
+  "delegationStore.environment": fixed([pk("SELECT", "delegation_environments")]),
 
   // PgDelegationStore: transactions under the global delegation_lock
   "delegationStore.acquireResourceUse": fixed(delegationTx(1, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_resource_uses"))),

@@ -34,6 +34,8 @@ export type {
   SpanModelRequestEndEvent,
   SpanSkillsInstallStartEvent,
   SpanSkillsInstallEndEvent,
+  SpanSandboxPrepareStartEvent,
+  SpanSandboxPrepareEndEvent,
   SpanEvent,
   // Canonical events
   AgentMessageEvent,
@@ -72,7 +74,7 @@ export type {
   FileListEntry,
 } from "./tool-executor.js";
 
-export { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "./tool-executor.js";
+export { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ToolEnvironmentError } from "./tool-executor.js";
 
 export {
   generateEventId,

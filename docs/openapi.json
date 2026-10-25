@@ -1268,6 +1268,82 @@
           "has_more"
         ]
       },
+      "SessionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Session"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "environment": {
+                "$ref": "#/components/schemas/SessionEnvironment"
+              }
+            }
+          }
+        ],
+        "description": "A Session with its Sandbox environment, which every Host that keeps Sandbox bindings reports, as deployed Hosts do."
+      },
+      "SessionEnvironment": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "cold",
+              "creating",
+              "ready",
+              "unavailable"
+            ],
+            "description": "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records an environment failure (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call."
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first environment failure since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "last_error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "sandbox_unavailable",
+                "description": "As the failed tool results' details.code."
+              },
+              "reason": {
+                "type": "string",
+                "example": "unreachable",
+                "description": "As their details.reason: rejected, unknown, mount or unreachable."
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "ISO 8601 timestamp",
+                "example": "2026-07-14T00:00:00.000Z"
+              }
+            },
+            "required": [
+              "code",
+              "reason",
+              "at"
+            ],
+            "description": "The last environment failure observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves."
+          }
+        },
+        "required": [
+          "state",
+          "since",
+          "last_error"
+        ],
+        "description": "The state of the Session's Sandbox environment (ADR-0023). Read without waiting: a Turn's tool call may change it at any time."
+      },
       "SharedSession": {
         "type": "object",
         "properties": {
@@ -8316,13 +8392,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Session found; share credentials receive display fields only",
+            "description": "Session found, with its Sandbox environment; share credentials receive display fields only",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/Session"
+                      "$ref": "#/components/schemas/SessionDetail"
                     },
                     {
                       "$ref": "#/components/schemas/SharedSession"

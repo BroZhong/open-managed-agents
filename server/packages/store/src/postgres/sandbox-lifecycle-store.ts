@@ -1,8 +1,11 @@
 import type { Pool, PoolClient } from './connection.js';
-import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation } from '../interfaces/sandbox-lifecycle-store.js';
+import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore, UnsettledBinding } from '../interfaces/sandbox-lifecycle-store.js';
 
-/** Coordinates business execution and explicit termination. No idle scanner or resource clock. */
-export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
+/**
+ * Coordinates business execution and explicit termination, and gives the
+ * sweeper (ADR-0023) its read. No idle clock: deadlines stay on the platform.
+ */
+export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSweepStore {
   constructor(private readonly pool: Pool) {}
   async assertReady(): Promise<void> {
     const result = await this.pool.query("SELECT 1 FROM pg_trigger WHERE tgname = 'sandbox_input_coordination' AND tgrelid = 'pending_events'::regclass AND tgfoid = 'lock_sandbox_binding()'::regprocedure AND tgenabled IN ('O', 'A')");
@@ -60,23 +63,89 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
   }
   async claimReclamation(bindingId: string): Promise<SandboxReclamation | null> {
     return this.locked(bindingId, async client => {
-      const { rows: [row] } = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>('SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id=$1', [bindingId]);
-      if (!row.sandbox_id) return null;
-      if (row.reclaiming) return { bindingId, sandboxId: row.sandbox_id };
+      const { rows: [row] } = await client.query<{ sandbox_id: string | null; creating_since: Date | null; now: Date; reclaiming: boolean }>(
+        'SELECT sandbox_id, creating_since, now() AS now, reclaiming FROM delegation_environments WHERE id=$1', [bindingId]);
+      // Whatever the row records, even nothing: a lost create can leave a
+      // Sandbox only the gateway knows, and reclamation kills it by binding.
+      const ticket: SandboxReclamation = { bindingId, sandboxId: row.sandbox_id, creatingSince: row.creating_since, now: row.now };
+      if (row.reclaiming) return ticket;
       const busy = await client.query(`SELECT 1 FROM delegation_resource_uses u JOIN sessions s ON s.id=u.record->>'sessionId'
         WHERE u.record->>'sandboxSessionId'=$1 AND s.status <> 'terminated'
         UNION ALL SELECT 1 FROM pending_events p JOIN sessions s ON s.id=p.session_id
         WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=$1 AND s.status <> 'terminated' LIMIT 1`, [bindingId]);
       if (busy.rows.length) return null;
       await client.query('UPDATE delegation_environments SET reclaiming=TRUE WHERE id=$1', [bindingId]);
-      return { bindingId, sandboxId: row.sandbox_id };
+      return ticket;
     });
   }
   async completeReclamation(ticket: SandboxReclamation): Promise<void> {
     await this.locked(ticket.bindingId, async client => {
-      const result = await client.query('UPDATE delegation_environments SET sandbox_id=NULL, reclaiming=FALSE WHERE id=$1 AND sandbox_id=$2 AND reclaiming=TRUE RETURNING id', [ticket.bindingId, ticket.sandboxId]);
+      // The ticket's row, as read (a Date has millisecond precision): nothing
+      // moves a reclaiming row, so only this reclamation's own callback matches.
+      // Clearing it is a move to Cold, as withEnvironmentLock writes one.
+      const result = await client.query(`UPDATE delegation_environments SET sandbox_id=NULL, creating_since=NULL, reclaiming=FALSE,
+          state_since=now(), last_error_code=NULL, last_error_reason=NULL, last_error_at=NULL
+        WHERE id=$1 AND reclaiming=TRUE AND sandbox_id IS NOT DISTINCT FROM $2
+          AND date_trunc('milliseconds', creating_since) IS NOT DISTINCT FROM $3::timestamptz RETURNING id`,
+      [ticket.bindingId, ticket.sandboxId, ticket.creatingSince]);
       if (result.rows.length) await client.query(`DELETE FROM delegation_resource_uses u USING sessions s
         WHERE s.id=u.record->>'sessionId' AND s.status='terminated' AND u.record->>'sandboxSessionId'=$1`, [ticket.bindingId]);
     });
+  }
+  /**
+   * One autocommitted statement over the bindings' rows; it inserts no row,
+   * so a binding without one stays absent. In use means a pending event of a
+   * non-terminated Session of the binding (a Child shares its root's), or a
+   * resource use whose input is still pending. Unlike claimReclamation, a use
+   * left after its input was acknowledged does not count: it records a Turn
+   * that ended with an uncertain execution, and ADR-0023 pauses that Sandbox
+   * 30 minutes after the sweeper finds it, as any idle one.
+   */
+  async sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts> {
+    const ids = [...new Set(bindingIds)];
+    // A list of parameters rather than = ANY($1): pg-mem, which runs this
+    // store's tests without a server, matches no row with ANY.
+    const listed = ids.length ? ids.map((_, i) => `$${i + 1}`).join(", ") : "NULL";
+    const { rows } = await this.pool.query<{ id: string | null; sandbox_id: string | null; creating_since: Date | null; reclaiming: boolean;
+      in_use: boolean; all_sessions_terminated: boolean; now: Date }>(
+      `WITH alive AS (
+         SELECT s.id, COALESCE(s.delegation->>'sandboxSessionId', s.id) AS binding_id FROM sessions s
+         WHERE s.status <> 'terminated' AND COALESCE(s.delegation->>'sandboxSessionId', s.id) IN (${listed})
+       ), in_use AS (
+         SELECT u.record->>'sandboxSessionId' AS binding_id FROM delegation_resource_uses u JOIN sessions s ON s.id = u.record->>'sessionId'
+           JOIN pending_events pu ON pu.id = u.record->>'pendingEventId'
+         WHERE u.record->>'sandboxSessionId' IN (${listed}) AND s.status <> 'terminated'
+         UNION SELECT a.binding_id FROM pending_events p JOIN alive a ON a.id = p.session_id
+       ), found AS (
+         SELECT e.id, e.sandbox_id, e.creating_since, e.reclaiming,
+           i.binding_id IS NOT NULL AS in_use, l.binding_id IS NULL AS all_sessions_terminated
+         FROM delegation_environments e
+         LEFT JOIN in_use i ON i.binding_id = e.id
+         LEFT JOIN (SELECT DISTINCT binding_id FROM alive) l ON l.binding_id = e.id
+         WHERE e.id IN (${listed})
+       )
+       -- One row even when no binding has one: it carries the clock.
+       SELECT f.*, clock.now FROM (SELECT now() AS now) clock LEFT JOIN found f ON TRUE`, ids);
+    return {
+      now: rows[0].now,
+      bindings: new Map(rows.flatMap((row) => row.id === null ? [] : [[row.id, {
+        sandboxId: row.sandbox_id, creatingSince: row.creating_since, reclaiming: row.reclaiming,
+        inUse: row.in_use, allSessionsTerminated: row.all_sessions_terminated,
+      }] as const])),
+    };
+  }
+  /**
+   * The deadline is judged by the database clock, as every Runner judges an
+   * intent's (ADR-0023). Reclaiming rows sort first: each one keeps its
+   * Sessions' Turns from being admitted until it completes. The interval is
+   * built from text, which pg-mem, running this store's tests without a
+   * server, also understands.
+   */
+  async unsettled(intentDeadlineSeconds: number, limit: number): Promise<UnsettledBinding[]> {
+    const { rows } = await this.pool.query<{ id: string; creating_since: Date | null; reclaiming: boolean }>(
+      `SELECT id, creating_since, reclaiming FROM delegation_environments
+       WHERE reclaiming OR (sandbox_id IS NULL AND creating_since <= now() - ($1::text || ' seconds')::interval)
+       ORDER BY reclaiming DESC, creating_since, id LIMIT $2`, [intentDeadlineSeconds, limit]);
+    return rows.map((row) => ({ bindingId: row.id, creatingSince: row.creating_since, reclaiming: row.reclaiming }));
   }
 }

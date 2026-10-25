@@ -4,7 +4,7 @@ import { skillBundleStorageConfigFromEnv, workspaceConfigFromEnv } from "../src/
 const env = {
   WORKSPACE_OSS_REGION: "oss-cn-shanghai", WORKSPACE_OSS_BUCKET: "agentry",
   WORKSPACE_OSS_ACCESS_KEY_ID: "test-id", WORKSPACE_OSS_ACCESS_KEY_SECRET: "test-secret",
-  E2B_DOMAIN: "sandbox.agentry.welltop.tech", E2B_API_KEY: "test-e2b", SANDBOX_ENABLED: "true",
+  E2B_DOMAIN: "sandbox.agentry.welltop.tech", E2B_API_KEY: "test-e2b", SANDBOX_ENABLED: "true", OMA_ENVIRONMENT: "test",
 };
 
 describe("OSS Workspace startup configuration", () => {
@@ -17,12 +17,18 @@ describe("OSS Workspace startup configuration", () => {
     expect(config.oss.bucket).toBe("agentry");
     expect(config.oss.publicEndpoint).toBe("https://oss-cn-shanghai.aliyuncs.com");
     expect(config.mount).toEqual({ bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" });
-    expect(config.sandbox.requestTimeoutMs).toBe(185000);
-    expect(config.sandbox.defaultTemplate).toBe("auto-story-v2");
+    // Request budgets derive from the gateway's claim timeout in code (ADR-0023), not from configuration.
+    expect(config.sandbox).toEqual({ domain: "sandbox.agentry.welltop.tech", apiKey: "test-e2b", defaultTemplate: "auto-story-v2" });
   });
-  it("rejects a disabled mount and an SDK request deadline below the ALB window", () => {
+  it("labels Sandboxes with the Runner's environment and fails startup without a valid one (ADR-0023)", () => {
+    expect(workspaceConfigFromEnv(env).environment).toBe("test");
+    expect(workspaceConfigFromEnv({ ...env, OMA_ENVIRONMENT: " production " }).environment).toBe("production");
+    for (const value of [undefined, "", "prod", "staging", "Production"]) {
+      expect(() => workspaceConfigFromEnv({ ...env, OMA_ENVIRONMENT: value })).toThrow("Sandboxes require OMA_ENVIRONMENT=production or OMA_ENVIRONMENT=test");
+    }
+  });
+  it("rejects a disabled mount", () => {
     expect(() => workspaceConfigFromEnv({ ...env, SANDBOX_ENABLED: "false" })).toThrow("SANDBOX_ENABLED=true");
-    expect(() => workspaceConfigFromEnv({ ...env, E2B_REQUEST_TIMEOUT_MS: "60000" })).toThrow("180000");
   });
   it("signs Skill install URLs for the region's internal endpoint unless configured", () => {
     expect(skillBundleStorageConfigFromEnv(env)).toMatchObject({ bucket: "agentry", internalEndpoint: "https://oss-cn-shanghai-internal.aliyuncs.com" });

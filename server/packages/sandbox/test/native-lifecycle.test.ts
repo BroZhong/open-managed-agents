@@ -2,13 +2,15 @@ import { describe, it, expect, vi } from 'vitest';
 import { DefaultSandboxManager, type EnvSpec } from '../src/sandbox-manager.js';
 import { FakeSandboxClient } from '../src/fake-sandbox-client.js';
 import type { ToolFileSystem } from '@open-managed-agents/adapter-core';
+import { durableBinding, signalBus } from './bindings.js';
 const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', workspaceMount: {
   bucket: 'agentry', prefix: 't/w/', agentName: 'agent', pvName: 'pv', credentialProviderName: 'credentials',
 } };
 function setup() {
   const client = new FakeSandboxClient();
-  const manager = new DefaultSandboxManager({ sandboxClient: client });
-  return { client, manager, session: manager.open(spec) };
+  // A Runner's handles of one binding hear its environment hints.
+  const manager = new DefaultSandboxManager({ sandboxClient: client, environment: 'test', environmentSignals: signalBus() });
+  return { client, manager, session: manager.open(spec, durableBinding()) };
 }
 describe('native lifecycle per Turn', () => {
   it('keeps chat cold and prepares only once per Turn, refreshing on the next Turn', async () => {
@@ -52,17 +54,26 @@ describe('native lifecycle per Turn', () => {
     expect(client.created).toHaveLength(1);
     expect(await session.readFile('saved')).toBe('once');
   });
-  it('never executes or creates again after an ambiguous binding commit', async () => {
+  it('runs nothing in a Sandbox whose binding write was lost, and waits for its intent instead of creating again', async () => {
     const { client, manager } = setup();
-    let stored: string | null = null;
+    const durable = durableBinding();
     let commits = 0;
-    const session = manager.open(spec, { withLock: async work => {
-      const result = await work(stored);
+    // The intent commits; the write that records the Sandbox is lost.
+    const session = manager.open(spec, { id: durable.id, withLock: work => durable.withLock(async binding => {
+      const result = await work(binding);
       if (++commits === 2) throw new Error('commit response lost');
-      stored = result.sandboxId; return result.value;
-    } });
-    await expect(session.writeFile('effect', 'x')).rejects.toThrow('commit response lost');
-    await expect(session.writeFile('effect', 'x')).rejects.toThrow(/unconfirmed/);
+      return result;
+    }) });
+    // An environment failure: the tool sees a stable message, its cause is kept.
+    await expect(session.writeFile('effect', 'x')).rejects.toMatchObject({ name: 'SandboxUnavailable', code: 'sandbox_unavailable',
+      reason: 'unreachable', cause: expect.objectContaining({ message: 'commit response lost' }) });
+    expect(durable.row()).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });
+    const turn = new AbortController();
+    await session.prepare(undefined, { signal: turn.signal });
+    const waiting = session.writeFile('effect', 'x');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    turn.abort(new DOMException('Session interrupted', 'AbortError'));
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
     expect(client.created).toHaveLength(1);
     expect(client.workspaceContents('t/w/').size).toBe(0);
   });
@@ -71,17 +82,7 @@ describe('native lifecycle per Turn', () => {
 describe('native lifecycle concurrency and late writes', () => {
   it('shares creation across independent handles of one binding', async () => {
     const { client, manager } = setup();
-    let id: string | null = null;
-    let pending = false;
-    let lock: Promise<unknown> = Promise.resolve();
-    const binding = { withLock<T>(work: (id: string | null, pending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
-      const result = lock.then(async () => {
-        const value = await work(id, pending);
-        id = value.sandboxId; pending = value.creationPending ?? pending;
-        return value.value;
-      });
-      lock = result.catch(() => {}); return result;
-    } };
+    const binding = durableBinding();
     const first = manager.open(spec, binding), second = manager.open(spec, binding);
     await Promise.all([first.writeFile('one', 'one'), second.writeFile('two', 'two')]);
     expect(client.created).toHaveLength(1);
@@ -120,10 +121,7 @@ describe('native lifecycle concurrency and late writes', () => {
 describe('Turn-scoped remote exit evidence', () => {
   it('retains uncertainty after iterator abandonment even when a sibling prepares the shared resource', async () => {
     const { client, manager } = setup();
-    let id: string | null = null;
-    const binding = { withLock: async <T>(work: (id: string | null) => Promise<{ sandboxId: string | null; value: T }>) => {
-      const result = await work(id); id = result.sandboxId; return result.value;
-    } };
+    const binding = durableBinding();
     const parent = manager.open(spec, binding);
     await parent.writeFile('saved', 'kept');
     vi.spyOn(client, 'exec').mockImplementationOnce(async function* () {

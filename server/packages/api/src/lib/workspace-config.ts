@@ -1,5 +1,5 @@
 import type { OSSArtifactStoreOptions, OSSSkillBundleStoreOptions } from "@oma-server/store";
-import type { WorkspaceMountSpec } from "@oma-server/sandbox";
+import type { SandboxEnvironment, WorkspaceMountSpec } from "@oma-server/sandbox";
 
 type HostEnv = Readonly<Record<string, string | undefined>>;
 function required(env: HostEnv, name: string): string {
@@ -29,14 +29,21 @@ export function skillBundleStorageConfigFromEnv(env: HostEnv): OSSSkillBundleSto
   return { ...oss, internalEndpoint: env.WORKSPACE_OSS_INTERNAL_ENDPOINT?.trim() || `https://${oss.region}-internal.aliyuncs.com` };
 }
 
+/**
+ * The environment the Runner's Sandboxes belong to. Every Sandbox it creates
+ * carries it as `oma.dev/environment`, and each environment's sweeper acts
+ * only on its own (ADR-0023); production and test share a gateway.
+ */
+function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
+  const value = env.OMA_ENVIRONMENT?.trim();
+  if (value !== "production" && value !== "test") throw new Error("Sandboxes require OMA_ENVIRONMENT=production or OMA_ENVIRONMENT=test");
+  return value;
+}
+
 export function workspaceConfigFromEnv(env: HostEnv) {
   const oss = workspaceStorageConfigFromEnv(env);
   const bucket = oss.bucket;
   if (env.SANDBOX_ENABLED !== "true") throw new Error("OSS Workspace requires SANDBOX_ENABLED=true");
-  const requestTimeoutMs = Number(env.E2B_REQUEST_TIMEOUT_MS ?? 185_000);
-  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs < 180_000 || requestTimeoutMs > 300_000) {
-    throw new Error("E2B_REQUEST_TIMEOUT_MS must be between 180000 and 300000 for the ALB 180-second window");
-  }
   const mount: Omit<WorkspaceMountSpec, "prefix"> = {
     bucket,
     agentName: env.WORKSPACE_OSS_AGENT_NAME || "agentry-workspace",
@@ -45,11 +52,11 @@ export function workspaceConfigFromEnv(env: HostEnv) {
   };
   return {
     oss, mount,
+    environment: sandboxEnvironmentFromEnv(env),
     sandbox: {
       domain: required(env, "E2B_DOMAIN"),
       apiKey: required(env, "E2B_API_KEY"),
       defaultTemplate: env.SANDBOX_TEMPLATE || "auto-story-v2",
-      requestTimeoutMs,
     },
   };
 }

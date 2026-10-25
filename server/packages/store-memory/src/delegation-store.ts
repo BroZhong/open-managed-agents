@@ -1,4 +1,4 @@
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type EnvironmentBinding, type EnvironmentLockResult, type EnvironmentRecord, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { InMemorySessionStore } from "./session-store.js";
 import type { InMemoryPendingEventStore } from "./pending-event-store.js";
 import type { InMemoryEventLogStore } from "./event-log-store.js";
@@ -6,11 +6,13 @@ import type { InMemoryEventLogStore } from "./event-log-store.js";
 export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private records = new Map<DelegationTable, Map<string, DelegationRecord>>();
   private queue: Promise<void> = Promise.resolve();
-  private environments = new Map<string, string | null>();
-  private creationPending = new Map<string, boolean>();
+  /** Environment binding rows; an absent one is Cold. */
+  private environments = new Map<string, EnvironmentRecord>();
   private installedSkills = new Map<string, InstalledSkillSet>();
-  private environmentQueue: Promise<void> = Promise.resolve();
-  constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">) { super(); }
+  private environmentQueues = new Map<string, Promise<void>>();
+  constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">,
+    /** Stands in for PostgreSQL's now(): the clock binding intents are written and judged with. */
+    private readonly databaseClock: () => Date = () => new Date()) { super(); }
   protected transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const perform = async () => {
       // The queue serializes these transactions, as the delegation lock row
@@ -63,19 +65,41 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
     this.queue = result.then(() => {}, () => {});
     return result;
   }
-  withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
-    const perform = async () => { const result = await work(this.environments.get(bindingId) ?? null, this.creationPending.get(bindingId) ?? false); this.environments.set(bindingId, result.sandboxId);
-      if (result.creationPending !== undefined) this.creationPending.set(bindingId, result.creationPending); return result.value; };
-    const result = this.environmentQueue.then(perform, perform);
-    this.environmentQueue = result.then(() => {}, () => {});
+  /**
+   * Serialized per binding, as one PostgreSQL store's callers are; with one
+   * writer per row the compare-and-set always applies. Bindings do not wait
+   * for each other, so a Runner a test loses inside one stalls no other.
+   */
+  withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+    const perform = async () => {
+      let row = this.environments.get(bindingId) ?? { sandboxId: null, creatingSince: null, stateSince: null, lastError: null };
+      const { value, next, observed } = await work({ sandboxId: row.sandboxId, creatingSince: row.creatingSince, now: this.databaseClock() });
+      const now = this.databaseClock();
+      // As PgDelegationStore writes them: a move begins a new state, a first
+      // failure begins unavailability, a ready observation ends it.
+      if (next) row = { sandboxId: typeof next === "object" ? next.ready : null, creatingSince: next === "creating" ? now : null, stateSince: now, lastError: null };
+      if (observed === "ready") { if (row.lastError) row = { ...row, stateSince: now, lastError: null }; }
+      else if (observed) row = { ...row, stateSince: row.lastError ? row.stateSince : now, lastError: { ...observed.failure, at: now } };
+      if (next || observed) this.environments.set(bindingId, row);
+      return value;
+    };
+    const previous = this.environmentQueues.get(bindingId) ?? Promise.resolve();
+    const result = previous.then(perform, perform);
+    const settled = result.then(() => {}, () => {});
+    this.environmentQueues.set(bindingId, settled);
+    void settled.then(() => { if (this.environmentQueues.get(bindingId) === settled) this.environmentQueues.delete(bindingId); });
     return result;
+  }
+  protected async environmentRecord(bindingId: string): Promise<EnvironmentRecord | undefined> {
+    const row = this.environments.get(bindingId);
+    return row && structuredClone(row);
   }
   async installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null> {
     const installed = this.installedSkills.get(bindingId);
     return installed ? { ...installed } : null;
   }
   async recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome> {
-    if ((this.environments.get(bindingId) ?? null) !== installed.sandboxId) return "detached";
+    if ((this.environments.get(bindingId)?.sandboxId ?? null) !== installed.sandboxId) return "detached";
     const recorded = this.installedSkills.get(bindingId);
     if (recorded?.sandboxId === installed.sandboxId && recorded.generation >= installed.generation) return "superseded";
     this.installedSkills.set(bindingId, { sandboxId: installed.sandboxId, setHash: installed.setHash, generation: installed.generation });

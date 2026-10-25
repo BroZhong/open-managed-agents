@@ -52,7 +52,8 @@ receiving APIs read the ordered authoritative PG log. Delta signals carry transi
 content and the original Turn, block and Redis entry identity. There is no second
 durable history. The process-local hub only fans out a received Redis signal to
 that API's sockets; it is never a cross-process fallback. Control signals (wake,
-check) and output signals (durable, Delta) travel on separate channels: a Runner
+check, and ADR-0023's `environment` hint for a Sandbox binding) and output
+signals (durable, Delta) travel on separate channels: a Runner
 subscribes only to control and publishes output without receiving it, so no
 Runner parses the fleet's Deltas; an API subscribes only to output.
 
@@ -119,8 +120,9 @@ Gateway cleanup cannot block the independent pending-input scan.
 Runners coordinate current business execution generations and shared queued input
 under ADR-0019. Only observed settlement may shorten a resource's native deadline;
 unknown execution does not request idle. There is no permanent resource activity
-table or Sandbox sweeper. Native finite deadlines bound resources after Runner
-loss. Explicit cleanup directly kills only when legitimate shared users are gone,
+table; every Runner runs ADR-0023's Sandbox sweeper, which kills the Sandboxes no
+binding will use. Native finite deadlines bound resources after Runner loss.
+Explicit cleanup directly kills only when legitimate shared users are gone,
 or clears a pointer after control-plane NotFound confirms native deletion. The
 existing committed deletion ticket and cleanup outbox remain retryable across
 Runners. Saved Workspace files and history are unaffected.

@@ -1,4 +1,4 @@
-export type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation } from './interfaces/sandbox-lifecycle-store.js';
+export type { SandboxActivity, SandboxBindingFacts, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore, UnsettledBinding } from './interfaces/sandbox-lifecycle-store.js';
 export { PgSandboxLifecycleStore } from './postgres/sandbox-lifecycle-store.js';
 export type {
   Agent,
@@ -86,7 +86,7 @@ export type {
   PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
-export { PendingEventClaimLostError } from "./errors.js";
+export { PendingEventClaimLostError, EnvironmentBindingChanged } from "./errors.js";
 
 export type {
   ApiKeyStore,
@@ -185,8 +185,8 @@ export type {
   SkillSetMember,
 } from "./skill-bundle.js";
 export type * from "./interfaces/delegation-store.js";
-export { TransactionalDelegationStore, delegationFenceLost } from "./delegation-store.js";
-export type { DelegationTransaction, DelegationRecord, DelegationTable } from "./delegation-store.js";
+export { TransactionalDelegationStore, delegationFenceLost, environmentBindingId } from "./delegation-store.js";
+export type { DelegationTransaction, DelegationRecord, DelegationTable, EnvironmentRecord } from "./delegation-store.js";
 export { PgDelegationStore } from "./postgres/delegation-store.js";
 
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";

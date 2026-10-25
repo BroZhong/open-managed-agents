@@ -146,6 +146,11 @@ As implemented (#268):
   unreadable record is `skills_install_failed` at stage `check`), and a
   skipped install is complete when preparation returns, as before. A cold
   Sandbox installs when the Turn's first Sandbox operation creates it.
+  Revised by ADR-0023 (#287): the Turn no longer waits for these steps; they
+  run beside the model's first request and the first Sandbox operation waits
+  for them. A failed reconnect or mount check is a tool error
+  (`sandbox_unavailable`), and an unreadable record is reported as an install
+  that failed at stage `check`, with the install failure semantics below.
 - Every Sandbox operation waits for the install. A failed install fails the
   operation without running it (`skills_install_failed: <error>. The tool was
   not executed.`), and the first such failure ends the Turn: the Router aborts

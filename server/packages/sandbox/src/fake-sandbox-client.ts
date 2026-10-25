@@ -12,12 +12,14 @@ import {
   type WorkspaceMountTarget,
 } from "./workspace-mount.js";
 import type {
+  ListedSandbox,
   SandboxClient,
   SandboxCreateOptions,
   SandboxExecChunk,
   SandboxExecOptions,
   SandboxFileEntry,
   SandboxHandle,
+  SandboxListFilter,
 } from "./sandbox-client.js";
 
 export interface FakeFile {
@@ -48,6 +50,16 @@ interface FakeSkills {
  */
 export type FakeSkillInstallFault = (stage: SkillInstallStage, signal?: AbortSignal) => void | Promise<void>;
 
+/**
+ * Fault injection into the emulated gateway's create, consulted as a request
+ * enters each step: `claim` before any Sandbox exists, `respond` once the
+ * Sandbox is claimed and listed but before the caller hears of it. A thrown
+ * error fails the request at that step (at `respond`, with a Sandbox the
+ * caller does not know); a promise that never settles is a request still in
+ * flight, or a caller that is gone.
+ */
+export type FakeCreateFault = (step: "claim" | "respond", opts: SandboxCreateOptions) => void | Promise<void>;
+
 interface FakeSandbox {
   id: string;
   files: Map<string, FakeFile>;
@@ -61,6 +73,10 @@ interface FakeSandbox {
   reclaimed: boolean;
   paused?: boolean;
   createOpts: SandboxCreateOptions;
+  /** When the gateway claimed it. */
+  claimedAt: Date;
+  /** The platform deadline; null when it has none. */
+  endAt: Date | null;
   mount?: WorkspaceMountTarget;
   mountFailure?: string;
   skills: FakeSkills;
@@ -81,6 +97,8 @@ export type FakeExecHandler = (
 export interface FakeSandboxClientOptions {
   /** Deterministic id generator; defaults to `sbx-fake-<n>`. */
   generateId?: () => string;
+  /** The gateway's clock: claim times and deadlines. Defaults to the system clock. */
+  clock?: () => Date;
   /**
    * Optional handler for `exec` calls. If it returns `undefined` the default
    * built-in handling (cat/ls/echo) applies.
@@ -101,7 +119,10 @@ export class FakeSandboxClient implements SandboxClient {
   hasUncertainExecution(_id: string): boolean { return false; }
   resetExecutionUncertainty(_id: string): void {}
   readonly deadlines: Array<{ id: string; seconds: number }> = [];
-  async setTimeout(id: string, seconds: number): Promise<void> { this.require(id); this.deadlines.push({ id, seconds }); }
+  async setTimeout(id: string, seconds: number): Promise<void> {
+    this.require(id).endAt = new Date(this.clock().getTime() + seconds * 1000);
+    this.deadlines.push({ id, seconds });
+  }
   pause(id: string): void { this.require(id).paused = true; }
   async state(id: string): Promise<'running' | 'paused' | 'missing'> {
     const sandbox = this.sandboxes.get(id);
@@ -121,9 +142,12 @@ export class FakeSandboxClient implements SandboxClient {
   readonly mountChecks: Array<{ id: string; target: WorkspaceMountTarget }> =
     [];
   private readonly generateId: () => string;
+  private readonly clock: () => Date;
   private readonly execHandler?: FakeSandboxClientOptions["execHandler"];
   /** See {@link FakeSkillInstallFault}. */
   skillInstallFault?: FakeSkillInstallFault;
+  /** See {@link FakeCreateFault}. */
+  createFault?: FakeCreateFault;
   private counter = 0;
   /** Monotonic timestamps make successive writes observable in file listings. */
   private mtimeClock = 0;
@@ -135,6 +159,7 @@ export class FakeSandboxClient implements SandboxClient {
 
   constructor(opts: FakeSandboxClientOptions = {}) {
     this.generateId = opts.generateId ?? (() => `sbx-fake-${++this.counter}`);
+    this.clock = opts.clock ?? (() => new Date());
     this.execHandler = opts.execHandler;
   }
 
@@ -198,6 +223,7 @@ export class FakeSandboxClient implements SandboxClient {
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
+    await this.createFault?.("claim", opts);
     const id = this.generateId();
     const volume = JSON.parse(
       opts.metadata?.["e2b.agents.kruise.io/csi-volume-config"] ?? "[]",
@@ -226,10 +252,26 @@ export class FakeSandboxClient implements SandboxClient {
       destroyed: false,
       reclaimed: false,
       createOpts: opts,
+      claimedAt: this.clock(),
+      endAt: opts.timeoutSeconds ? new Date(this.clock().getTime() + opts.timeoutSeconds * 1000) : null,
       skills: { bundles: new Map(), versions: new Map(), generation: 0, lock: Promise.resolve() },
     });
     this.created.push(id);
+    await this.createFault?.("respond", opts);
     return { id };
+  }
+
+  /** The gateway's filter: every label with its exact value; a destroyed or reclaimed Sandbox is not listed. */
+  async listSandboxes(filter: SandboxListFilter): Promise<ListedSandbox[]> {
+    const listed: ListedSandbox[] = [];
+    for (const sandbox of this.sandboxes.values()) {
+      if (sandbox.destroyed || sandbox.reclaimed) continue;
+      const state = sandbox.paused ? "paused" : "running";
+      const metadata = { ...sandbox.createOpts.metadata };
+      if (!filter.states.includes(state) || Object.entries(filter.metadata).some(([key, value]) => metadata[key] !== value)) continue;
+      listed.push({ sandboxId: sandbox.id, state, metadata, startedAt: sandbox.claimedAt, endAt: sandbox.endAt });
+    }
+    return listed;
   }
 
   /** Fault injection at the same mount verification port production uses. */

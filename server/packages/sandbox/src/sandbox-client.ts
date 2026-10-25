@@ -1,6 +1,39 @@
 export const SANDBOX_RUNNING_SECONDS = 24 * 60 * 60;
 export const SANDBOX_IDLE_SECONDS = 30 * 60;
 
+/**
+ * The gateway's real bound on a claim, including the waits for a claim worker
+ * and for readiness. Every creation budget derives from it (ADR-0023). The
+ * Runner calls the gateway in-cluster, so no ALB or proxy bounds them.
+ *
+ * wait-ready 135 s < claim 150 s < create request 170 s < intent deadline 180 s:
+ * - wait-ready runs inside the claim and leaves it time for init and mount;
+ * - the create request outwaits the claim, so the creator normally learns the
+ *   outcome itself instead of timing out;
+ * - the deadline outwaits the create request, and a client abort cancels the
+ *   gateway's claim, so after the deadline no create of that attempt is still
+ *   in flight;
+ * - the create request stays under the SDK HTTP client's 300 s header timeout,
+ *   which would otherwise end it first.
+ */
+export const CLAIM_SECONDS = 150;
+/** The readiness wait inside the claim. */
+export const WAIT_READY_SECONDS = CLAIM_SECONDS - 15;
+/** Client timeout of the create request. */
+export const CREATE_REQUEST_MS = (CLAIM_SECONDS + 20) * 1000;
+/** Counted from the committed creation intent; after it, no create of that attempt is in flight. */
+export const INTENT_DEADLINE_SECONDS = CLAIM_SECONDS + 30;
+
+/** When the creation intent committed at `creatingSince`, by the database clock, reaches its deadline (epoch ms). */
+export function intentExpiresAt(creatingSince: Date, deadlineSeconds = INTENT_DEADLINE_SECONDS): number {
+  return creatingSince.getTime() + deadlineSeconds * 1000;
+}
+
+/** Whether the creation intent committed at `creatingSince` is past its deadline at `now`, both by the database clock. */
+export function intentExpired(creatingSince: Date, now: Date, deadlineSeconds = INTENT_DEADLINE_SECONDS): boolean {
+  return now.getTime() >= intentExpiresAt(creatingSince, deadlineSeconds);
+}
+
 import type { WorkspaceMountTarget } from "./workspace-mount.js";
 
 /**
@@ -70,11 +103,69 @@ export interface SandboxCreateOptions {
 }
 
 /**
+ * A create the gateway answered with an HTTP error status. Only the status is
+ * kept: the answer's body can carry provider diagnostics and credentials
+ * (#260). A create that failed without an answer (a timeout, a lost
+ * connection) rejects with any other error.
+ */
+export class SandboxCreateRejected extends Error {
+  constructor(readonly status: number) {
+    super(`Sandbox create answered HTTP ${status}`);
+    this.name = "SandboxCreateRejected";
+  }
+}
+
+/**
  * A handle to one live sandbox. The `id` is backend-specific (the e2b
  * `sandboxId`); everything else is done through the client keyed by it.
  */
 export interface SandboxHandle {
   id: string;
+}
+
+/** One Sandbox as the gateway's list (`GET /v2/sandboxes`) returns it. */
+export interface ListedSandbox {
+  sandboxId: string;
+  state: "running" | "paused";
+  /** Includes annotations that can hold credentials (#260): never log it. */
+  metadata: Record<string, string>;
+  /** When the Sandbox was claimed. */
+  startedAt: Date;
+  /**
+   * The platform deadline: pause for a running Sandbox, deletion for a paused
+   * one. null when the Sandbox has none; `setTimeout` is then a no-op.
+   */
+  endAt: Date | null;
+}
+
+/** Which Sandboxes {@link SandboxClient.listSandboxes} returns. */
+export interface SandboxListFilter {
+  /** Every one of these labels, with exactly these values; none lists every Sandbox of the API key. */
+  metadata: Record<string, string>;
+  states: ReadonlyArray<ListedSandbox["state"]>;
+}
+
+/** One entry of the gateway's `GET /v2/sandboxes` body. */
+export interface GatewayListEntry {
+  sandboxID: string;
+  state: string;
+  metadata?: Record<string, string> | null;
+  startedAt: string;
+  endAt: string;
+}
+
+/**
+ * A listed Sandbox from its gateway entry; undefined in a state other than
+ * running or paused. The gateway reports "no deadline" as Go's zero time,
+ * 0001-01-01T00:00:00Z, which becomes null.
+ */
+export function listedSandbox(entry: GatewayListEntry): ListedSandbox | undefined {
+  if (entry.state !== "running" && entry.state !== "paused") return undefined;
+  const endAt = entry.endAt ? Date.parse(entry.endAt) : Number.NaN;
+  return {
+    sandboxId: entry.sandboxID, state: entry.state, metadata: entry.metadata ?? {},
+    startedAt: new Date(entry.startedAt), endAt: Number.isNaN(endAt) || endAt <= 0 ? null : new Date(endAt),
+  };
 }
 
 /**
@@ -95,10 +186,20 @@ export interface SandboxClient {
    */
   fileSystem?(id: string): ToolFileSystem;
 
-  /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
+  /**
+   * Create (schedule) a sandbox and resolve once it is ready to accept ops.
+   * Rejects with {@link SandboxCreateRejected} when the gateway answered
+   * with an error status.
+   */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
   /** Attach a Host to a persisted, trusted Sandbox identity without creating it. */
   reconnect(id: string, metadata: Record<string, string>): Promise<boolean>;
+  /**
+   * Every Sandbox the gateway lists for this API key that matches `filter`,
+   * across all pages: how a binding is reconciled with what exists
+   * (ADR-0023). The gateway filters exactly, from its cache.
+   */
+  listSandboxes(filter: SandboxListFilter): Promise<ListedSandbox[]>;
 
   /** Verify the real OSS mount, exact prefix and ordinary-user read/write access. */
   verifyWorkspaceMount(id: string, target: WorkspaceMountTarget): Promise<void>;
@@ -128,6 +229,9 @@ export interface SandboxClient {
   /** List recursively; missingOk returns empty only when the root is confirmed ENOENT. */
   list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]>;
 
-  /** Tear the sandbox down. Idempotent — destroying twice is a no-op. */
+  /**
+   * Tear the sandbox down; resolves only once the gateway confirms it missing.
+   * Idempotent — destroying twice is a no-op.
+   */
   destroy(id: string): Promise<void>;
 }

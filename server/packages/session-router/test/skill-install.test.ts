@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { packSkillBundle, type Skill, type SkillBundleInputFile, type SkillBundleStore } from "@oma-server/store";
-import { DefaultSandboxManager, FakeSandboxClient, isSkillInstallCommand, skillSetOf, type SkillInstallBudget } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, isSkillInstallCommand, skillSetOf, type SkillInstallBudget } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -54,8 +54,12 @@ async function harness(adapter: Adapter, options: { budget?: SkillInstallBudget;
   /** One Runner: its own Router and Sandbox Manager over the shared stores and Sandbox platform. */
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox, skillBundleStore: bundles, skillInstallBudget: options.budget }),
-    workspaceMount, pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
+    sandboxes: new DefaultTurnSandboxes({
+      manager: new DefaultSandboxManager({ sandboxClient: sandbox, skillBundleStore: bundles, skillInstallBudget: options.budget, environment: "test" }),
+      bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
+      onError: ({ error }) => errors.push(error),
+    }),
+    pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
     onDrainError: ({ error }) => errors.push(error),
     ...deps,
   });
@@ -399,10 +403,8 @@ describe("Skill Install beside inference (#268)", () => {
     const download = deferred();
     h.sandbox.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
     const order: string[] = [];
-    let atRequest: string[] = [];
     h.run(async (input, write) => {
-      await input.journal.flush();
-      atRequest = (await h.spans()).map((stored) => stored.type);
+      // The Turn-start connect, which decides the install, runs beside the request (ADR-0023).
       order.push("model request");
       const read = input.toolExecutor!.readFile(SKILL).then((body) => { order.push(`tool ran: ${body}`); return body; });
       await sleep(30);
@@ -412,8 +414,8 @@ describe("Skill Install beside inference (#268)", () => {
       await write(text("done"));
     });
     await h.turn();
-    expect(atRequest).toEqual(["span.skills_install_start"]);
     expect(order).toEqual(["model request", "install released after 0 business reads", "tool ran: v2"]);
+    expect((await h.spans()).map((stored) => stored.type)).toEqual(["span.skills_install_start", "span.skills_install_end"]);
     expect(h.errors).toEqual([]);
   });
 
