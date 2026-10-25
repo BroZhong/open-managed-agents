@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 read_version() { python3 -c 'import json,sys; v=json.load(open("versions.json"))
-for key in sys.argv[1].split("."): v=v[key]
+for key in sys.argv[1].split("/"): v=v[key]
 print(v)' "$1"; }
 image_version="$(read_version imageVersion)"
 base_image="$(read_version baseImage)"

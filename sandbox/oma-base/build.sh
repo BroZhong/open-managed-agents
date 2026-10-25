@@ -6,11 +6,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 read_version() { python3 -c 'import json,sys; v=json.load(open("versions.json"))
-for key in sys.argv[1].split("."): v=v[key]
+for key in sys.argv[1].split("/"): v=v[key]
 print(v)' "$1"; }
 image_version="$(read_version imageVersion)"
 base_image="$(read_version baseImage)"
-node_image="$(read_version node.image)"
+node_image="$(read_version node/image)"
 repository="$(read_version repository)"
 tag="${TAG:-oma-base-${image_version}}"
 image="${repository}:${tag}"
@@ -38,10 +38,10 @@ fi
 
 docker buildx build --platform linux/amd64 --load --provenance=false --progress plain \
   --build-arg "BASE_IMAGE=${base_image}" --build-arg "NODE_IMAGE=${node_image}" \
-  --build-arg "TINI_VERSION=$(read_version debian.tini)" \
-  --build-arg "PROCPS_VERSION=$(read_version debian.procps)" \
-  --build-arg "UNZIP_VERSION=$(read_version debian.unzip)" \
-  --build-arg "GLIB_VERSION=$(read_version debian.libglib2.0-0)" \
+  --build-arg "TINI_VERSION=$(read_version debian/tini)" \
+  --build-arg "PROCPS_VERSION=$(read_version debian/procps)" \
+  --build-arg "UNZIP_VERSION=$(read_version debian/unzip)" \
+  --build-arg "GLIB_VERSION=$(read_version debian/libglib2.0-0)" \
   --build-arg "IMAGE_VERSION=${image_version}" \
   --build-arg "BUILD_REVISION=$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
   --tag "$image" .
