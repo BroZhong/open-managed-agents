@@ -15,7 +15,7 @@ function response(overrides = {}) {
         endpointFailed: 0,
         endpointIgnored: 0,
         schemaCreated: 0,
-        schemaUpdated: 54,
+        schemaUpdated: 56,
         schemaFailed: 0,
         schemaIgnored: 0,
         endpointFolderFailed: 0,
@@ -49,10 +49,10 @@ test("accepts complete overwrite counters for the generated contract", () => {
     endpointUpdated: 75,
     endpointIgnored: 0,
     schemaCreated: 0,
-    schemaUpdated: 54,
+    schemaUpdated: 56,
     schemaIgnored: 0,
     expectedEndpoints: 75,
-    expectedSchemas: 54,
+    expectedSchemas: 56,
   });
 });
 
@@ -65,7 +65,7 @@ test("accepts a first import that creates every resource", () => {
       response({
         endpointCreated: 75,
         endpointUpdated: 0,
-        schemaCreated: 54,
+        schemaCreated: 56,
         schemaUpdated: 0,
       }),
     ),
@@ -73,11 +73,11 @@ test("accepts a first import that creates every resource", () => {
       endpointCreated: 75,
       endpointUpdated: 0,
       endpointIgnored: 0,
-      schemaCreated: 54,
+      schemaCreated: 56,
       schemaUpdated: 0,
       schemaIgnored: 0,
       expectedEndpoints: 75,
-      expectedSchemas: 54,
+      expectedSchemas: 56,
     },
   );
 });
@@ -117,7 +117,7 @@ test("rejects failed resources and impossible counter totals", () => {
     () =>
       validateImportResponse(
         document,
-        response({ schemaUpdated: 53, schemaFailed: 1 }),
+        response({ schemaUpdated: 55, schemaFailed: 1 }),
       ),
     /did not overwrite every schema/i,
   );
@@ -126,8 +126,8 @@ test("rejects failed resources and impossible counter totals", () => {
     /processed 76 endpoints instead of 75/i,
   );
   assert.throws(
-    () => validateImportResponse(document, response({ schemaUpdated: 55 })),
-    /processed 55 schemas instead of 54/i,
+    () => validateImportResponse(document, response({ schemaUpdated: 57 })),
+    /processed 57 schemas instead of 56/i,
   );
   assert.throws(
     () => validateImportResponse(document, response({ securitySchemeFailed: 1 })),
