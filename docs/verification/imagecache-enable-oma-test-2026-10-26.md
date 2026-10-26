@@ -54,3 +54,15 @@ ACS 客户端协议未修改。核查发现 CLI 的 `biz-region-id` 是别名；
 机器证据：[JSON](imagecache-enable-oma-test-2026-10-26.json)。本机完整脱敏记录及受控验收脚本在 `/tmp/oma-imagecache-enable-20261026/`，远端构建日志在 vfs-dev 的 `/tmp/oma-imagecache-build-20261026.log`。临时目录后续可能被系统清理。
 
 原有功能审查见 [Environments 审查报告](environments-review-regression-oma-test-2026-10-26.md)。
+
+## 独立复核（2026-10-26 15:10–15:18，北京时间）
+
+另一个会话按上文逐项复核，并补测了真实 Warm Pool 的补货：
+
+- **builder**：`oma-test/oma-image-builder` 1/1，镜像 `oma-server@sha256:38949f53…`；ConfigMap `WARM_POOL_IMAGE_CACHE=acs`、`WARM_POOL_ENVIRONMENT=env_video_production`、`SANDBOX_TEMPLATE=oma-test-sandbox`；Secret `oma-image-cache` 只有 `ACCESS_KEY_ID`、`ACCESS_KEY_SECRET` 两个键（只看键名）。
+- **RAM**：用户 `oma-test-image-cache` 只挂 `OmaTestImageCacheCreateList`；策略只有 v2 一个版本，只允许 `acc:CreateImageCache`、`acc:ListImageCaches`，资源 `acs:acc:cn-shanghai:<account-id>:imagecache/*`；1 个 AccessKey（Active），没有控制台登录。
+- **缓存**：`aliyun acc list-image-caches` 中名为 `oma-test-490544134a0313d8` 的只有一个，`imc-uf6do32uk5dsbid1cj13`，Ready，镜像为 `oma-environments@sha256:490544134a03…`。
+- **真实池补货**：池里唯一的未领取 Sandbox `oma-test-sandbox-tclcw` 建于缓存之前（04:54Z，没有 `matched-image-caches`）。删除它触发补货：新 Pod `oma-test-sandbox-trwzm` 07:16:33Z 创建，07:16:41Z `ImageCacheHit`，主容器 07:17:11Z 启动（**38 s**），镜像 "already present on machine"，`matched-image-caches` 为 `imc-uf6do32uk5dsbid1cj13`，Ready、restartCount 0。池 generation 仍为 3，镜像未变。
+- **代码**：`d19ecc30` 摘到集成分支 `docs/adr-0024-environments` 上，server typecheck 通过，builder 相关 4 个测试文件 49 个用例、`deploy/*.test.mjs` 46 个用例通过。
+- **观察**：池镜像不变时每次 reconcile（30 s）也会调用一次 `ListImageCaches`，约每天 2880 次；不影响功能，可以在进程内记住"该镜像缓存已 Ready"以省掉调用。
+- 本文链接的 `environments-review-regression-oma-test-2026-10-26.md` 尚未提交到任何分支。
