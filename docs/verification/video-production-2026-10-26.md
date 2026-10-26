@@ -12,6 +12,7 @@
    - `vfs_audio_contract_and_embedded_skills` 被 test 策略拦下。线上镜像挂上同一个策略后，这一项也同样失败。
 5. **替身不能代表 `oma-media`。** FFmpeg、Node、rg/fd、Pi 工具是从线上镜像复制进替身的。所以 FFmpeg/MediaKit 的检查通过，只说明脚本装的工具能和同一份 FFmpeg 配合，不说明 `oma-media` 正确。
 6. **oma-test 正式构建（2026-10-26，`oma-media-0.1.2`）与预演结论一致。** 镜像 `oma-environments@sha256:54d89827…`；对比结果与预演相同，而且 ffmpeg/ffprobe/node/rg/fd 的 sha256 与线上完全相同（`oma-media` 用同一份源码和 configure 选项编译）。逐项见下文“差异”。
+7. **同日维护者决定移除离线 Whisper，已重建。** 新镜像 `oma-environments@sha256:49054413…`，压缩后 1.100 GB（原 1.882 GB）。它的清单与 `54d89827…` 相比只少了 Whisper venv 的 25 个包，Sandbox 里也没有模型和 venv（[environments-oma-test-2026-10-26.md](environments-oma-test-2026-10-26.md) §10）。上面第 4 条里的 `offline_whisper` 和 Whisper 推理只适用于 `54d89827…`。
 
 ## 线上基线
 
@@ -112,12 +113,14 @@ LABEL dev.oma.environment=env_video_production dev.oma.build=dryrun-305-vfs-dev
 
 正式镜像 `oma-environments@sha256:54d89827…`（oma-test builder 构建，`oma-media-0.1.2`）对线上 `oma-sandbox@sha256:67a46af6…`。两份清单都用 `fixtures/sandbox-inventory.py` 采集：正式镜像在 vfs-dev 上 pull 后以 root、`--network none` 运行（2026-10-25T20:28:29Z）。没有列出的项完全相同。
 
+移除 Whisper 后的镜像 `oma-environments@sha256:49054413…` 没有重新跑采集脚本。它的构建清单与 `54d89827…` 相比只少了 Whisper venv 的 25 个包，其余逐项相同，所以下表对它同样成立；Python、离线 Whisper、层数/大小三行已按新镜像更新。
+
 | 项 | 线上 | video-production | 原因 |
 |---|---|---|---|
 | dpkg `tini` | 无 | 0.19.0-1+b3 | `oma-base` 的入口（ADR-0024） |
 | dpkg `ca-certificates` | 20250419~deb12u1 | ~deb12u2 | 构建 Base Image 时 bookworm 的更新，由 Base Image 决定 |
 | 其余 319 个 dpkg 包 | — | 相同 | libgl1 由脚本按线上版本安装，其余来自 Base Image |
-| Python（5 个解释器：Gemini venv 186、Whisper venv 25、`/opt/venv` 173、`/usr/bin/python3` 3、`/usr/local/bin/python3` 186） | — | 包与版本全部相同 | venv 锁定为线上的 `pip freeze`，其余作为约束 |
+| Python（Gemini venv 186、`/opt/venv` 173、`/usr/bin/python3` 3、`/usr/local/bin/python3` 186） | — | 包与版本全部相同 | venv 锁定为线上的 `pip freeze`，其余作为约束；线上的第五个解释器 Whisper venv 见“离线 Whisper”一行 |
 | npm（`/opt/oma-pi-tools` Pi 0.83.0、全局包） | — | 相同 | Pi 工具运行时由 `oma-base` 提供，版本与 Host 一致；预期中的“Pi 版本差异”实际没有出现 |
 | 二进制 ffmpeg、ffprobe、node、rg、fd | — | sha256 相同 | `oma-media` 用同一份 FFmpeg 源码与 configure 选项编译；node/rg/fd 来自 `oma-base` 的固定发布包 |
 | 二进制 vfs-cli、mediakit-cli、ossutil | — | sha256 相同；vfs-cli 属主 501:50 → root:root | 脚本校验归档和二进制哈希后用 `install -o root` 安装 |
@@ -125,7 +128,7 @@ LABEL dev.oma.environment=env_video_production dev.oma.build=dryrun-305-vfs-dev
 | 镜像 ENV | 代理 6 个、`HOME`、`WORKSPACE_DIR`、`MEDIAKIT_*`、`NODE_PATH`、`NPM_CONFIG_*`、`PIP_CACHE_DIR`、`PYTHONPATH`、`STORY_SEED_WORKSPACE`、`TMPDIR`、`XDG_CACHE_HOME` | 只有 ACS 的 ENV | ADR-0024：镜像不带变量。镜像 ENV 只有 PID 1 看得到；命令里的代理和 `MEDIAKIT_*` 来自本定义的变量（按命令注入，待新 Runner），路径类变量来自 Host 的 Workspace 变量 |
 | 入口 | `bash /root/.jupyter/start-up.sh` | `tini -g --` + 原命令 | ADR-0024 |
 | Labels | 0.3.3 的标签 | `oma-media` 的标签 + `dev.oma.environment`、`dev.oma.build`、`dev.oma.base-image` | builder 记录来源 |
-| 层数 / 压缩大小 | 65 / 1.875 GB | 43 / 1.882 GB | 新层主要是 Whisper 模型与 venv（约 0.86 GB） |
+| 层数 / 压缩大小 | 65 / 1.875 GB | 43 / 1.100 GB（`49054413…`；带 Whisper 的 `54d89827…` 是 43 / 1.882 GB） | Environment 层 116.8 MB，带 Whisper 时 899.7 MB，大头是模型与 venv |
 | `/etc/oma/proxy.env` | 有 | 无 | 代理由按命令注入的平台默认变量提供 |
 | `/etc/vfs-cli/policy.json` | 镜像里是空目录，运行时由 ConfigMap 挂载 | 镜像内文件，root 0644，字节与 ConfigMap 相同 | Warm Pool 不再挂载 ConfigMap；普通用户同样不能修改 |
 | `/opt/auto-story` 下的记录（`versions.json`、`tool-sha256.txt`、`debian-packages.txt`、`python-packages.txt`、`whisper-packages.txt`、`requirements.txt`、`whisper-requirements.txt`、`runtime-overlay/`、`vfs-cli-0.3.20/`、`vfs-cli-0.3.21/`） | 有 | 无 | 改由构建清单 `/opt/oma/manifest.json` 记录 |

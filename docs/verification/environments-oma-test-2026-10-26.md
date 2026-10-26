@@ -127,3 +127,63 @@
 - 临时 API key `apikey_mjaW8iwQBM1iOP-A7FUQV`：经 `DELETE /v1/api-keys/{id}` 吊销（`revoked_at` 06:52:40 +08:00），之后同一 key 返回 401；本地 key 文件和演示密钥文件已删除。
 - 保留：demo-ok、demo-fail（供下一阶段验证按命令注入）、ImageCache `imc-uf60a5qikevuelu3vmjm`、Warm Pool 停在 video-production 的镜像。
 - 没有改动 `oma-infra`、`auto-story-v2`、`base-secret`、生产 schema 或 oma-runner；没有应用 0029。vfs-dev 上留有 `oma-environments@sha256:54d89827…` 的本地镜像（采集清单用）。
+
+## 10. 移除 Whisper 后重建 video-production（后续，2026-10-26）
+
+维护者决定从 video-production 去掉离线 Whisper（`/opt/auto-story/whisper-venv` 和 `base.en` / `small` 模型）。提交 `0e165408`（分支 `wt/305-drop-whisper`，基于 `d90942ef`）删除了 `init.sh` 里的 venv、模型两段和自检里的 Whisper 导入，并加了测试保证脚本里不再出现 Whisper。逐项差异见 [video-production-2026-10-26.md](video-production-2026-10-26.md#差异正式镜像相对线上-033)。
+
+**Server 镜像**：在 vfs-dev 的 `~/workspace/yuzhong/oma-env-0e165408`（git bundle，`.buildx-cache` 复制自 `oma-env-d4953e20`）运行 `bash build.sh --push server`，用时 13 s，产出 `oma-server:0e1654082d87` = `sha256:03081cae4cb0b710afa9a80f510128a14db5a279480c61a8d91aa1af4e77ed73`。只有 `sandbox/environments/` 和其后的层是新的；web 没有改动，仍是 `oma-web@sha256:46c36354…`。
+
+**先发 builder**：`render.mjs test` 渲染（api/runner 仍是 `3fbff8c3…`，web `46c36354…`，builder 换成 `03081cae…`），`kubectl diff` 只有 `oma-image-builder` 的镜像一处。04:37:58Z apply，04:39:07Z rollout 完成。新 Pod 启动日志只有一行 `builtin_environment id=env_video_production change=rebuilt`，没有 `base_image_rebuild`；排队的只有 video-production 一个构建（seq 29），10 个迁移副本和其他 Tenant Environment 都没有动。
+
+**构建**（seq 29，`envb_V0KMk31B848HtvytweLW2`，单位 s）：
+
+| | Pod 启动 | 拉 `oma-media` | 构建（`init.sh`/清单/归属） | 推送 | 校验 | 总计 |
+|---|---:|---:|---:|---:|---:|---:|
+| 这次（无 Whisper） | 24.1 | 46 | 136 | 9 | 8.6 | 227.0 |
+| seq 1（带 Whisper，§4） | 47.6 | 51 | 194 | 30 | 21.0 | 347.8 |
+
+- `init.sh` 本身 127 s：apt `libgl1` 84 s、三个 CLI 7 s、Gemini venv 35 s、策略与自检 1 s。少掉的是 Whisper venv 和经 sing-box 下载的 630 MB 模型。apt 比 vfs-dev 预演（23 s）慢，是因为阿里云 Debian 源这次只有 669–762 kB/s（索引 9.4 MB 用 14 s，32 个包 49.6 MB 用 65 s），这一步本次没有改。
+- 校验：从 Warm Pool 领到还在旧镜像上的池 Pod，原地换成新镜像，领取 7,040 ms；envd、`user`、`/home/user` 归属检查通过；清单 321 个 dpkg 包、3 个 Python 环境 362 个包、15 个二进制。
+- 新镜像 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111`（标签 `test-env_video_production-envb_V0KMk31B848HtvytweLW2`）。43 层，压缩后 1.100 GB（1,099,503,572 字节），原来是 1.882 GB；Environment 层从 899.7 MB 降到 116.8 MB。
+
+**Warm Pool**：构建结束后 64 ms（04:42:46.77Z），builder 记 `warm_pool_updated pool=oma-test-sandbox image=…@sha256:49054413… previous=…@sha256:54d89827… cache=none`，SandboxSet generation 2 → 3。oma-test 是 `WARM_POOL_IMAGE_CACHE=none`，builder 同时提示 `warm_pool_cold_refill`：补货要完整拉镜像。补货 Pod `oma-test-sandbox-ds965` 04:42:46 创建，拉新镜像约 52 s，04:44:12 就绪（共 86 s）。**没有建 ImageCache**，留给维护者手工配置（命名规则下名字是 `oma-test-490544134a0313d8`）；旧镜像的 `imc-uf60a5qikevuelu3vmjm` 没动。
+
+**清单对比**（seq 29 对 seq 1，两次构建记录里的 `/opt/oma/manifest.json`，逐项求差）：只少了 `/opt/auto-story/whisper-venv` 这个 Python 环境的 25 个包（`faster-whisper` 1.2.1、`ctranslate2` 4.8.2、`onnxruntime` 1.30.0、`av` 18.1.0、`tokenizers` 0.23.2、`huggingface_hub` 1.31.0 等，与原锁文件一致）。dpkg 321 个、Gemini venv、`/opt/venv`、系统 Python、npm、15 个二进制、`/usr/local/bin` 的 sha256、Base Image 记录全部相同，没有新增项。清单不记模型文件，模型在下面的 Sandbox 里检查。
+
+**Sandbox 内验收**：在 builder Pod 里用 `e2b` SDK 从 `oma-test-sandbox` 领一个 Sandbox（`e2b.agents.kruise.io/image` = 新 digest），以 `user`、`cwd=/home/user` 跑检查脚本，结束后销毁（`Sandbox.kill` 返回 true；按标签 `oma.dev/test-only=vp-nowhisper-20261026` 清扫为 0）。这时另一组测试同时在 oma-test 上开了几十个 Session，补货 Pod 已被领走，所以这次是冷启动：领取 90.1 s（`/proc/uptime` 1.33 s），不能代表池里有库存时的领取。
+
+| 检查 | 结果 |
+|---|---|
+| 身份 | `uid=1000(user)`，`HOME=/home/user`，`/home/user` 下 0 个非 user 属主文件 |
+| 导入（`python3 -I`，`python` 包装脚本） | `cv2` 4.11.0、`scenedetect` 0.7.1、`PIL` 11.3.0、`fontTools` 4.61.1、`numpy` 1.26.4、`google.genai`，`libGL.so.1` 加载成功；`import faster_whisper` → `ModuleNotFoundError` |
+| 工具 | ffmpeg 9.0.1、vfs-cli v0.3.21、mediakit-cli 0.2.1、ossutil 2.2.0 |
+| `/etc/vfs-cli/policy.json` | `{"environment":"test"}`，root:root 644，22 字节，sha256 `3af5e4d4…`；目录 root:root 755；普通用户追加 → Permission denied |
+| Whisper | `/opt/auto-story/whisper-venv`、`/opt/auto-story/models`、`auto-story-transcribe`、`prepare-whisper.py`、`whisper-models.json` 都不存在；`/opt`、`/usr/local`、`/home/user`、`/root` 下文件名含 whisper 的 0 个；`/opt/auto-story` 只剩 `venv`（81 MB） |
+| 清单 | `/opt/oma/manifest.json` 的 Python 环境是 `/opt/auto-story/venv`、`/opt/venv`、`/usr` |
+
+**再发 API 与 Runner**：等那组测试的 Session 全部结束后（04:52Z），同一镜像 `03081cae…` 渲染，`kubectl diff` 只有 oma-api、oma-runner 两处镜像。04:52:29Z apply，04:54:02Z 全部 rollout 完成，`/api/health` 为 `ok`，新 Pod 日志没有错误。现在 oma-api、oma-runner、oma-image-builder 都是 `oma-server@sha256:03081cae…`，oma-web 仍是 `46c36354…`。
+
+**真实 Session**：一次性 Tenant `vp-nowhisper-1792990175`，临时 API key `apikey_vpnowhisper1792990175`（本地生成，库里只存 sha256）。Agent `openai-codex/gpt-5.6-sol`、开启 Sandbox、不指定 Environment，Session `sess_fz-jSyRy1IBBLcixPM-7C` 的 Environment 是 `env_video_production`。bash 执行 `ffmpeg -version | head -1 && vfs-cli --version && (test -e /opt/auto-story/whisper-venv && echo WHISPER_PRESENT || echo WHISPER_ABSENT)`，输出 `ffmpeg version 9.0.1`、`vfs-cli version v0.3.21`、`WHISPER_ABSENT`。`span.sandbox_prepare_end`：image `…@sha256:49054413…`，`swapped: false`，`claimMs` 81,721（池里没有库存，冷启动并完整拉镜像）。之后删除了 Session 和 Agent，Sandbox 已回收；key 经 `DELETE /v1/api-keys/{id}` 吊销（`revoked_at` 04:56:59Z），再用返回 401，本地 key 文件已删除。
+
+**回滚**（不需要动数据库）：
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+# Server 回到 d4953e20 的镜像；builder 启动时看到定义变回带 Whisper 的版本，会重建 video-production
+# （新 digest，内容等同 54d89827…）并把池子换过去。
+node deploy/scripts/render.mjs test sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566 \
+  sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566 \
+  sha256:46c363546a121bb75b612ba2a0a33249a03964d9f929838215df29c0b3119f8d \
+  sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566 > /tmp/oma-test.yaml
+kubectl diff -f /tmp/oma-test.yaml; kubectl apply -f /tmp/oma-test.yaml
+```
+
+带 Whisper 的旧镜像 `oma-environments@sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3` 和它的 ImageCache `imc-uf60a5qikevuelu3vmjm` 都还在；回滚后重建出的镜像内容与它相同，digest 不同。
+
+**留给维护者**：
+
+- **ImageCache**：新 digest `sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111` 还没有缓存，池子补货和冷启动都要完整拉 1.1 GB（这次 52 s 拉取，补货共 86 s，冷启动领取 82–90 s）。
+- **还带 Whisper 的副本**：Tenant Environment 不随内置定义变化，它们的脚本仍是原来的（`init_script` 含 Whisper）。迁移 0029 建的 10 个按 Agent 副本（`env_agent_*`，7 个在 Tenant `f00c7d5a-…`，3 个在 `reconcile-*` 测试 Tenant），另有 4 个手工复制的（`video-production-copy`、`video-production-copy-2`、`finalcut-group-b-20261026`、`accept-figlet-1792978750`）。没有改动它们。要更新，可以由各 Tenant 对副本调用 `POST /v1/environments/{id}`，写入新的 `initScript`（迁移副本可直接用内置的新脚本；手工改过的副本要保留各自追加的部分），保存会排一次新构建；如果它们只是测试用的，也可以直接删掉。生产还没有应用 0026/0029，没有这类副本。
+- **vfs-dev**：#305 清点时拉下的 `oma-environments@sha256:54d89827…`（6.56 GB）已删除，其他镜像没动。构建目录 `~/workspace/yuzhong/oma-env-0e165408` 保留。
+- **同时在跑的测试**：这次 builder 重启时，另一组测试（Tenant `f00c7d5a-…`，`env-review-…-A`/`-B`）有一个构建正在进行（seq 27），它被新 Pod 重新领取（`attempt=2 reclaimed=true`），04:40:20Z 成功。API/Runner 是等那组测试的 Session 都结束后才发的。
