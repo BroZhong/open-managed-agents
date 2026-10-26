@@ -224,10 +224,55 @@ describe("EnvironmentBuilder (ADR-0024 Building)", () => {
     expect(new Set(runner.jobs.map((job) => job.nonce)).size).toBe(3);
     expect(await store.get("t1", env.id)).toMatchObject({
       status: "failed", image: null,
-      lastBuild: { errorCode: BUILD_ERRORS.infrastructure, errorMessage: "Infrastructure failure after 3 attempts (pull): buildah pull failed" },
+      lastBuild: { errorCode: BUILD_ERRORS.infrastructure, errorMessage: "Infrastructure failure after 2 retries (pull): buildah pull failed" },
     });
-    expect((await store.getBuild(env.id, env.lastBuild!.id))!.attempts).toBe(3);
+    expect(await store.getBuild(env.id, env.lastBuild!.id)).toMatchObject({ attempts: 3, retries: 2 });
     expect((await logOf("t1", env.lastBuild!.id)).match(/Retrying\./g)).toHaveLength(2);
+  });
+
+  it("uses no retry for a lease released on stop: the next builder still retries an infrastructure failure twice", async () => {
+    const step = blocking();
+    const infra = failing({ outcome: "infrastructure_failed", stage: "push", message: "registry unreachable" });
+    const runner = new FakeRunner([step, infra]);
+    const { builder, create, store, drain } = setup({ runner });
+    const env = await create();
+    const stopping = builder();
+    await stopping.poll();
+    await step.started;
+    await stopping.stop();
+
+    expect(await drain(builder("builder-b"))).toEqual(["failed"]);
+    expect(runner.jobs.map((job) => job.attempt)).toEqual([1, 2, 3, 4]);
+    expect(await store.getBuild(env.id, env.lastBuild!.id)).toMatchObject({ status: "failed", attempts: 4, retries: 2 });
+  });
+
+  it("uses no retry for a build reclaimed after its lease expired", async () => {
+    const runner = new FakeRunner([failing({ outcome: "infrastructure_failed", stage: "pull", message: "timeout" }), failing({ outcome: "infrastructure_failed", stage: "pull", message: "timeout" }), pushed(6)]);
+    const { builder, create, store, clock, drain } = setup({ runner });
+    const env = await create();
+    await store.claimBuild("crashed-builder", BUILD_TIMING.leaseMs);
+    await clock.advance(BUILD_TIMING.leaseMs);
+    expect(await drain(builder())).toEqual(["succeeded"]);
+    expect(runner.jobs.map((job) => job.attempt)).toEqual([2, 3, 4]);
+    expect(await store.getBuild(env.id, env.lastBuild!.id)).toMatchObject({ status: "succeeded", attempts: 4, retries: 2 });
+  });
+
+  it("counts the retries an earlier builder used", async () => {
+    const step = blocking();
+    const infra = failing({ outcome: "infrastructure_failed", stage: "pod", message: "quota exceeded" });
+    const runner = new FakeRunner([infra, step, infra]);
+    const { builder, create, store, drain } = setup({ runner });
+    const env = await create();
+    const stopping = builder();
+    await stopping.poll();
+    await step.started;
+    await stopping.stop();
+
+    expect(await drain(builder("builder-b"))).toEqual(["failed"]);
+    expect(runner.jobs.map((job) => job.attempt)).toEqual([1, 2, 3, 4]);
+    expect(await store.get("t1", env.id)).toMatchObject({
+      status: "failed", lastBuild: { errorMessage: "Infrastructure failure after 2 retries (pod): quota exceeded" },
+    });
   });
 
   it("succeeds on a retry after an infrastructure failure, a thrown runner error counting as one", async () => {

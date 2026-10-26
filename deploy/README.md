@@ -156,8 +156,12 @@ builder keeps in the Host Bucket under `__oma/environment-builds/`. It is one
 replica with `Recreate`: on SIGTERM it deletes its build pods and releases
 their leases, and the next builder resumes those builds at once; after an
 abrupt stop it reclaims them when their leases expire (90 s) and removes the
-earlier attempts' pods. A build fails after 60 minutes; a script failure is
-final, an infrastructure failure is retried twice.
+earlier attempts' pods. A build fails 60 minutes after its first claim; a
+script failure is final, an infrastructure failure is retried twice. Resuming
+after a stop or restart starts a new attempt but uses no retry: migration
+`0030_environment_build_retries.sql` adds `environment_builds.retries` for
+that count, so apply it (as in "Test migrations") before starting a builder
+image that has it.
 
 At startup, before it claims anything, the builder:
 

@@ -53,7 +53,7 @@ export function environmentStoreContract(name: string, create: () => Promise<Env
         environmentId: env.id, ownerType: "tenant", tenantId: "t1", status: "pending",
         baseImage: "oma-media", initScript: "apt-get install -y jq\n",
         definitionSha256: environmentDefinitionSha256("oma-media", "apt-get install -y jq\n"),
-        baseImageDigest: null, attempts: 0, leaseOwner: null, leaseExpiresAt: null,
+        baseImageDigest: null, attempts: 0, retries: 0, leaseOwner: null, leaseExpiresAt: null,
         startedAt: null, finishedAt: null, errorCode: null, errorMessage: null, image: null, manifest: null, logKey: null,
       });
       expect(builds[0].id).toMatch(/^envb_/);

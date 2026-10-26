@@ -55,6 +55,7 @@ interface BuildRow {
   definition_sha256: string;
   base_image_digest: string | null;
   attempts: number;
+  retries: number;
   lease_owner: string | null;
   lease_expires_at: Date | null;
   created_at: Date;
@@ -115,6 +116,7 @@ function rowToBuild(row: BuildRow): EnvironmentBuild {
     definitionSha256: row.definition_sha256,
     baseImageDigest: row.base_image_digest,
     attempts: row.attempts,
+    retries: row.retries,
     leaseOwner: row.lease_owner,
     leaseExpiresAt: date(row.lease_expires_at),
     createdAt: new Date(row.created_at),
@@ -357,7 +359,7 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
     return this.transaction(async (client) => {
       await client.query(`SELECT id FROM environment_builds WHERE id = $1 FOR UPDATE`, [lease.buildId]);
       const { rows } = await client.query<{ attempts: number }>(
-        `UPDATE environment_builds SET attempts = attempts + 1, lease_expires_at = ${LEASE_EXPIRES("$4")}
+        `UPDATE environment_builds SET attempts = attempts + 1, retries = retries + 1, lease_expires_at = ${LEASE_EXPIRES("$4")}
          WHERE id = $1 AND ${HELD} AND lease_expires_at > clock_timestamp() RETURNING attempts`,
         [...leaseParams(lease), leaseMs],
       );

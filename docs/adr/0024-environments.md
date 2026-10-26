@@ -189,8 +189,10 @@ Measured on the agent-platform cluster on 2026-10-25:
   digest. The builder then claims one Sandbox with the new
   image, checks envd, bash, ownership of `/home/user` and reads the manifest
   (dpkg, pip, npm and binary versions shown in the console), and only then marks
-  the Environment `ready`. A build times out after 60 minutes. A script failure
-  is not retried; an infrastructure failure is retried twice. The log tail
+  the Environment `ready`. A build times out after 60 minutes from its first
+  claim. A script failure is not retried; an infrastructure failure is retried
+  twice. A builder's stop or restart is no failure: the next builder resumes
+  the build as a new attempt that uses no retry. The log tail
   (1 MiB) is kept in OSS at `__oma/environment-builds/<tenantId>/<buildId>.log`.
 - Old images are not deleted.
 

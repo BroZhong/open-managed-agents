@@ -31,8 +31,11 @@ export interface EnvironmentBuilderConfig {
 export interface EnvironmentBuilderTiming {
   /** A build fails when it has not finished this long after its first claim. */
   timeoutMs: number;
-  /** One attempt and at most two retries after infrastructure failures. */
-  maxAttempts: number;
+  /**
+   * Infrastructure failures retried before the build fails. A builder that
+   * stops or restarts starts a new attempt but uses no retry.
+   */
+  maxRetries: number;
   leaseMs: number;
   renewMs: number;
   pollMs: number;
@@ -42,7 +45,7 @@ export interface EnvironmentBuilderTiming {
 
 export const BUILD_TIMING: EnvironmentBuilderTiming = {
   timeoutMs: 60 * 60_000,
-  maxAttempts: 3,
+  maxRetries: 2,
   leaseMs: 90_000,
   // A newer change stops a superseded build within one renewal.
   renewMs: 10_000,
@@ -106,7 +109,8 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
  * a newer change supersedes it (the pod is deleted, nothing is written); it
  * fails after 60 minutes from its first claim. A script failure is final;
  * an infrastructure failure is retried twice. A build whose builder stopped
- * is reclaimed when its lease expires, and what the earlier attempt left is
+ * is reclaimed when its lease expires (at once after a graceful stop), as a
+ * new attempt that uses no retry, and what the earlier attempt left is
  * removed first.
  */
 export class EnvironmentBuilder {
@@ -195,6 +199,7 @@ export class EnvironmentBuilder {
     const { build } = claimed;
     const { clock, queue } = this.deps;
     let lease = claimed.lease;
+    let retries = build.retries;
     const key = environmentBuildLogKey(build.tenantId, build.id);
     const log = await BuildLog.open(this.deps.logs, key, () => clock.now())
       .catch(() => new BuildLog(this.deps.logs, key, () => clock.now()));
@@ -247,10 +252,10 @@ export class EnvironmentBuilder {
         log.note(`Attempt ${lease.attempt}: building ${build.baseImage} for Environment ${build.environmentId} (build ${build.id}).`);
         const result = await this.attempt(claimed, lease, log, control.signal);
         if (result.kind !== "retry") return await finish(result);
-        if (lease.attempt >= this.timing.maxAttempts) {
+        if (retries >= this.timing.maxRetries) {
           return await finish({
             kind: "failed", code: BUILD_ERRORS.infrastructure,
-            message: `Infrastructure failure after ${lease.attempt} attempts (${result.stage}): ${result.message}`,
+            message: `Infrastructure failure after ${retries} retries (${result.stage}): ${result.message}`,
           });
         }
         log.note(`Infrastructure failure (${result.stage}): ${result.message}. Retrying.`);
@@ -260,6 +265,7 @@ export class EnvironmentBuilder {
           throw new BuildStopped(renewal === "superseded" ? "superseded" : "lost");
         }
         lease = next;
+        retries++;
       }
     } catch (error) {
       const reason = error instanceof BuildStopped ? error.reason

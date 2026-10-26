@@ -346,6 +346,8 @@ CREATE TABLE IF NOT EXISTS ${s}.environment_builds (
   manifest           JSONB,
   log_key            TEXT
 );
+-- Infrastructure failures retried (0030): a claim counts an attempt, never a retry.
+ALTER TABLE ${s}.environment_builds ADD COLUMN IF NOT EXISTS retries INTEGER NOT NULL DEFAULT 0;
 -- An Environment's builds; then at most one active build per Environment.
 -- (pg-mem serves a lookup from the first index on its columns, ignoring a
 -- partial index's predicate, so the plain index comes first.)

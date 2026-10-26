@@ -38,8 +38,9 @@ describe.skipIf(!process.env.PG_TEST_URL)("migration 0026: Environments and thei
   });
   afterAll(async () => { await harness?.close(); });
 
-  it("matches the DDL a fresh install gets", async () => {
+  it("with 0030 matches the DDL a fresh install gets", async () => {
     await apply("0026_environments.sql");
+    await apply("0030_environment_build_retries.sql");
     const migrated = await shape();
     expect(migrated.columns.length).toBeGreaterThan(0);
     await harness.reset();

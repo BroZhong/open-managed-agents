@@ -98,7 +98,8 @@ export function environmentBuildQueueContract(name: string, create: () => Promis
       await expireLeases();
 
       const second = (await store.claimBuild("builder-b", LEASE))!;
-      expect(second).toMatchObject({ build: { id: first.build.id, attempts: 2, leaseOwner: "builder-b" }, lease: { owner: "builder-b", attempt: 2 }, reclaimed: true });
+      // A new attempt, but not a retry: only infrastructure failures are.
+      expect(second).toMatchObject({ build: { id: first.build.id, attempts: 2, retries: 0, leaseOwner: "builder-b" }, lease: { owner: "builder-b", attempt: 2 }, reclaimed: true });
       expect(second.build.startedAt).toEqual(first.build.startedAt);
       expect(await store.renewBuild(first.lease, LEASE)).toBe("lost");
       expect(await store.retryBuild(first.lease, LEASE)).toBeNull();
@@ -119,7 +120,7 @@ export function environmentBuildQueueContract(name: string, create: () => Promis
       const first = (await store.claimBuild("builder-a", LEASE))!;
       expect(await store.releaseBuild({ ...first.lease, owner: "other" })).toBe(false);
       expect(await store.releaseBuild(first.lease)).toBe(true);
-      expect(await store.claimBuild("builder-b", LEASE)).toMatchObject({ reclaimed: true, lease: { attempt: 2 } });
+      expect(await store.claimBuild("builder-b", LEASE)).toMatchObject({ reclaimed: true, build: { attempts: 2, retries: 0 }, lease: { attempt: 2 } });
     });
 
     it("retries under the same owner as a new attempt, fencing the previous one", async () => {
@@ -129,9 +130,23 @@ export function environmentBuildQueueContract(name: string, create: () => Promis
       expect(retried).toEqual({ ...lease, attempt: 2 });
       expect(await store.renewBuild(lease, LEASE)).toBe("lost");
       expect(await store.renewBuild(retried!, LEASE)).toBe("renewed");
-      expect((await store.getBuild(env.id, lease.buildId))!.attempts).toBe(2);
+      expect(await store.getBuild(env.id, lease.buildId)).toMatchObject({ attempts: 2, retries: 1 });
       await store.update(T1, env.id, { initScript: "echo v2\n" });
       expect(await store.retryBuild(retried!, LEASE)).toBeNull();
+    });
+
+    it("keeps the retries across a release and a reclaim, which count as attempts only", async () => {
+      await store.create(input(T1));
+      const { lease } = (await store.claimBuild("builder-a", LEASE))!;
+      const retried = (await store.retryBuild(lease, LEASE))!;
+      expect(await store.releaseBuild(retried)).toBe(true);
+      const resumed = (await store.claimBuild("builder-b", LEASE))!;
+      expect(resumed).toMatchObject({ reclaimed: true, build: { attempts: 3, retries: 1 }, lease: { owner: "builder-b", attempt: 3 } });
+      await expireLeases();
+      const again = (await store.claimBuild("builder-c", LEASE))!;
+      expect(again.build).toMatchObject({ attempts: 4, retries: 1 });
+      expect(await store.retryBuild(again.lease, LEASE)).toEqual({ ...again.lease, attempt: 5 });
+      expect(await store.getBuild(again.build.environmentId, again.build.id)).toMatchObject({ attempts: 5, retries: 2 });
     });
 
     it("records the Base Image digest and the log key under the lease", async () => {

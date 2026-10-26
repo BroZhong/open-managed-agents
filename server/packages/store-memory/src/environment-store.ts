@@ -196,6 +196,7 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
     const held = this.held(lease, true);
     if (!held) return null;
     held.attempts += 1;
+    held.retries += 1;
     held.leaseExpiresAt = new Date(this.now().getTime() + leaseMs);
     return { ...lease, attempt: held.attempts };
   }
@@ -307,6 +308,7 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
       definitionSha256: environmentDefinitionSha256(baseImage, initScript),
       baseImageDigest: null,
       attempts: 0,
+      retries: 0,
       leaseOwner: null,
       leaseExpiresAt: null,
       createdAt: now,

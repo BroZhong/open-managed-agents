@@ -73,7 +73,17 @@ export interface EnvironmentBuild extends EnvironmentBuildSummary {
   definitionSha256: string;
   /** The Base Image digest the builder resolved; null until it claims the build. */
   baseImageDigest: string | null;
+  /**
+   * Attempts started: every claim (a reclaim after a release or an expired
+   * lease too) and every retry. It fences the lease and names each
+   * attempt's pod and verification Sandbox.
+   */
   attempts: number;
+  /**
+   * Infrastructure failures retried so far (ADR-0024: twice at most). A
+   * claim never counts, so a builder that stops or restarts consumes none.
+   */
+  retries: number;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
   /** The pushed image (by digest) and its manifest; null until the build succeeds. */
@@ -235,7 +245,7 @@ export type EnvironmentBuildRenewal = "renewed" | "superseded" | "lost";
 export interface EnvironmentBuildQueue {
   /**
    * Claim the oldest claimable build: mark it `running` under a new lease,
-   * count the attempt, keep its first `startedAt`, and mark its Environment
+   * count the attempt (not a retry), keep its first `startedAt`, and mark its Environment
    * `building` when the build is still the Environment's latest. Null when
    * none is claimable.
    */
@@ -244,8 +254,8 @@ export interface EnvironmentBuildQueue {
   renewBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildRenewal>;
   /**
    * Start another attempt of the same build under the same owner (an
-   * infrastructure failure is retried): count it and extend the lease. Null
-   * when the lease is no longer held.
+   * infrastructure failure is retried): count it as an attempt and a retry
+   * and extend the lease. Null when the lease is no longer held.
    */
   retryBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildLease | null>;
   /** Let the lease expire now, so the next builder reclaims the build at once (shutdown). */
