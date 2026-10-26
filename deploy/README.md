@@ -17,9 +17,9 @@ See [the 2026-10-11 native lifecycle release](../docs/verification/native-sandbo
 
 | Scope | Namespace | Resources |
 | --- | --- | --- |
-| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress; `oma-image-builder` is declared but not yet applied in production |
+| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, `oma-image-builder` (and its build pods), their Services, and the `oma-console` ALB Ingress |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
-| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
+| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; the Warm Pools `oma-sandbox` (production) and `oma-test-sandbox` (test); `auto-story-v2`, production's pool before Environments, kept for rollback until their release is accepted |
 | Test environment | `oma-test` | Its own `oma-api`, `oma-runner`, `oma-web`, `oma-image-builder` (and its build pods), Redis and `oma-console` Ingress; see [Environments](#environments) |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
@@ -40,11 +40,9 @@ return `200` HTML. That response does not confirm API health or contain an API
 schema.
 
 The application images are stored in the Shanghai `welltop` ACR. Pods pull
-through the VPC endpoint with the `ali-shanghai` image-pull Secret. The active
-sandbox default is `auto-story-v2`, whose immutable image digest is declared in
-[`sandbox/auto-story-v2/sandboxset.yaml`](../sandbox/auto-story-v2/sandboxset.yaml). It includes VFS CLI, FFmpeg, Gemini's
-Python SDK, MediaKit and native `rg`/`fd` search, without OpenMontage or Whisper.
-This is the only pool maintained or shipped by this repository.
+through the VPC endpoint with the `ali-shanghai` image-pull Secret. Sandboxes
+run their Session's Environment's image, claimed from the deployment's Warm
+Pool ([`sandbox/README.md`](../sandbox/README.md)).
 
 ## Environments
 
@@ -79,7 +77,7 @@ Manifests are Kustomize overlays on one base:
 | `environments/test/` | `oma-test`, test configuration patches, ServiceAccount and Redis |
 | `environments/test/sandbox-rbac.yaml` | Read grant on `sandbox-system/base-secret`; applied separately because the overlay rewrites namespaces |
 | `environments/test/image-builder-warm-pool-rbac.yaml` | The oma-test builder may get and patch the `oma-test-sandbox` SandboxSet; applied separately for the same reason |
-| `image-builder-warm-pool-rbac.yaml` | The production equivalent for the `oma-sandbox` pool; applied with the production release of Environments |
+| `image-builder-warm-pool-rbac.yaml` | The production equivalent for the `oma-sandbox` pool; applied separately |
 
 `scripts/render.mjs` renders an overlay and substitutes the four image
 placeholders; the image builder runs the Server image like the API and the
@@ -213,10 +211,11 @@ Replace `<account-id>` with the deployment's Alibaba Cloud account, then
 store its key as the Secret `oma-image-cache` (`ACCESS_KEY_ID`,
 `ACCESS_KEY_SECRET`) in the builder's namespace. Old caches are not deleted
 (that would need `acc:DeleteImageCache`). The oma-test overlay enables `acs`
-(one pool replica); its dedicated RAM user is `oma-test-image-cache`.
-Provision `oma-image-cache` before starting that builder. Production still
-updates no pool until its release. A failed cache is kept for diagnosis and
-requires operator recovery; API errors are retried on the next reconciliation.
+(one pool replica) and production (eight); both use the RAM user
+`oma-test-image-cache`, whose scope is the whole account's ImageCaches.
+Provision `oma-image-cache` before starting a builder. A failed cache is kept
+for diagnosis and requires operator recovery; API errors are retried on the
+next reconciliation.
 
 | Configuration (`oma-image-builder-config`) | |
 | --- | --- |
@@ -245,7 +244,8 @@ Cloud API, granted by RAM, not by Kubernetes RBAC.
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
-kubectl apply -f deploy/environments/test/image-builder-warm-pool-rbac.yaml
+kubectl apply -f deploy/environments/test/image-builder-warm-pool-rbac.yaml   # oma-test
+kubectl apply -f deploy/image-builder-warm-pool-rbac.yaml                     # production
 ```
 
 **Release order:** Base Images, then the image builder — wait until the
@@ -383,12 +383,14 @@ deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-pro
 ```
 
 Every Sandbox is claimed from the Runner's Warm Pool, `SANDBOX_TEMPLATE`
-(production `auto-story-v2`, oma-test `oma-test-sandbox`), a required key,
+(production `oma-sandbox`, oma-test `oma-test-sandbox`), a required key,
 with the image of its Session's Environment (ADR-0024): a claim of the pool's
 own image keeps the warm container, any other swaps it in place. Agent
 template selection and a Runner-wide image no longer exist. A Sandbox keeps
-the image it was created with until it is reclaimed or rebuilt. The oma-test
-pool is `sandbox/warm-pool/oma-test-sandbox.yaml`; see `sandbox/README.md`.
+the image it was created with until it is reclaimed or rebuilt. The pools
+are `sandbox/warm-pool/oma-sandbox.yaml` and `oma-test-sandbox.yaml`; see
+`sandbox/README.md`. `deploy-sandbox.sh` handles only the retired
+`auto-story-v2`.
 
 ### Environment migration (0029)
 
@@ -622,10 +624,10 @@ pool:
 ```bash
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-server
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-web
-KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset auto-story-v2
+KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset oma-sandbox
 ```
 
-Only `auto-story-v2` is maintained. Its recipe and SandboxSet manifest live in
+The Warm Pool manifests, Base Image recipes and Built-in Environments live in
 [`sandbox/`](../sandbox/README.md). Shared Workspace infrastructure lives in
 [`deploy/oss-workspace/`](oss-workspace/README.md). Retired templates and business
 Agent presets are not shipped here; supply business Skills through the platform.

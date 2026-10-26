@@ -12,9 +12,9 @@ place.
 | --- | --- |
 | [oma-base](oma-base/README.md) | Base Image: ACS code-interpreter, Aliyun mirrors, Node 22 + Pi tool runtime, rg/fd, tini, `write-manifest` |
 | [oma-media](oma-media/README.md) | Base Image: oma-base + FFmpeg 9.0.1 (OpenH264, libass) and CJK fonts |
-| [warm-pool](warm-pool/oma-test-sandbox.yaml) | Warm Pool manifests: `oma-test-sandbox` (oma-test, 1 replica) |
+| [warm-pool](warm-pool/) | Warm Pool manifests: `oma-sandbox` (production, 8 replicas), `oma-test-sandbox` (oma-test, 1 replica) |
 | [environments](environments/video-production/README.md) | Built-in Environments (`video-production`) built on a Base Image |
-| [auto-story-v2](auto-story-v2/README.md) | Production's pool and image until it moves to the `video-production` Environment |
+| [auto-story-v2](auto-story-v2/README.md) | Production's pool and image before Environments; kept for rollback until their production release is accepted |
 
 - [OSS Workspace infrastructure](../deploy/oss-workspace/README.md)
 - [Host and Web deployment](../deploy/README.md)
@@ -29,10 +29,10 @@ published digest in `image.lock.json`. Building never changes a pool.
 | Environment | SandboxSet | Image |
 | --- | --- | --- |
 | oma-test | `oma-test-sandbox` ([manifest](warm-pool/oma-test-sandbox.yaml)) | in the manifest; the image builder sets it to `video-production`'s |
-| production | `auto-story-v2` ([manifest](auto-story-v2/sandboxset.yaml)) | the live image (0.3.3, `67a46af6…`); this repository's manifest still pins an older image, so compare with the live pool before applying it |
+| production | `oma-sandbox` ([manifest](warm-pool/oma-sandbox.yaml)) | in the manifest; the image builder sets it to `video-production`'s |
 
-`oma-test-sandbox`'s template carries no secrets (auto-story-v2 still sets
-base-secret as pod env, which only PID 1 sees): every command gets its
+Neither template carries secrets (auto-story-v2 set base-secret as pod env,
+which only PID 1 sees): every command gets its
 Session's Environment variables from the Runner, which resolves platform
 secret references from `sandbox-system/base-secret`; envd commands see those,
 the create's Workspace paths and `/etc/profile.d`. Create an ACS
