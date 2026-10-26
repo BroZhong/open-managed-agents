@@ -1,0 +1,1240 @@
+{
+  "date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "source": {
+    "baseline": "b88d77c1",
+    "reviewed": "0e1654082d8700aa7c35623d6d1df95f23e4ed89",
+    "originalHandoff": "d90942ef",
+    "latestChange": "Remove offline Whisper from video-production; application runtime sources unchanged"
+  },
+  "verdict": "changes_requested",
+  "newReviewFindings": [
+    {
+      "priority": "P2",
+      "axis": "Standards",
+      "path": "server/packages/store/src/postgres/environment-store.ts",
+      "line": 234,
+      "finding": "Environment/build row lock inversion",
+      "repro": "actual PostgreSQL store: update fails 40P01 while claim succeeds"
+    },
+    {
+      "priority": "P2",
+      "axis": "Spec",
+      "path": "server/packages/api/src/lib/environments.ts",
+      "line": 272,
+      "finding": "Concurrent edit omitting a secret restores old ciphertext",
+      "repro": {
+        "rotatedInitially": true,
+        "reverted": true
+      }
+    },
+    {
+      "priority": "P2",
+      "axis": "Spec",
+      "path": "server/packages/api/src/lib/environments.ts",
+      "line": 320,
+      "finding": "Environment deletion races with Agent binding",
+      "repro": {
+        "createAgent": 201,
+        "deleteEnvironment": 200,
+        "getEnvironment": 404,
+        "stillReferenced": true
+      }
+    },
+    {
+      "priority": "P2",
+      "axis": "Spec",
+      "path": "server/packages/api/src/lib/environments.ts",
+      "line": 403,
+      "finding": "Prototype-key secrets accepted without ciphertext",
+      "repro": {
+        "keys": [
+          "constructor",
+          "toString",
+          "__proto__"
+        ],
+        "ownStoredKeys": [],
+        "resolverError": "ERR_INVALID_ARG_TYPE",
+        "liveUpdateConstructorReproduced": true
+      }
+    }
+  ],
+  "sequentialChecks": [
+    {
+      "at": "2026-10-26T04:35:24.533Z",
+      "name": "secret write-only on create",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:35:24.591Z",
+      "name": "business fork skills",
+      "ok": true,
+      "agent": "agent_pllWgFr12G7olyTT1OjG-",
+      "count": 19
+    },
+    {
+      "at": "2026-10-26T04:36:22.939Z",
+      "name": "valid constructor secret reference persisted",
+      "ok": false,
+      "accepted": true,
+      "storedOwnKeys": []
+    },
+    {
+      "at": "2026-10-26T04:36:32.381Z",
+      "name": "storyboard input manifest",
+      "ok": true,
+      "count": 2
+    },
+    {
+      "at": "2026-10-26T04:36:32.430Z",
+      "name": "finalcut input manifest",
+      "ok": true,
+      "count": 18
+    },
+    {
+      "at": "2026-10-26T04:41:46.924Z",
+      "name": "initial environment and secret reach bash",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:41:47.007Z",
+      "name": "env change does not rebuild",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:41:51.031Z",
+      "name": "same sandbox next command sees plain+secret rotation+profile override",
+      "ok": true,
+      "sandbox": "sandbox-system--oma-test-sandbox-lpmct",
+      "rotatedAt": "2026-10-26T04:41:47.007Z"
+    },
+    {
+      "at": "2026-10-26T04:41:55.120Z",
+      "name": "secret deletion effective next command",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:42:01.299Z",
+      "name": "existing session keeps frozen environment",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:42:13.346Z",
+      "name": "new session follows changed agent",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:43:47.573Z",
+      "name": "session override",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:43:49.649Z",
+      "name": "non-sandbox chat completes",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:45:11.810Z",
+      "name": "manual loop follows current agent environment",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:45:11.924Z",
+      "name": "/v1/environments/env_RIkqZAc5OalhBF5C64PgD 409",
+      "ok": true,
+      "status": 409,
+      "code": "environment_in_use"
+    },
+    {
+      "at": "2026-10-26T04:45:11.937Z",
+      "name": "/v1/environments/env_video_production 403",
+      "ok": true,
+      "status": 403,
+      "code": "environment_read_only"
+    },
+    {
+      "at": "2026-10-26T04:45:11.949Z",
+      "name": "/v1/environments/env_RIkqZAc5OalhBF5C64PgD 400",
+      "ok": true,
+      "status": 400,
+      "code": "environment_env_reserved"
+    },
+    {
+      "at": "2026-10-26T04:45:11.961Z",
+      "name": "/v1/agents/agent_ukCVIRGy188H-0zktR55y 400",
+      "ok": true,
+      "status": 400,
+      "code": "sandbox_env_removed"
+    },
+    {
+      "at": "2026-10-26T04:45:18.929Z",
+      "name": "interrupt test reached active tool",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:45:21.033Z",
+      "name": "interrupt accepted",
+      "ok": true,
+      "accepted": true,
+      "requested": true,
+      "interrupted": false
+    },
+    {
+      "at": "2026-10-26T04:45:25.045Z",
+      "name": "queued input completes after interrupt",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:45:29.171Z",
+      "name": "session usable after interrupt",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:45:33.155Z",
+      "name": "script edit queues rebuild and keeps serving old image",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:45:36.873Z",
+      "name": "storyboard input manifest",
+      "ok": true,
+      "count": 2
+    },
+    {
+      "at": "2026-10-26T04:45:36.932Z",
+      "name": "finalcut input manifest",
+      "ok": true,
+      "count": 18
+    },
+    {
+      "at": "2026-10-26T04:48:25.021Z",
+      "name": "all 20 direct/child command sessions observed old value before concurrent update",
+      "ok": true,
+      "count": 20
+    },
+    {
+      "at": "2026-10-26T04:48:25.133Z",
+      "name": "concurrent env update keeps build and image",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:49:46.342Z",
+      "name": "existing sandbox keeps original image after rebuild",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:50:00.437Z",
+      "name": "new sandbox gets rebuilt image",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:51:37.676Z",
+      "name": "/v1/environments/env_RIkqZAc5OalhBF5C64PgD 200",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "at": "2026-10-26T04:51:37.687Z",
+      "name": "/v1/environments/env_RIkqZAc5OalhBF5C64PgD 404",
+      "ok": true,
+      "status": 404,
+      "code": "environment_not_found"
+    },
+    {
+      "at": "2026-10-26T04:51:43.726Z",
+      "name": "frozen session still executes after environment soft deletion",
+      "ok": true
+    },
+    {
+      "at": "2026-10-26T04:54:29.003Z",
+      "name": "latest full rollout media imports, platform secret and no-Whisper image",
+      "ok": true,
+      "session": "sess_ZUoUV-_MYr5gQ9TIVfxAf"
+    }
+  ],
+  "burst": {
+    "allAcceptedAt": "2026-10-26T04:45:58.022Z",
+    "lastObservationAt": "2026-10-26T04:51:08.979Z",
+    "observedSeconds": 310.969,
+    "stoppedAt": "2026-10-26T04:51:09.853Z",
+    "roots": 30,
+    "children": 15,
+    "totalSessions": 45,
+    "statusesBeforeStop": {
+      "running": 30,
+      "waiting": 15
+    },
+    "sessionErrors": 0,
+    "sandboxErrors": 0,
+    "toolCalls": 590,
+    "toolResults": 552,
+    "toolErrors": 13,
+    "allErrorsFollowedBySuccessfulToolResult": true,
+    "groups": {
+      "env-loop": {
+        "roots": 10,
+        "children": 0,
+        "toolCalls": 101,
+        "toolResults": 93,
+        "toolErrors": 0,
+        "sessionErrors": 0,
+        "turnCompleted": 0,
+        "rootsWithToolProgress": 10
+      },
+      "delegation": {
+        "roots": 10,
+        "children": 10,
+        "toolCalls": 110,
+        "toolResults": 90,
+        "toolErrors": 0,
+        "sessionErrors": 0,
+        "turnCompleted": 0,
+        "rootsWithToolProgress": 10
+      },
+      "storyboard": {
+        "roots": 5,
+        "children": 5,
+        "toolCalls": 217,
+        "toolResults": 212,
+        "toolErrors": 7,
+        "sessionErrors": 0,
+        "turnCompleted": 0,
+        "rootsWithToolProgress": 5
+      },
+      "finalcut": {
+        "roots": 5,
+        "children": 0,
+        "toolCalls": 162,
+        "toolResults": 157,
+        "toolErrors": 6,
+        "sessionErrors": 0,
+        "turnCompleted": 0,
+        "rootsWithToolProgress": 5
+      }
+    },
+    "claimMs": {
+      "n": 30,
+      "min": 23321,
+      "p50": 85345,
+      "p95": 109089,
+      "max": 109389
+    },
+    "childInheritanceMismatches": [],
+    "hotUpdate": {
+      "checks": [
+        {
+          "name": "all 20 env/delegation workloads converge on next post-update command",
+          "ok": true,
+          "observed": 20,
+          "total": 20
+        }
+      ],
+      "probeCount": 183,
+      "probeSessions": 20,
+      "convergence": [
+        {
+          "root": "sess_8ZilxD3-YkesT2WeYZDrD",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_8ZilxD3-YkesT2WeYZDrD"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 10346,
+          "firstConfirmedResultAfterUpdateMs": 31587,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_6vdU_cRjvqPjWBWEvvvGy",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_6vdU_cRjvqPjWBWEvvvGy"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 8722,
+          "firstConfirmedResultAfterUpdateMs": 30014,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_MF-wzDpcRaON7ztJ2b6ga",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_MF-wzDpcRaON7ztJ2b6ga"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 7,
+          "firstCallAfterUpdateMs": 7635,
+          "firstConfirmedResultAfterUpdateMs": 28931,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_72iZfn56i2Ya17CC2aABu",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_72iZfn56i2Ya17CC2aABu"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 7,
+          "firstCallAfterUpdateMs": 4676,
+          "firstConfirmedResultAfterUpdateMs": 25892,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_-nz-nXapZKPWXsPxOr_-c",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_-nz-nXapZKPWXsPxOr_-c"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 11094,
+          "firstConfirmedResultAfterUpdateMs": 32401,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_0TpSeiBtIR3ty8zuXs9hr",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_0TpSeiBtIR3ty8zuXs9hr"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 7,
+          "firstCallAfterUpdateMs": 7290,
+          "firstConfirmedResultAfterUpdateMs": 28548,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_E7iuXb_LdcMv4psdgWI8g",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_E7iuXb_LdcMv4psdgWI8g"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 9261,
+          "firstConfirmedResultAfterUpdateMs": 30524,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_EXZsZ1OBPAMSLi6LhFfxs",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_EXZsZ1OBPAMSLi6LhFfxs"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 16486,
+          "firstConfirmedResultAfterUpdateMs": 37736,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_DnosLw-aFjSzabeGvCnPt",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_DnosLw-aFjSzabeGvCnPt"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 11171,
+          "firstConfirmedResultAfterUpdateMs": 32412,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_IvKt-xVgaSnoAH-wbImfm",
+          "kind": "env-loop",
+          "observedSessions": [
+            "sess_IvKt-xVgaSnoAH-wbImfm"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 11390,
+          "firstConfirmedResultAfterUpdateMs": 32637,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_ucgIpXciDGhDDMhseFyDt",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_H5fXfL0Ferb8QZyqBQmDM"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 12296,
+          "firstConfirmedResultAfterUpdateMs": 33613,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_3c9RxB9qWvZWMq5fennUF",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_nkMc0R5P8m34KmBeKm3eM"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 12813,
+          "firstConfirmedResultAfterUpdateMs": 34070,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_GriE5-WnpdnreUNvYerzw",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_EkIsthEGA_ydzkrT_8Pi3"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 13926,
+          "firstConfirmedResultAfterUpdateMs": 35165,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_JQwUe1iipXFsFZtOnrKfn",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_qWrsB9aS74nhoh_65IZI8"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 13662,
+          "firstConfirmedResultAfterUpdateMs": 34929,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_PEWMK2CaUL36OAwc_N0bB",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_ClPK4Mnd-K0ImVEG9yCjl"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 13779,
+          "firstConfirmedResultAfterUpdateMs": 35047,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_9WDs7yy2MP9RiOOujidgh",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_agLz_ugXaPA2fzHYiQw_E"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 13668,
+          "firstConfirmedResultAfterUpdateMs": 34948,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_u1ce_Tz7RAfBZFU1cvh5Q",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_Pkw0zLzqKvmn9HIRxrjhK"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 12655,
+          "firstConfirmedResultAfterUpdateMs": 34945,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_HxVQm_S3oHwPp2JCLdTVS",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_oyX4ekm2L9-FWv8uHe274"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 10982,
+          "firstConfirmedResultAfterUpdateMs": 32188,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_slu9r_ouNzo6NsKUN7ZjG",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_hoQlJYMqxsm-OW3-tgA7L"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 15232,
+          "firstConfirmedResultAfterUpdateMs": 36445,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        },
+        {
+          "root": "sess_Nk9JrQvNh6nB6wIJUOk1K",
+          "kind": "delegation",
+          "observedSessions": [
+            "sess_tQy5YuAq5Il0_CJqCtnD2"
+          ],
+          "preUpdateV3": true,
+          "postUpdateCalls": 6,
+          "firstCallAfterUpdateMs": 12348,
+          "firstConfirmedResultAfterUpdateMs": 33716,
+          "ok": true,
+          "stalePostUpdateCount": 0
+        }
+      ]
+    },
+    "fullBusinessCompletionVerified": false,
+    "forbiddenExternalWritesDetected": 0,
+    "allowedMediakitCalls": 21
+  },
+  "sse": {
+    "run": "env-review-1792989324403",
+    "startedAt": "2026-10-26T04:46:11.000Z",
+    "latestAcceptedAt": "2026-10-26T04:45:58.022Z",
+    "deadlineAt": "2026-10-26T04:51:08.022Z",
+    "errors": [],
+    "finishedAt": "2026-10-26T04:51:08.030Z",
+    "apiKeyRevoked": true,
+    "streams": [
+      {
+        "id": "sess_8ZilxD3-YkesT2WeYZDrD",
+        "kind": "env-loop",
+        "startedAt": "2026-10-26T04:46:11.001Z",
+        "deadlineAt": "2026-10-26T04:51:08.022Z",
+        "connections": [
+          {
+            "openedAt": "2026-10-26T04:46:11.001Z",
+            "resumeAfter": 0,
+            "status": 200,
+            "contentType": "text/event-stream",
+            "end": "planned_abort",
+            "closedAt": "2026-10-26T04:48:41.015Z"
+          },
+          {
+            "openedAt": "2026-10-26T04:48:41.518Z",
+            "resumeAfter": 43,
+            "status": 200,
+            "contentType": "text/event-stream",
+            "end": "planned_abort",
+            "closedAt": "2026-10-26T04:51:08.022Z"
+          }
+        ],
+        "frames": 281,
+        "heartbeats": 28,
+        "durableCount": 92,
+        "deltaCount": 189,
+        "eventTypes": {
+          "user.message": 1,
+          "session.status_running": 1,
+          "agent.context_usage": 11,
+          "agent.context_start": 1,
+          "agent.context_entry": 22,
+          "span.model_request_start": 10,
+          "span.model_request_end": 10,
+          "agent.thinking": 3,
+          "agent.message": 10,
+          "agent.tool_use": 10,
+          "span.sandbox_prepare_start": 1,
+          "span.sandbox_prepare_end": 1,
+          "span.skills_install_start": 1,
+          "span.skills_install_end": 1,
+          "agent.tool_result": 9,
+          "agent.thinking_stream_start": 4,
+          "agent.thinking_chunk": 39,
+          "agent.message_stream_start": 13,
+          "agent.message_chunk": 23,
+          "agent.tool_use_input_stream_start": 13,
+          "agent.tool_use_input_chunk": 67,
+          "agent.thinking_stream_end": 4,
+          "agent.message_stream_end": 13,
+          "agent.tool_use_input_stream_end": 13
+        },
+        "deltaTypes": {
+          "agent.thinking_stream_start": 4,
+          "agent.thinking_chunk": 39,
+          "agent.message_stream_start": 13,
+          "agent.message_chunk": 23,
+          "agent.tool_use_input_stream_start": 13,
+          "agent.tool_use_input_chunk": 67,
+          "agent.thinking_stream_end": 4,
+          "agent.message_stream_end": 13,
+          "agent.tool_use_input_stream_end": 13
+        },
+        "sessionErrors": [],
+        "parseErrors": 0,
+        "duplicateDurable": [],
+        "outOfOrder": [],
+        "unexpectedEnd": 0,
+        "transportErrors": [],
+        "lastFrameAt": "2026-10-26T04:51:01.538Z",
+        "finishedAt": "2026-10-26T04:51:08.028Z",
+        "elapsedSeconds": 297.027,
+        "lastDurableId": 92,
+        "ok": true
+      },
+      {
+        "id": "sess_2ul-dAgjixcmoUW9GiSub",
+        "kind": "finalcut",
+        "startedAt": "2026-10-26T04:46:11.036Z",
+        "deadlineAt": "2026-10-26T04:51:08.022Z",
+        "connections": [
+          {
+            "openedAt": "2026-10-26T04:46:11.036Z",
+            "resumeAfter": 0,
+            "status": 200,
+            "contentType": "text/event-stream",
+            "end": "planned_abort",
+            "closedAt": "2026-10-26T04:48:41.037Z"
+          },
+          {
+            "openedAt": "2026-10-26T04:48:41.538Z",
+            "resumeAfter": 168,
+            "status": 200,
+            "contentType": "text/event-stream",
+            "end": "planned_abort",
+            "closedAt": "2026-10-26T04:51:08.024Z"
+          }
+        ],
+        "frames": 1789,
+        "heartbeats": 28,
+        "durableCount": 288,
+        "deltaCount": 1501,
+        "eventTypes": {
+          "user.message": 1,
+          "session.status_running": 1,
+          "agent.context_usage": 35,
+          "agent.context_start": 1,
+          "agent.context_entry": 76,
+          "span.model_request_start": 33,
+          "span.model_request_end": 33,
+          "agent.message": 1,
+          "agent.tool_use": 40,
+          "span.sandbox_prepare_start": 1,
+          "span.sandbox_prepare_end": 1,
+          "span.skills_install_start": 1,
+          "span.skills_install_end": 1,
+          "agent.tool_result": 40,
+          "agent.tool_use_input_stream_start": 64,
+          "agent.tool_use_input_chunk": 346,
+          "agent.tool_use_input_stream_end": 63,
+          "agent.thinking_stream_start": 34,
+          "agent.thinking_chunk": 956,
+          "agent.thinking_stream_end": 34,
+          "agent.thinking": 23,
+          "agent.message_stream_start": 1,
+          "agent.message_chunk": 2,
+          "agent.message_stream_end": 1
+        },
+        "deltaTypes": {
+          "agent.tool_use_input_stream_start": 64,
+          "agent.tool_use_input_chunk": 346,
+          "agent.tool_use_input_stream_end": 63,
+          "agent.thinking_stream_start": 34,
+          "agent.thinking_chunk": 956,
+          "agent.thinking_stream_end": 34,
+          "agent.message_stream_start": 1,
+          "agent.message_chunk": 2,
+          "agent.message_stream_end": 1
+        },
+        "sessionErrors": [],
+        "parseErrors": 0,
+        "duplicateDurable": [],
+        "outOfOrder": [],
+        "unexpectedEnd": 0,
+        "transportErrors": [],
+        "lastFrameAt": "2026-10-26T04:51:07.974Z",
+        "finishedAt": "2026-10-26T04:51:08.028Z",
+        "elapsedSeconds": 296.992,
+        "lastDurableId": 288,
+        "ok": true
+      },
+      {
+        "id": "sess_Pkw0zLzqKvmn9HIRxrjhK",
+        "kind": "delegation-child",
+        "startedAt": "2026-10-26T04:46:11.041Z",
+        "deadlineAt": "2026-10-26T04:51:08.022Z",
+        "connections": [
+          {
+            "openedAt": "2026-10-26T04:46:11.041Z",
+            "resumeAfter": 0,
+            "status": 200,
+            "contentType": "text/event-stream",
+            "end": "planned_abort",
+            "closedAt": "2026-10-26T04:48:41.042Z"
+          },
+          {
+            "openedAt": "2026-10-26T04:48:41.543Z",
+            "resumeAfter": 43,
+            "status": 200,
+            "contentType": "text/event-stream",
+            "end": "planned_abort",
+            "closedAt": "2026-10-26T04:51:08.025Z"
+          }
+        ],
+        "frames": 259,
+        "heartbeats": 28,
+        "durableCount": 92,
+        "deltaCount": 167,
+        "eventTypes": {
+          "delegation.input": 1,
+          "session.status_running": 1,
+          "agent.context_usage": 11,
+          "agent.context_start": 1,
+          "agent.context_entry": 22,
+          "span.model_request_start": 10,
+          "span.model_request_end": 10,
+          "agent.thinking": 3,
+          "agent.message": 10,
+          "agent.tool_use": 10,
+          "span.sandbox_prepare_start": 1,
+          "span.sandbox_prepare_end": 1,
+          "span.skills_install_start": 1,
+          "span.skills_install_end": 1,
+          "agent.tool_result": 9,
+          "agent.thinking_stream_start": 4,
+          "agent.thinking_chunk": 19,
+          "agent.message_stream_start": 13,
+          "agent.message_chunk": 17,
+          "agent.tool_use_input_stream_start": 13,
+          "agent.tool_use_input_chunk": 71,
+          "agent.thinking_stream_end": 4,
+          "agent.message_stream_end": 13,
+          "agent.tool_use_input_stream_end": 13
+        },
+        "deltaTypes": {
+          "agent.thinking_stream_start": 4,
+          "agent.thinking_chunk": 19,
+          "agent.message_stream_start": 13,
+          "agent.message_chunk": 17,
+          "agent.tool_use_input_stream_start": 13,
+          "agent.tool_use_input_chunk": 71,
+          "agent.thinking_stream_end": 4,
+          "agent.message_stream_end": 13,
+          "agent.tool_use_input_stream_end": 13
+        },
+        "sessionErrors": [],
+        "parseErrors": 0,
+        "duplicateDurable": [],
+        "outOfOrder": [],
+        "unexpectedEnd": 0,
+        "transportErrors": [],
+        "lastFrameAt": "2026-10-26T04:51:01.566Z",
+        "finishedAt": "2026-10-26T04:51:08.028Z",
+        "elapsedSeconds": 296.987,
+        "lastDurableId": 92,
+        "ok": true
+      }
+    ]
+  },
+  "health": {
+    "samples": 156,
+    "failures": 0,
+    "latencyMs": {
+      "n": 156,
+      "min": 75,
+      "p50": 115,
+      "p95": 242,
+      "max": 1105
+    }
+  },
+  "exposure": {
+    "canaryExposure": {
+      "sandboxes": [
+        {
+          "sandbox": "oma-test-sandbox-267p4",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-29hgp",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-2k29v",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-2qwgr",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-4tmx4",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-4x75k",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-5sgwp",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-62wt7",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-7pw28",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-8gx9n",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-9x7kf",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-b4gr8",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-b6xfx",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-cd876",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-drjnk",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-ds965",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-ffmrz",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-fwmbw",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-hrnw9",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-jfgn7",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-kqnb2",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-ks48v",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-lpmct",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-nnrwp",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-ppm7k",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-qjmfm",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-qjwj9",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-trz82",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-vd9pc",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-vjntj",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-wncph",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-wq69h",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-x5dbm",
+          "cr_matches": 0,
+          "pod_matches": 0
+        },
+        {
+          "sandbox": "oma-test-sandbox-xd4g9",
+          "cr_matches": 0,
+          "pod_matches": 0
+        }
+      ],
+      "logs": [
+        {
+          "app": "oma-api",
+          "matches": 0
+        },
+        {
+          "app": "oma-runner",
+          "matches": 0
+        },
+        {
+          "app": "oma-image-builder",
+          "matches": 0
+        }
+      ]
+    },
+    "eventCanaryMatches": 0
+  },
+  "localTests": {
+    "baselineCommit": "d90942ef99f7892775d0e6aaa6d353c6449fe79b",
+    "latestCommit": "0e1654082d8700aa7c35623d6d1df95f23e4ed89",
+    "runtime": {
+      "node": "v23.7.0",
+      "pnpm": "10.12.4",
+      "os": "macOS arm64",
+      "postgres": "oma-env-test-pg:55532",
+      "redis": "oma-env-test-redis:56479"
+    },
+    "normalizedResults": [
+      {
+        "suite": "server incl opt-in supplements",
+        "passed": 3268,
+        "failed": 1,
+        "skipped": 8,
+        "note": "Standard 3249 passed/28 skipped; supplements cleanup clock2 pass, Docker Skill Install8 pass, split process9 pass/1 fail replace20 skips"
+      },
+      {
+        "suite": "adapter",
+        "passed": 455,
+        "failed": 0,
+        "skipped": 0,
+        "note": "Initial8 timing failures; all119 tests in7 affected files passed bounded recheck"
+      },
+      {
+        "suite": "web",
+        "passed": 526,
+        "failed": 0,
+        "skipped": 0,
+        "note": "Initial8 timing failures; all64 tests in7 affected files passed bounded recheck"
+      },
+      {
+        "suite": "CLI",
+        "passed": 43,
+        "failed": 0,
+        "skipped": 0,
+        "note": "Initial SIGINT timing failure; sessions file6/6 recheck passed"
+      },
+      {
+        "suite": "deploy incl latest delta",
+        "passed": 42,
+        "failed": 0,
+        "skipped": 1,
+        "note": "Baseline41 passed/1 skipped; latest builtin file7/7 incl1 added Whisper absence test"
+      }
+    ],
+    "normalizedTotals": {
+      "passed": 4334,
+      "failed": 1,
+      "skipped": 9
+    },
+    "checks": {
+      "serverAllTypechecks": "passed",
+      "adapterTypecheck": "passed",
+      "cliTypecheck": "passed",
+      "webProductionBuild": "passed",
+      "openapi": "passed with4 warnings",
+      "latestInitShellSyntax": "passed",
+      "webLint": "11 pre-existing errors"
+    },
+    "outstandingFailure": {
+      "name": "Redis startup outage, mid-Turn loss and recovery preserve execution and open-page completion",
+      "file": "server/packages/api/test/split-process.test.ts",
+      "line": 232,
+      "expected": "1 session.turn_aborted after accepted Interrupt",
+      "observed": "0 aborted;2 turns complete normally",
+      "classification": "pre-existing, reproduced on independent b88d77c1 archive and latest0e165408",
+      "evidence": "redis-outage-comparison.json"
+    },
+    "cleanup": {
+      "temporarySharedProbe": "removed",
+      "dedicatedRedis": "oma-split-env-review-20261026 removed",
+      "newDockerFixtureImage": "oma-skill-install-test:760fea633ebd removed",
+      "existingLocalPgAndRedis": "preserved"
+    },
+    "coverageNotes": [
+      "Environment variable update/removal and tenant secret rotation have local resolver/API coverage",
+      "Platform secret refresh every60s plus last-good fallback tested locally; shared platform Secret not mutated",
+      "Real PG concurrent build claims, superseding/fencing, migrations0026/0028/0029/0030 exercised",
+      "Remaining skips:7 backend-inapplicable lifecycle contract cases,1 live Supabase loop,1 pristine pi-mcp-adapter fixture absent",
+      "All totals normalize duplicate reruns; they do not describe a single green command invocation"
+    ]
+  },
+  "cleanup": {
+    "checkedAt": "2026-10-26T04:54:49.628Z",
+    "sessions": 52,
+    "statuses": {
+      "terminated": 52
+    },
+    "pending": 0,
+    "keys": {
+      "total": 33,
+      "active": 0
+    },
+    "sseKeyRevoked": true,
+    "loop": [
+      {
+        "id": "loop_K-1aFw80nmr-b5Bfok_OJ",
+        "enabled": false
+      }
+    ],
+    "liveBindings": 0,
+    "cluster": {
+      "sandbox": [],
+      "pods": [],
+      "servicePods": [
+        {
+          "name": "oma-api-7f5664b899-vthgf",
+          "phase": "Running",
+          "restarts": 0
+        },
+        {
+          "name": "oma-image-builder-c9b7c96d8-7t96f",
+          "phase": "Running",
+          "restarts": 0
+        },
+        {
+          "name": "oma-runner-99c4b4cc7-jr4pr",
+          "phase": "Running",
+          "restarts": 0
+        },
+        {
+          "name": "oma-runner-99c4b4cc7-stsxc",
+          "phase": "Running",
+          "restarts": 0
+        },
+        {
+          "name": "oma-web-6f6c76cc8-6sffs",
+          "phase": "Running",
+          "restarts": 0
+        },
+        {
+          "name": "redis-6db9fb4575-nmqfs",
+          "phase": "Running",
+          "restarts": 0
+        }
+      ],
+      "productionDeploymentUnchanged": true
+    }
+  },
+  "finalDeployments": [
+    {
+      "name": "oma-api",
+      "generation": 18,
+      "images": [
+        "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:03081cae4cb0b710afa9a80f510128a14db5a279480c61a8d91aa1af4e77ed73"
+      ],
+      "ready": 1
+    },
+    {
+      "name": "oma-image-builder",
+      "generation": 9,
+      "images": [
+        "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:03081cae4cb0b710afa9a80f510128a14db5a279480c61a8d91aa1af4e77ed73"
+      ],
+      "ready": 1
+    },
+    {
+      "name": "oma-runner",
+      "generation": 38,
+      "images": [
+        "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:03081cae4cb0b710afa9a80f510128a14db5a279480c61a8d91aa1af4e77ed73"
+      ],
+      "ready": 2
+    },
+    {
+      "name": "oma-web",
+      "generation": 13,
+      "images": [
+        "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:46c363546a121bb75b612ba2a0a33249a03964d9f929838215df29c0b3119f8d"
+      ],
+      "ready": 1
+    },
+    {
+      "name": "redis",
+      "generation": 1,
+      "images": [
+        "registry-vpc.cn-shanghai.aliyuncs.com/welltop/redis-base:7-alpine"
+      ],
+      "ready": 1
+    }
+  ],
+  "skillScan": {
+    "skills": 19,
+    "files": 315,
+    "offlineWhisperRuntimeReferences": 0,
+    "excluded": "Other Agents equipping old story-audio; not part of the 19-Skill fixture"
+  },
+  "limitations": [
+    "30 root Sessions, not a full production-capacity load test",
+    "All business workflows cancelled at 310s; no full artifact quality acceptance",
+    "Storyboard stimulus mistakenly requested uninstalled director_luran_style; its style is not verified",
+    "Skill validator expects sibling pipeline while fixture uses pipeline_canvas-free; recovered workaround, no old-image control",
+    "Shared base-secret rotation not mutated live; 60s refresh/failure fallback covered locally",
+    "Production custom provider credentials/configurations not copied or exhaustively verified",
+    "One confirmed pre-existing Redis-outage Interrupt defect and11 pre-existing Web lint errors remain"
+  ]
+}

@@ -64,5 +64,4 @@ ACS 客户端协议未修改。核查发现 CLI 的 `biz-region-id` 是别名；
 - **缓存**：`aliyun acc list-image-caches` 中名为 `oma-test-490544134a0313d8` 的只有一个，`imc-uf6do32uk5dsbid1cj13`，Ready，镜像为 `oma-environments@sha256:490544134a03…`。
 - **真实池补货**：池里唯一的未领取 Sandbox `oma-test-sandbox-tclcw` 建于缓存之前（04:54Z，没有 `matched-image-caches`）。删除它触发补货：新 Pod `oma-test-sandbox-trwzm` 07:16:33Z 创建，07:16:41Z `ImageCacheHit`，主容器 07:17:11Z 启动（**38 s**），镜像 "already present on machine"，`matched-image-caches` 为 `imc-uf6do32uk5dsbid1cj13`，Ready、restartCount 0。池 generation 仍为 3，镜像未变。
 - **代码**：`d19ecc30` 摘到集成分支 `docs/adr-0024-environments` 上，server typecheck 通过，builder 相关 4 个测试文件 49 个用例、`deploy/*.test.mjs` 46 个用例通过。
-- **观察**：池镜像不变时每次 reconcile（30 s）也会调用一次 `ListImageCaches`，约每天 2880 次；不影响功能，可以在进程内记住"该镜像缓存已 Ready"以省掉调用。
-- 本文链接的 `environments-review-regression-oma-test-2026-10-26.md` 尚未提交到任何分支。
+- **观察（已修复）**：池镜像不变时每次 reconcile（30 s）都调用一次 `ListImageCaches`，约每天 2880 次。之后的提交让 builder 记住已 Ready 的缓存，同一镜像最多每 10 分钟再列一次，被删除的缓存仍会在 10 分钟内补建。
