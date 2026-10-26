@@ -1,4 +1,4 @@
-import { ENVIRONMENT_VARIABLE_NAME } from "@oma-server/sandbox";
+import { ENVIRONMENT_VARIABLE_NAME, shellQuote } from "@oma-server/sandbox";
 import type { EnvironmentVariable } from "@oma-server/store";
 import type { BuildContextFiles } from "./ports.js";
 
@@ -31,11 +31,6 @@ export interface BuildContextInput {
 
 /** Where the build pod mounts the context (a ConfigMap). */
 export const BUILD_CONTEXT_DIR = "/oma/context";
-
-/** A value as one single-quoted word for `sh`: nothing in it is expanded. */
-export function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
 
 /**
  * `build.env`, sourced with `set -a` before the script: later lines win, so

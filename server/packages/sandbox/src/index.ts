@@ -21,6 +21,7 @@ export {
   INTENT_DEADLINE_SECONDS,
   SandboxCreateRejected,
   CLAIM_IMAGE_METADATA,
+  imageDigest,
   isDigestPinnedImage,
 } from "./sandbox-client.js";
 
@@ -124,3 +125,5 @@ export { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.j
 export { FAKE_ENVIRONMENT_IMAGE, fakeEnvironments, type FakeEnvironments } from "./fake-environments.js";
 
 export { ENVIRONMENT_VARIABLE_NAME, PLATFORM_DEFAULT_ENV, isReservedEnvironmentVariable } from "./environment-variables.js";
+
+export { shellQuote } from "./shell-quote.js";

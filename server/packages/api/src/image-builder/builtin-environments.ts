@@ -9,7 +9,7 @@ import {
   type EnvironmentStoreUpdateInput,
   type EnvironmentVariable,
 } from "@oma-server/store";
-import { ENVIRONMENT_VARIABLE_NAME, isReservedEnvironmentVariable } from "@oma-server/sandbox";
+import { ENVIRONMENT_VARIABLE_NAME, imageDigest, isReservedEnvironmentVariable } from "@oma-server/sandbox";
 
 /**
  * A Built-in Environment as the repository defines it (ADR-0024):
@@ -161,7 +161,7 @@ export async function rebuildOnNewBaseImages(
   const queued: string[] = [];
   const failed: string[] = [];
   for (const [baseImage, ref] of Object.entries(baseImages) as Array<[EnvironmentBaseImage, string]>) {
-    const digest = ref.slice(ref.indexOf("@") + 1);
+    const digest = imageDigest(ref);
     for (const { id, owner } of await store.listBuiltOnOtherBaseImage(baseImage, digest)) {
       try {
         if (!await store.rebuild(owner, id)) continue;

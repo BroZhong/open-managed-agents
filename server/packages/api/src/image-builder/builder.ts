@@ -8,6 +8,7 @@ import {
   type EnvironmentBuildQueue,
   type EnvironmentStore,
 } from "@oma-server/store";
+import { imageDigest } from "@oma-server/sandbox";
 import { buildContext } from "./build-context.js";
 import { BuildLog } from "./build-log.js";
 import type { BuildAttemptRef, BuildJob, BuildRunner, Clock, ImageVerifier } from "./ports.js";
@@ -306,7 +307,7 @@ export class EnvironmentBuilder {
     const { config } = this.deps;
     const baseImage = config.baseImages[build.baseImage];
     if (!baseImage) return { kind: "failed", code: BUILD_ERRORS.baseImage, message: `No ${build.baseImage} Base Image is configured.` };
-    await this.deps.queue.recordBuildProgress(lease, { baseImageDigest: baseImage.slice(baseImage.indexOf("@") + 1) });
+    await this.deps.queue.recordBuildProgress(lease, { baseImageDigest: imageDigest(baseImage) });
     const nonce = this.nonce();
     const job: BuildJob = {
       buildId: build.id,

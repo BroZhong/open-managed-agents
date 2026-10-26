@@ -107,6 +107,12 @@ export function isDigestPinnedImage(image: string | undefined): image is string 
     && /^(?:[A-Za-z0-9.-]+(?::\d+)?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/.test(image);
 }
 
+/** The `sha256:<64 hex>` digest of a digest-pinned image; throws for any other reference. */
+export function imageDigest(image: string): string {
+  if (!isDigestPinnedImage(image)) throw new Error(`${image} is not an image pinned by digest`);
+  return image.slice(image.lastIndexOf("@") + 1);
+}
+
 /** Options for creating a sandbox. */
 export interface SandboxCreateOptions {
   /**

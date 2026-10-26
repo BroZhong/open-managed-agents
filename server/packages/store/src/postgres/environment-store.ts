@@ -1,5 +1,5 @@
 import { EnvironmentNameConflictError } from "../errors.js";
-import { environmentDefinitionSha256, newEnvironmentBuildId } from "../environment.js";
+import { environmentDefinitionSha256, newEnvironmentBuildId, validateEnvironmentBuildLeaseMs } from "../environment.js";
 import type { Pool, PoolClient } from "./connection.js";
 import type {
   ClaimedEnvironmentBuild,
@@ -143,10 +143,6 @@ const tenantOf = (owner: EnvironmentOwner) => (owner.ownerType === "tenant" ? ow
 const HELD = `status = 'running' AND lease_owner = $2 AND attempts = $3`;
 const leaseParams = (lease: EnvironmentBuildLease) => [lease.buildId, lease.owner, lease.attempt];
 const LEASE_EXPIRES = (param: string) => `clock_timestamp() + CAST(${param} || ' milliseconds' AS interval)`;
-
-function validateLeaseMs(leaseMs: number): void {
-  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw new RangeError("Environment Build lease must be a positive integer of milliseconds");
-}
 
 export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQueue {
   constructor(private readonly pool: Pool) {}
@@ -298,7 +294,7 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
 
   async claimBuild(owner: string, leaseMs: number): Promise<ClaimedEnvironmentBuild | null> {
     if (!owner) throw new RangeError("Environment Build lease owner must not be empty");
-    validateLeaseMs(leaseMs);
+    validateEnvironmentBuildLeaseMs(leaseMs);
     return this.transaction(async (client) => {
       // Skip a row another builder is claiming; the claim re-checks the
       // lease after the lock, by the database's clock.
@@ -338,7 +334,7 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
   }
 
   async renewBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildRenewal> {
-    validateLeaseMs(leaseMs);
+    validateEnvironmentBuildLeaseMs(leaseMs);
     return this.transaction(async (client) => {
       // Lock first: the lease is judged after any concurrent writer committed.
       const locked = await client.query<{ status: EnvironmentBuildStatus }>(
@@ -355,7 +351,7 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
   }
 
   async retryBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildLease | null> {
-    validateLeaseMs(leaseMs);
+    validateEnvironmentBuildLeaseMs(leaseMs);
     return this.transaction(async (client) => {
       await client.query(`SELECT id FROM environment_builds WHERE id = $1 FOR UPDATE`, [lease.buildId]);
       const { rows } = await client.query<{ attempts: number }>(

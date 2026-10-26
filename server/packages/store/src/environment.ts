@@ -21,3 +21,8 @@ export const newEnvironmentBuildId = () => `envb_${nanoid()}`;
 export function environmentDefinitionSha256(baseImage: EnvironmentBaseImage, initScript: string): string {
   return createHash("sha256").update(JSON.stringify({ baseImage, initScript })).digest("hex");
 }
+
+/** A build lease's length as every Environment Build queue accepts it: a positive integer of milliseconds. */
+export function validateEnvironmentBuildLeaseMs(leaseMs: number): void {
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw new RangeError("Environment Build lease must be a positive integer of milliseconds");
+}

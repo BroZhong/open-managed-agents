@@ -2,6 +2,7 @@ import {
   EnvironmentNameConflictError,
   environmentDefinitionSha256,
   newEnvironmentBuildId,
+  validateEnvironmentBuildLeaseMs,
   type ClaimedEnvironmentBuild,
   type Environment,
   type EnvironmentBaseImage,
@@ -15,10 +16,6 @@ import {
   type EnvironmentStoreUpdateInput,
   type SandboxEnvironmentRecord,
 } from "@oma-server/store";
-
-function validateLeaseMs(leaseMs: number): void {
-  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw new RangeError("Environment Build lease must be a positive integer of milliseconds");
-}
 
 type StoredEnvironment = Omit<Environment, "lastBuild"> & { lastBuildId: string; deletedAt: Date | null };
 
@@ -157,7 +154,7 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
 
   async claimBuild(owner: string, leaseMs: number): Promise<ClaimedEnvironmentBuild | null> {
     if (!owner) throw new RangeError("Environment Build lease owner must not be empty");
-    validateLeaseMs(leaseMs);
+    validateEnvironmentBuildLeaseMs(leaseMs);
     const now = this.now();
     const build = this.builds.find((candidate) => candidate.status === "pending" || (candidate.status === "running" && candidate.leaseExpiresAt! <= now));
     return build ? this.claim(build, owner, leaseMs) : null;
@@ -182,7 +179,7 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
   }
 
   async renewBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildRenewal> {
-    validateLeaseMs(leaseMs);
+    validateEnvironmentBuildLeaseMs(leaseMs);
     const build = this.builds.find((candidate) => candidate.id === lease.buildId);
     if (build?.status === "superseded") return "superseded";
     const held = this.held(lease, true);
@@ -192,7 +189,7 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
   }
 
   async retryBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildLease | null> {
-    validateLeaseMs(leaseMs);
+    validateEnvironmentBuildLeaseMs(leaseMs);
     const held = this.held(lease, true);
     if (!held) return null;
     held.attempts += 1;

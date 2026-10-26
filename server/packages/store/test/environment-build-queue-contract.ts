@@ -64,6 +64,16 @@ export function environmentBuildQueueContract(name: string, create: () => Promis
       expect(await store.claimBuild("builder-a", LEASE)).toBeNull();
     });
 
+    it("accepts only a positive integer of milliseconds as a lease", async () => {
+      await store.create(input(T1));
+      for (const leaseMs of [0, -1, 1.5, Number.NaN]) {
+        await expect(store.claimBuild("builder-a", leaseMs)).rejects.toThrow(new RangeError("Environment Build lease must be a positive integer of milliseconds"));
+      }
+      const { lease } = (await store.claimBuild("builder-a", LEASE))!;
+      await expect(store.renewBuild(lease, 0)).rejects.toThrow(RangeError);
+      await expect(store.retryBuild(lease, 0)).rejects.toThrow(RangeError);
+    });
+
     it("never claims a superseded build, nor one of a deleted Environment", async () => {
       const env = await store.create(input(T1));
       await store.update(T1, env.id, { initScript: "echo v2\n" });

@@ -11,7 +11,6 @@ import {
   dockerfile,
   parseDriverReport,
   scriptFailureMessage,
-  shellQuote,
 } from "../src/image-builder/build-context.js";
 
 const BASE = `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:${"a".repeat(64)}`;
@@ -71,7 +70,7 @@ describe("the generated build context (ADR-0024 Building)", () => {
     });
     expect(buildEnvFile({ ...input, proxy: null, env: [] })).not.toMatch(/PROXY/i);
     expect(buildEnvFile({ ...input, env: [{ name: "HTTPS_PROXY", value: "http://mine:3128" }] })).toMatch(/^HTTPS_PROXY='http:\/\/mine:3128'$/m);
-    expect(shellQuote("a'b")).toBe(`'a'\\''b'`);
+    expect(buildEnvFile({ ...input, proxy: null, env: [{ name: "QUOTED", value: "it's $HOME" }] })).toMatch(/^QUOTED='it'\\''s \$HOME'$/m);
   });
 
   it("names the failing line of an init script and marks the failure for the driver, through the RUN's shell plumbing", () => {

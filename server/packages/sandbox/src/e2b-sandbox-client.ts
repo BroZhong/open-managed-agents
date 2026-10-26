@@ -31,6 +31,7 @@ import type {
   SandboxHandle,
   SandboxListFilter,
 } from "./sandbox-client.js";
+import { shellQuote } from "./shell-quote.js";
 
 export interface E2BCommandResult {
   exitCode: number;
@@ -777,10 +778,6 @@ export function wrapCommand(
   // itself; otherwise killing the shell can leave the search process running.
   parts.push(`exec ${cmd}`);
   return parts.join(" && ");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
