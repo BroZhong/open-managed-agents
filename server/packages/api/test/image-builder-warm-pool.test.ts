@@ -189,8 +189,12 @@ describe("AcsImageCaches", () => {
       expect(calls.at(-1)).toBe("ListImageCaches");
       expect(pool.set).toEqual([]);
 
+      // A cache seen ready is not listed again on every 30 s recheck of the pool…
       listed = [];
-      await clock.advance(30_000);
+      await clock.advance(9 * 60_000);
+      expect(calls).toHaveLength(4);
+      // …only once the cache recheck interval has passed, which recreates a removed one.
+      await clock.advance(60_000);
       expect(calls.slice(-2)).toEqual(["ListImageCaches", "CreateImageCache"]);
       expect(calls.filter((action) => action === "CreateImageCache")).toHaveLength(2);
       expect(pool.set).toEqual([]);

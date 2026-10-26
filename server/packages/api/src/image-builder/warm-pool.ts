@@ -45,9 +45,12 @@ export interface WarmPoolUpdaterDeps {
   logger?: Pick<Console, "info" | "warn" | "error">;
   /** How often the pool is compared with the Environment's image (and a cache in progress re-read). */
   recheckMs?: number;
+  /** How long a cache seen ready for the pool's own image is trusted before it is listed again. */
+  cacheRecheckMs?: number;
 }
 
 const RECHECK_MS = 30_000;
+const CACHE_RECHECK_MS = 10 * 60_000;
 
 /**
  * Keeps the Warm Pool on its Environment's image (ADR-0024): when that
@@ -64,6 +67,8 @@ export class WarmPoolUpdater {
   private loop?: Promise<void>;
   /** The image whose cache was last reported, so a wait is logged once. */
   private reported?: string;
+  /** The image whose cache was last seen ready, and when: the pool's recheck need not list it again. */
+  private cached?: { image: string; at: number };
 
   constructor(private readonly deps: WarmPoolUpdaterDeps) {
     this.logger = deps.logger ?? console;
@@ -89,6 +94,10 @@ export class WarmPoolUpdater {
     const image = (await this.deps.store.getBuiltIn(this.deps.environmentId))?.image;
     if (!image) return "no-image";
     const current = await pool.image();
+    if (current === image && this.cached?.image === image &&
+        this.deps.clock.now() - this.cached.at < (this.deps.cacheRecheckMs ?? CACHE_RECHECK_MS)) {
+      return "unchanged";
+    }
     let cache: ImageCacheState | undefined;
     if (caches) {
       cache = await caches.ensure(image);
@@ -100,6 +109,7 @@ export class WarmPoolUpdater {
         }
         return cache.state === "failed" ? "cache-failed" : "waiting-for-cache";
       }
+      this.cached = { image, at: this.deps.clock.now() };
     }
     // Also backfill a cache enabled later, or recreate one removed while the pool kept its image.
     if (current === image) return "unchanged";

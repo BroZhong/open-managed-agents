@@ -186,7 +186,8 @@ Environment, at startup and every 30 s it compares the pool's `sandbox`
 container image with the Environment's and patches the SandboxSet (a JSON
 patch of that one field). With caching enabled it also ensures the current
 image's cache when the pool already runs that image, so enabling caching
-later or removing a cache triggers backfill without changing the pool.
+later or removing a cache triggers backfill without changing the pool; a cache
+seen ready is listed again only every 10 minutes, not on every 30 s check.
 `WARM_POOL_IMAGE_CACHE` decides what comes first:
 
 | `WARM_POOL_IMAGE_CACHE` | Behaviour |
