@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { EnvironmentForm } from "@/components/environment-form";
 import { BuiltInTag, EnvironmentStatusBadge } from "@/components/environment-badges";
-import { DeleteEnvironmentDialog } from "@/components/environment-actions";
+import { CopyEnvironmentDialog, DeleteEnvironmentDialog } from "@/components/environment-actions";
 import {
   useCopyEnvironment,
   useCreateEnvironment,
@@ -19,6 +19,7 @@ export default function EnvironmentsPage() {
   const copying = useCopyEnvironment();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [forking, setForking] = useState<EnvironmentSummary | null>(null);
   const [deleting, setDeleting] = useState<EnvironmentSummary | null>(null);
   return (
     <div>
@@ -50,18 +51,18 @@ export default function EnvironmentsPage() {
         )}
         <div className="grid gap-4 lg:grid-cols-2">
           {environments.data?.map((environment) => (
-            <section key={environment.id} aria-label={environment.name} className="rounded-2xl border border-neutral-200 p-5">
+            <section key={environment.id} aria-label={environment.name} className="relative rounded-2xl border border-neutral-200 p-5 transition-colors hover:border-neutral-300 hover:bg-neutral-50/50">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Link to={`/environments/${environment.id}`} className="font-semibold hover:underline">{environment.name}</Link>
+                    <Link to={`/environments/${environment.id}`} className="font-semibold after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-[var(--color-accent)]">{environment.name}</Link>
                     {environment.ownerType === "platform" && <BuiltInTag />}
                     <EnvironmentStatusBadge status={environment.status} />
                   </div>
                   <p className="mt-1 text-xs text-neutral-500">{environment.baseImage}</p>
                 </div>
-                <div className="flex shrink-0 gap-1">
-                  <Button variant="ghost" size="icon" aria-label={`Copy ${environment.name}`} title="Copy to a custom Environment" disabled={copying.pending} onClick={() => copying.copy(environment)}>
+                <div className="relative z-10 flex shrink-0 gap-1">
+                  <Button variant="ghost" size="icon" aria-label={`Copy ${environment.name}`} title="Copy to a custom Environment" disabled={copying.pending} onClick={() => setForking(environment)}>
                     <Copy className="h-4 w-4" />
                   </Button>
                   {environment.ownerType === "tenant" && (
@@ -77,6 +78,7 @@ export default function EnvironmentsPage() {
           ))}
         </div>
       </div>
+      <CopyEnvironmentDialog environment={forking} onClose={() => setForking(null)} onConfirm={() => { if (forking) copying.copy(forking); }} />
       <DeleteEnvironmentDialog environment={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
