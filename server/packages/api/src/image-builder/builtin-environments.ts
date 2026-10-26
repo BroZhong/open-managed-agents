@@ -87,8 +87,11 @@ const canonical = (env: readonly EnvironmentVariable[]) => JSON.stringify(env.ma
   ? { name: variable.name, secretRef: { source: variable.secretRef.source, key: variable.secretRef.key } }
   : { name: variable.name, value: variable.value }));
 
-/** What a startup did to one built-in. */
-export type BuiltInChange = "created" | "rebuilt" | "updated" | "unchanged" | "failed";
+/**
+ * What a startup did to one built-in: `retried` queued its definition again
+ * because its latest build had failed.
+ */
+export type BuiltInChange = "created" | "rebuilt" | "retried" | "updated" | "unchanged" | "failed";
 
 type Logger = Pick<Console, "info" | "error">;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -98,10 +101,13 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * by fixed id: a new one is created pending its first build; a changed Base
  * Image or init script (its definition hash) queues a rebuild; a changed
  * name, description or variables applies without a build; an unchanged one
- * is not touched. One that fails leaves the others to be written.
+ * is not touched. A built-in whose latest build failed is queued once more
+ * (Tenants cannot rebuild it, and an unchanged definition never builds), so
+ * an operator retries it by restarting the builder. One that fails leaves
+ * the others to be written.
  */
 export async function syncBuiltInEnvironments(
-  store: Pick<EnvironmentStore, "create" | "update"> & Pick<EnvironmentBuildQueue, "getBuiltIn">,
+  store: Pick<EnvironmentStore, "create" | "update" | "rebuild"> & Pick<EnvironmentBuildQueue, "getBuiltIn">,
   definitions: readonly BuiltInEnvironmentDefinition[],
   logger: Logger = console,
 ): Promise<Record<string, BuiltInChange>> {
@@ -120,10 +126,14 @@ export async function syncBuiltInEnvironments(
         if (canonical(existing.env) !== canonical(definition.env)) update.env = definition.env;
         if (existing.baseImage !== definition.baseImage) update.baseImage = definition.baseImage;
         if (existing.initScript !== definition.initScript) update.initScript = definition.initScript;
-        if (Object.keys(update).length === 0) change = "unchanged";
-        else {
+        change = "unchanged";
+        if (Object.keys(update).length > 0) {
           if (!await store.update(PLATFORM, definition.id, update)) throw new Error("it disappeared while being updated");
           change = update.baseImage !== undefined || update.initScript !== undefined ? "rebuilt" : "updated";
+        }
+        if (change !== "rebuilt" && existing.lastBuild?.status === "failed") {
+          if (!await store.rebuild(PLATFORM, definition.id)) throw new Error("it disappeared while being rebuilt");
+          change = "retried";
         }
       }
     } catch (error) {

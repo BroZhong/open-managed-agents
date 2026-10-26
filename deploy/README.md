@@ -165,7 +165,10 @@ At startup, before it claims anything, the builder:
    (shipped in the Server image) by its fixed id: a new one is created and
    built; a changed init script or Base Image queues a rebuild; changed
    variables, name or description apply without a build; an unchanged one is
-   left alone, so restarts create and build nothing;
+   left alone, so restarts create and build nothing, except that a built-in
+   whose latest build failed is queued once more: restarting the builder is
+   how an operator retries a failed built-in (Tenants get 403 on rebuilding
+   one);
 2. queues a rebuild of every Environment, built-in or a Tenant's, whose
    latest build finished on another digest of its Base Image than the one
    configured now (each build records the digest it ran on). Each rebuild is

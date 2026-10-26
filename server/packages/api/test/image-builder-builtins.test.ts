@@ -105,6 +105,41 @@ describe("Built-in Environments from the repository (ADR-0024)", () => {
     expect(await syncBuiltInEnvironments(store, [reordered], quiet)).toEqual({ env_video_production: "unchanged" });
   });
 
+  it("queues a built-in whose latest build failed once more at startup: an operator restart retries it", async () => {
+    const store = new InMemoryEnvironmentStore();
+    await syncBuiltInEnvironments(store, [definition()], quiet);
+    const claimed = (await store.claimBuild("builder", 60_000))!;
+    await store.failBuild(claimed.lease, { code: "environment_build_infrastructure_failed", message: "registry unreachable" });
+    const lines: string[] = [];
+    expect(await syncBuiltInEnvironments(store, [definition()], { info: (line: string) => lines.push(line), error() {} }))
+      .toEqual({ env_video_production: "retried" });
+    expect(lines).toEqual(["builtin_environment id=env_video_production change=retried"]);
+    expect((await store.listBuilds("env_video_production")).map((build) => build.status)).toEqual(["pending", "failed"]);
+    // Queued once: restarting again leaves the pending build alone.
+    expect(await syncBuiltInEnvironments(store, [definition()], quiet)).toEqual({ env_video_production: "unchanged" });
+    expect(await store.listBuilds("env_video_production")).toHaveLength(2);
+  });
+
+  it("queues one build for a failed built-in, whatever else changed", async () => {
+    const store = new InMemoryEnvironmentStore();
+    await syncBuiltInEnvironments(store, [definition()], quiet);
+    const fail = async () => {
+      const claimed = (await store.claimBuild("builder", 60_000))!;
+      await store.failBuild(claimed.lease, { code: "environment_build_script_failed", message: "line 3" });
+    };
+    const statuses = async () => (await store.listBuilds("env_video_production")).map((build) => build.status);
+
+    await fail();
+    expect(await syncBuiltInEnvironments(store, [definition({ description: "Video and more" })], quiet)).toEqual({ env_video_production: "retried" });
+    expect(await store.getBuiltIn("env_video_production")).toMatchObject({ description: "Video and more", status: "pending" });
+    expect(await statuses()).toEqual(["pending", "failed"]);
+
+    await fail();
+    expect(await syncBuiltInEnvironments(store, [definition({ description: "Video and more", initScript: "#!/usr/bin/env bash\necho fixed\n" })], quiet))
+      .toEqual({ env_video_production: "rebuilt" });
+    expect(await statuses()).toEqual(["pending", "failed", "failed"]);
+  });
+
   it("writes the other built-ins when one fails", async () => {
     const store = new InMemoryEnvironmentStore();
     // A built-in of that name already exists under another id.

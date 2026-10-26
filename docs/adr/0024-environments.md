@@ -95,7 +95,10 @@ Measured on the agent-platform cluster on 2026-10-25:
   permissions: every Tenant sees them, none may change them (403), any may copy
   one into its own. Their "built-in" label is derived from `ownerType`; there
   is no tag system. The image builder upserts them at startup and rebuilds one
-  whose definition hash changed.
+  whose definition hash changed. A built-in whose latest build failed is
+  queued once more at startup: no Tenant can rebuild it and an unchanged
+  definition never builds, so an operator retries it by restarting the
+  builder (a script failure fails again until the definition is fixed).
 - `video-production` (`env_video_production`) replaces `auto-story-v2`: base
   `oma-media`; a script that installs `libgl1`, vfs-cli v0.3.21, mediakit-cli
   0.2.1 and ossutil with pinned checksums, `google-genai`, `scenedetect`,
