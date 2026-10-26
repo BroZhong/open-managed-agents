@@ -300,6 +300,12 @@ Measured on the agent-platform cluster on 2026-10-25:
   Accepted for an internal platform and not scheduled; the remedy is to scope
   the credential to `welltop/oma-environments` with a dedicated RAM user and
   move build pods to the Sandbox vSwitch.
+- The builder's Role creates pods in its own namespace. It grants no Secret
+  reads, but a pod may mount any Secret of its namespace, and in production
+  the builder runs in `oma-infra` next to `oma-secrets`: a compromised builder
+  (not a build script, whose pod spec the builder writes) could read them
+  through a pod. Accepted for now; the remedy is a dedicated build namespace
+  holding only the push credential, with the Role bound there.
 - ACR Personal has no SLA and no tag deletion; image growth is accepted.
 - The 2026-10-25 network finding (Sandbox egress reaches the VPC, including
   RDS) is unchanged by this decision.

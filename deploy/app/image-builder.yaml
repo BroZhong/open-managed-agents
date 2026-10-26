@@ -73,7 +73,10 @@ metadata:
   name: oma-image-builder
 ---
 # Build pods and their context ConfigMaps in the builder's own namespace, and
-# their logs. Nothing else: no Secrets, no other workloads.
+# their logs. The Role grants no Secret reads, but a pod it creates may mount
+# any Secret of this namespace: in production that is oma-infra, whose
+# oma-secrets the builder could reach through a pod (ADR-0024 "Consequences
+# and accepted risks"; the remedy is a dedicated build namespace).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

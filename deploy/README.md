@@ -227,10 +227,12 @@ The builder holds PG, the Workspace OSS keys (for logs) and the E2B key; no
 encryption key and no Sandbox base Secret: Environment secrets never reach a
 build. Its Role in its own namespace allows only `pods`
 (create/delete/get/list/watch), `pods/log` (get) and `configmaps`
-(create/delete/list, the build context each pod owns). The cross-namespace
-grant on the environment's Warm Pool (get/patch of one SandboxSet by name) is
-applied separately; ACS ImageCache (#305) is an Alibaba Cloud API, granted by
-RAM, not by Kubernetes RBAC.
+(create/delete/list, the build context each pod owns). It reads no Secret,
+but a pod it creates may mount any Secret of its namespace (`oma-secrets` in
+`oma-infra`); ADR-0024 accepts this until builds get their own namespace.
+The cross-namespace grant on the environment's Warm Pool (get/patch of one
+SandboxSet by name) is applied separately; ACS ImageCache (#305) is an Alibaba
+Cloud API, granted by RAM, not by Kubernetes RBAC.
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
