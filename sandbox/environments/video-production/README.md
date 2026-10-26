@@ -36,8 +36,6 @@ recipe on the unmerged branch `codex/sandbox-runtime-0.3.1`; main's
 | mediakit-cli | 0.2.1, archive `8c25ebd7…`, binary `2c962efe…` | `versions.json` |
 | ossutil | 2.2.0, archive `9e02837d…`, binary `de09edc5…` | `prepare-ossutil.py` |
 | Gemini venv `/opt/auto-story/venv` | `google-genai==2.22.0` with its live closure, then `scenedetect==0.7.1`, `Pillow>=10.4,<13`, `fonttools>=4.50,<5` | live venv `pip freeze` |
-| Whisper venv `/opt/auto-story/whisper-venv` | `faster-whisper==1.2.1`, `ctranslate2==4.8.2`, `numpy==1.26.4` with their live closure | live venv `pip freeze` |
-| Whisper models `/opt/auto-story/models/{base.en,small}` | Hugging Face revisions `3d3d5dee…` / `536b0662…`, every file by SHA-256 | live `whisper-models.json` |
 | `/etc/pip.conf` | `https://mirrors.aliyun.com/pypi/simple/` | 0.3.1 runtime overlay |
 | `/etc/vfs-cli/policy.json` | `{"environment":"test"}`, root, 0644, directory 0755 | ConfigMap `vfs-cli-policy-test-v1` |
 
@@ -46,18 +44,13 @@ first; `acs-base.pth` then exposes the ACS `/opt/venv` packages (NumPy 1.26.4,
 OpenCV 4.11.0.86, Pillow 11.3.0, fonttools 4.61.1, …) after the venv's own, and
 the remaining packages are installed with everything already visible as
 constraints, so nothing from the base is upgraded or shadowed. `python3` and
-`pip3` on `PATH` are wrappers for this venv. Each venv's own packages must equal
+`pip3` on `PATH` are wrappers for this venv. The venv's own packages must equal
 the lock written in the script, or the build fails.
-
-Offline Whisper is not in #305's list but is in the live image: the
-`story-audio` Skill (`welltop-cn/auto-story-skills`) runs
-`/opt/auto-story/whisper-venv/bin/python3` with the bundled models and never
-downloads them. The models (630 MB) come from Hugging Face through the proxy.
 
 Downloads go only through `fetch`, which checks SHA-256. Re-running the script
 on a built image changes nothing and needs no network.
-`deploy/builtin-environments.test.mjs` checks the definition's shape and these
-pins.
+`deploy/builtin-environments.test.mjs` checks the definition's shape, these
+pins and that no Whisper is installed.
 
 ## Differences from auto-story-v2
 
@@ -72,5 +65,11 @@ In short, the following are not carried over:
   `*-packages.txt`, `runtime-overlay/`, `vfs-cli-0.3.2x/`). The build manifest
   `/opt/oma/manifest.json` replaces them.
 - `/usr/local/bin/auto-story-smoke`. Acceptance runs the repository's copy.
-- `auto-story-transcribe`, `prepare-whisper.py` and `whisper-models.json`. They
-  are legacy: the Skill owns its transcription script.
+- Offline Whisper: the faster-whisper venv `/opt/auto-story/whisper-venv`, the
+  `base.en` / `small` models under `/opt/auto-story/models` (about 630 MB) and
+  the legacy helpers `auto-story-transcribe`, `prepare-whisper.py` and
+  `whisper-models.json`. Removed by maintainer decision (2026-10-26), so the
+  offline transcription of the `story-audio` Skill
+  (`welltop-cn/auto-story-skills`), which runs
+  `/opt/auto-story/whisper-venv/bin/python3` with those models, is not
+  available in video-production.

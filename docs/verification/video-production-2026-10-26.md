@@ -35,7 +35,7 @@
 
 **与 issue 不符、按线上镜像处理的地方：**
 
-- **线上镜像带离线 Whisper，issue 的脚本清单里没有。** 0.3.x 的父镜像 0.3.0（`6f5eedfc…`）带 faster-whisper venv 和 `base.en` / `small` 模型。业务 Skill `story-audio`（`welltop-cn/auto-story-skills`）直接运行 `/opt/auto-story/whisper-venv/bin/python3`，并读取 `/opt/auto-story/models/{base.en,small}`。原 smoke 也有 `offline_whisper` 检查。所以 `video-production` 照装。
+- **线上镜像带离线 Whisper，issue 的脚本清单里没有。** 0.3.x 的父镜像 0.3.0（`6f5eedfc…`）带 faster-whisper venv 和 `base.en` / `small` 模型。业务 Skill `story-audio`（`welltop-cn/auto-story-skills`）直接运行 `/opt/auto-story/whisper-venv/bin/python3`，并读取 `/opt/auto-story/models/{base.en,small}`。原 smoke 也有 `offline_whisper` 检查。所以 `video-production` 起初照装。**2026-10-26 维护者决定移除**（venv 与模型，约 630 MB 模型加 venv），见下文“差异”与“移除 Whisper 后重建”。
 - **main 的配方不是线上配方。** main 上的 `sandbox/auto-story-v2/` 是 0.2.3，还要求排除 Whisper；线上配方在分支 `codex/sandbox-runtime-0.3.1`。以线上为准。
 
 ## Environment 定义的判断
@@ -129,7 +129,7 @@ LABEL dev.oma.environment=env_video_production dev.oma.build=dryrun-305-vfs-dev
 | `/etc/oma/proxy.env` | 有 | 无 | 代理由按命令注入的平台默认变量提供 |
 | `/etc/vfs-cli/policy.json` | 镜像里是空目录，运行时由 ConfigMap 挂载 | 镜像内文件，root 0644，字节与 ConfigMap 相同 | Warm Pool 不再挂载 ConfigMap；普通用户同样不能修改 |
 | `/opt/auto-story` 下的记录（`versions.json`、`tool-sha256.txt`、`debian-packages.txt`、`python-packages.txt`、`whisper-packages.txt`、`requirements.txt`、`whisper-requirements.txt`、`runtime-overlay/`、`vfs-cli-0.3.20/`、`vfs-cli-0.3.21/`） | 有 | 无 | 改由构建清单 `/opt/oma/manifest.json` 记录 |
-| Whisper 辅助：`prepare-whisper.py`、`whisper-models.json`、`/usr/local/bin/auto-story-transcribe` | 有 | 无 | 旧镜像命令；Skill 自带转写脚本，只依赖 venv 和 `/opt/auto-story/models` |
+| 离线 Whisper：venv `/opt/auto-story/whisper-venv`（25 个包，faster-whisper 1.2.1、ctranslate2 4.8.2）、模型 `/opt/auto-story/models/{base.en,small}`（约 630 MB），以及辅助 `prepare-whisper.py`、`whisper-models.json`、`/usr/local/bin/auto-story-transcribe` | 有 | 无 | **预期差异：Whisper venv + models removed — maintainer decision 2026-10-26; the story-audio Skill's offline transcription is no longer available in video-production.** 辅助脚本本来就是旧镜像命令，没有沿用 |
 | `/usr/local/bin/auto-story-smoke`、`runtime-overlay/smoke.py` | 有 | 无 | 验收脚本不进镜像，验收时上传执行 |
 | `/opt/pi-search` | 有（rg/fd 版本记录） | 无；新增 `/opt/oma`（`bin/write-manifest`、`images/`、`smoke/`、`manifest.json`） | 版本由 `/opt/oma/images/oma-base.json` 和清单记录 |
 | `/home/user` | 754 个条目，742 个不归 user（root 属主的 npm 缓存、`.local`、`.mediakit`） | 3 个 skeleton 文件，全部归 user | `oma-base` 的 home 不带缓存，builder 构建后修正归属（ADR-0024） |

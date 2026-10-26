@@ -5,12 +5,13 @@
 # oma-media Base Image (FFmpeg 9.0.1, CJK fonts, Node 22, Pi tool runtime,
 # rg/fd), with `bash -euo pipefail` after sourcing the bind-mounted build.env.
 # build.env carries HTTP(S)_PROXY for the cluster's sing-box and an explicit
-# NO_PROXY: GitHub and Hugging Face need the proxy, Aliyun mirrors stay
-# direct. Nothing here writes proxy settings into the image.
+# NO_PROXY: GitHub needs the proxy, Aliyun mirrors stay direct. Nothing here
+# writes proxy settings into the image.
 #
 # Every version and checksum reproduces the live auto-story-v2 0.3.3 image
-# (oma-sandbox@sha256:67a46af6…, recipe on branch codex/sandbox-runtime-0.3.1).
-# README.md lists the sources and what deliberately differs.
+# (oma-sandbox@sha256:67a46af6…, recipe on branch codex/sandbox-runtime-0.3.1),
+# without its offline Whisper (maintainer decision 2026-10-26). README.md lists
+# the sources and what deliberately differs.
 set -euo pipefail
 
 # --- Pinned inputs -----------------------------------------------------------
@@ -31,8 +32,6 @@ VFS_CLI_POLICY='{"environment":"test"}'
 
 BASE_PYTHON=/opt/venv/bin/python3          # ACS Jupyter environment; never installed into
 GEMINI_VENV=/opt/auto-story/venv           # python3 / pip3 on PATH
-WHISPER_VENV=/opt/auto-story/whisper-venv  # offline subtitles of the story-audio Skill
-MODELS=/opt/auto-story/models
 
 work="$(mktemp -d)"
 user_home="$(mktemp -d)"
@@ -176,63 +175,6 @@ install -o root -g root -m 0755 "$work/python3" "$work/pip3" /usr/local/bin/
 ln -sfn /usr/local/bin/python3 /usr/local/bin/python
 ln -sfn /usr/local/bin/pip3 /usr/local/bin/pip
 
-# --- Python: offline Whisper for the story-audio Skill -----------------------
-# The Skill runs /opt/auto-story/whisper-venv/bin/python3 with local models
-# from /opt/auto-story/models/{base.en,small}; it never downloads at run time.
-step "Whisper venv ${WHISPER_VENV}"
-cat > "$work/whisper.lock" <<'LOCK'
-PyYAML==6.0.3
-anyio==4.15.1
-av==18.1.0
-certifi==2026.7.22
-click==8.5.0
-ctranslate2==4.8.2
-faster-whisper==1.2.1
-filelock==3.32.7
-flatbuffers==25.12.19
-fsspec==2026.7.0
-h11==0.16.0
-hf-xet==1.6.0
-httpcore==1.0.9
-httpx==0.28.1
-huggingface_hub==1.31.0
-idna==3.19
-numpy==1.26.4
-onnxruntime==1.30.0
-packaging==26.3
-pip==23.0.1
-protobuf==7.36.1
-setuptools==66.1.1
-tokenizers==0.23.2
-tqdm==4.70.1
-typing_extensions==4.16.0
-LOCK
-new_venv "$WHISPER_VENV"
-constrained_install "$WHISPER_VENV" "$work/whisper.lock" faster-whisper==1.2.1 ctranslate2==4.8.2 numpy==1.26.4
-check_venv "$WHISPER_VENV" "$work/whisper.lock"
-
-step "Whisper models ${MODELS}"
-install -d -o root -g root -m 0755 "$MODELS" "$MODELS/base.en" "$MODELS/small"
-while read -r model repository revision file sha256; do
-  dest="$MODELS/$model/$file"
-  if [[ -f "$dest" ]] && echo "$sha256  $dest" | sha256sum -c --status --strict -; then
-    continue
-  fi
-  fetch "https://huggingface.co/$repository/resolve/$revision/$file" "$sha256" "$work/model.part"
-  install -o root -g root -m 0644 "$work/model.part" "$dest"
-done <<'MODELS'
-base.en Systran/faster-whisper-base.en 3d3d5dee26484f91867d81cb899cfcf72b96be6c README.md 0360e1518671daf4064d44121ad1c4bbb0446dd5b0f8c724c8d3132fd33a1540
-base.en Systran/faster-whisper-base.en 3d3d5dee26484f91867d81cb899cfcf72b96be6c config.json f3bc3821e9fc76a27bae538e11ae5b677dcdd352b4600429ce7951d398569aeb
-base.en Systran/faster-whisper-base.en 3d3d5dee26484f91867d81cb899cfcf72b96be6c model.bin 2a166925539a16005f14ff328359f9b9adb9dc4fb631bb3b227526862e93e2ef
-base.en Systran/faster-whisper-base.en 3d3d5dee26484f91867d81cb899cfcf72b96be6c tokenizer.json 929c5252409436dce1b38a75d1abbcb5e132d170d8e324e4e04ed915fa2d22df
-base.en Systran/faster-whisper-base.en 3d3d5dee26484f91867d81cb899cfcf72b96be6c vocabulary.txt ff77588746d3a2595d32ab5b69ffd7b95ce2441ac57533cb66fc3eb575a115cf
-small Systran/faster-whisper-small 536b0662742c02347bc0e980a01041f333bce120 README.md 329373481008c7c38654aff8ecdcf0163c211557cc7ba8e2ef6f2f84b4f75ec8
-small Systran/faster-whisper-small 536b0662742c02347bc0e980a01041f333bce120 config.json b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828
-small Systran/faster-whisper-small 536b0662742c02347bc0e980a01041f333bce120 model.bin 3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671
-small Systran/faster-whisper-small 536b0662742c02347bc0e980a01041f333bce120 tokenizer.json fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab
-small Systran/faster-whisper-small 536b0662742c02347bc0e980a01041f333bce120 vocabulary.txt 34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913
-MODELS
-
 # --- vfs-cli policy ----------------------------------------------------------
 # Same bytes as ConfigMap sandbox-system/vfs-cli-policy-test-v1, which the warm
 # pool no longer mounts; root-owned so the ordinary user cannot change it.
@@ -246,7 +188,6 @@ step "check as user"
 cat > "$user_home/check.sh" <<'CHECK'
 set -eu
 python3 -I -c 'import ctypes, cv2, fontTools, google.genai, PIL, scenedetect; ctypes.CDLL("libGL.so.1"); assert scenedetect.__version__ == "0.7.1"'
-/opt/auto-story/whisper-venv/bin/python3 -I -c 'import ctranslate2, faster_whisper'
 vfs-cli --version
 MEDIAKIT_SURFACE=skill MEDIAKIT_RUNTIME=pi-agent mediakit-cli --version
 ossutil version

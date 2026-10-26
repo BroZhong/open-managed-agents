@@ -184,3 +184,10 @@ test("video-production installs the live image's pinned tools and policy", () =>
   assert.match(initScript, /constrained_install "\$GEMINI_VENV" "\$work\/gemini\.lock" google-genai==2\.22\.0$/m);
   assert.match(initScript, /scenedetect==0\.7\.1 'Pillow>=10\.4,<13' 'fonttools>=4\.50,<5'$/m);
 });
+
+test("video-production carries no offline Whisper (maintainer decision 2026-10-26)", () => {
+  const { initScript } = builtins.find((b) => b.dir === "video-production");
+  const lines = code(initScript);
+  assert.ok(!lines.some((line) => /whisper|ctranslate2/i.test(line)), "Whisper venv or packages");
+  assert.ok(!lines.some((line) => /huggingface\.co|\/opt\/auto-story\/models/.test(line)), "Whisper models");
+});
