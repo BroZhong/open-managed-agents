@@ -119,7 +119,7 @@ export class SandboxEnvironmentResolver implements SandboxEnvironments {
   }
 
   private resolve(env: SandboxEnvironmentRecord): Record<string, string> {
-    const resolved: Record<string, string> = {};
+    const resolved = dictionary();
     for (const variable of env.env) {
       if (!("secretRef" in variable)) { resolved[variable.name] = variable.value; continue; }
       const { source, key } = variable.secretRef;
@@ -129,7 +129,7 @@ export class SandboxEnvironmentResolver implements SandboxEnvironments {
         else this.report(env.id, `${variable.name} refers to platform secret ${key}, which this deployment does not provide`);
         continue;
       }
-      const sealed = env.encryptedSecrets[key];
+      const sealed = storedSecret(env, key);
       if (sealed === undefined) { this.report(env.id, `${variable.name} refers to secret ${key}, which is not stored`); continue; }
       resolved[variable.name] = this.secrets.open(sealed, environmentSecretScope(env, key));
     }
@@ -262,17 +262,20 @@ export class EnvironmentService {
   }
 
   async update(tenantId: string, id: string, input: EnvironmentInput) {
-    const existing = await this.owned(tenantId, id);
+    await this.owned(tenantId, id);
     if (input.initScript !== undefined) assertScript(input.initScript);
-    const update: EnvironmentStoreUpdateInput = {
+    const fields: EnvironmentStoreUpdateInput = {
       name: input.name,
       description: input.description,
       baseImage: input.baseImage,
       initScript: input.initScript,
-      ...(input.env !== undefined ? this.resolve(existing, input.env, existing) : {}),
     };
+    const { env } = input;
     try {
-      const updated = await this.store.update({ ownerType: "tenant", tenantId }, id, update);
+      // Variables are resolved under the store's lock: a secret sent without
+      // a value keeps the one stored then, not one a concurrent edit replaced.
+      const updated = await this.store.update({ ownerType: "tenant", tenantId }, id, env === undefined ? fields
+        : (current) => ({ ...fields, ...this.resolve(current, env, current) }));
       if (!updated) throw notFound();
       return publicEnvironment(updated);
     } catch (error) {
@@ -353,7 +356,7 @@ export class EnvironmentService {
 
   /** A copy's variables when the request names none: the source's, its secrets sealed for the copy. */
   private carry(target: Pick<Environment, "id" | "tenantId">, source: Environment) {
-    const encryptedSecrets: Record<string, string> = {};
+    const encryptedSecrets = dictionary();
     for (const [key, sealed] of Object.entries(source.encryptedSecrets)) {
       encryptedSecrets[key] = this.secrets.seal(this.secrets.open(sealed, environmentSecretScope(source, key)), environmentSecretScope(target, key));
     }
@@ -366,7 +369,7 @@ export class EnvironmentService {
    * secret reference is accepted only as `base` already carries it, and a
    * Tenant secret sent without a value keeps the one `base` stores.
    */
-  private resolve(target: Pick<Environment, "id" | "tenantId">, input: EnvironmentVariableInput[], base: Environment | undefined) {
+  private resolve(target: Pick<Environment, "id" | "tenantId">, input: EnvironmentVariableInput[], base: Pick<Environment, "id" | "tenantId" | "env" | "encryptedSecrets"> | undefined) {
     const env: EnvironmentVariable[] = [];
     const values = new Map<string, string>();
     const names = new Set<string>();
@@ -400,9 +403,9 @@ export class EnvironmentService {
       env.push({ name, secretRef: { source, key } });
     }
     // Seal each referenced Tenant secret once: a new value, or the one base stores.
-    const encryptedSecrets: Record<string, string> = {};
+    const encryptedSecrets = dictionary();
     for (const variable of env) {
-      if (!("secretRef" in variable) || variable.secretRef.source !== "environment" || variable.secretRef.key in encryptedSecrets) continue;
+      if (!("secretRef" in variable) || variable.secretRef.source !== "environment" || Object.hasOwn(encryptedSecrets, variable.secretRef.key)) continue;
       const { key } = variable.secretRef;
       const value = values.get(key);
       if (value !== undefined) {
@@ -410,7 +413,7 @@ export class EnvironmentService {
         encryptedSecrets[key] = this.secrets.seal(value, environmentSecretScope(target, key));
         continue;
       }
-      const kept = base?.encryptedSecrets[key];
+      const kept = base ? storedSecret(base, key) : undefined;
       if (base === undefined || kept === undefined) throw invalid("environment_secret_missing", `${variable.name}: secret ${key} has no stored value; send one`);
       total += sealedPlaintextBytes(kept);
       encryptedSecrets[key] = base.id === target.id
@@ -422,6 +425,19 @@ export class EnvironmentService {
     }
     return { env, encryptedSecrets };
   }
+}
+
+/**
+ * An object without a prototype: a name every object inherits
+ * (`constructor`, `__proto__`) is a key like any other in it.
+ */
+function dictionary(): Record<string, string> {
+  return Object.create(null) as Record<string, string>;
+}
+
+/** The secret `env` stores sealed under `key`, whatever an object inherits under that name. */
+function storedSecret(env: Pick<Environment, "encryptedSecrets">, key: string): string | undefined {
+  return Object.hasOwn(env.encryptedSecrets, key) ? env.encryptedSecrets[key] : undefined;
 }
 
 function assertScript(initScript: string): void {

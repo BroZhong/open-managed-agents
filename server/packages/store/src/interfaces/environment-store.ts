@@ -153,6 +153,17 @@ export interface EnvironmentStoreUpdateInput {
   encryptedSecrets?: Record<string, string>;
 }
 
+/**
+ * An update, or how to work it out from the Environment's variables as the
+ * update finds them under its lock. The function runs synchronously inside
+ * the update, so what a change keeps of the variables is what is stored,
+ * not what was read before a concurrent change; when it throws, nothing is
+ * written.
+ */
+export type EnvironmentStoreUpdate =
+  | EnvironmentStoreUpdateInput
+  | ((current: Pick<Environment, "id" | "tenantId" | "env" | "encryptedSecrets">) => EnvironmentStoreUpdateInput);
+
 export interface EnvironmentStore {
   /**
    * Every Environment a Tenant can see that is not deleted: the built-ins
@@ -185,7 +196,7 @@ export interface EnvironmentStore {
    * `pending`, in the same transaction; any other change never builds. Null
    * when it is absent, deleted or not owned by `owner`.
    */
-  update(owner: EnvironmentOwner, id: string, input: EnvironmentStoreUpdateInput): Promise<Environment | null>;
+  update(owner: EnvironmentOwner, id: string, update: EnvironmentStoreUpdate): Promise<Environment | null>;
   /**
    * Soft-delete: hide it from `list` and `get`, keep the row and its image,
    * and supersede its active build. False when it is absent, already deleted

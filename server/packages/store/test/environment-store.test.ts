@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { PgEnvironmentStore } from "../src/postgres/environment-store.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 import { environmentStoreContract } from "./environment-store-contract.js";
@@ -41,6 +41,98 @@ describe.skipIf(!process.env.PG_TEST_URL)("PgEnvironmentStore claims concurrentl
     // SKIP LOCKED may pass over a row being claimed; a second round takes whatever is left.
     while (await store.claimBuild("builder-late", 60_000)) claimed.push("late");
     expect(claimed).toHaveLength(6);
+  });
+});
+
+describe.skipIf(!process.env.PG_TEST_URL)("PgEnvironmentStore locks an Environment before its build", () => {
+  // Every change to an Environment locks it, then supersedes its build; a
+  // builder taking the two locks the other way round deadlocks with it.
+  let pg: PgTestHarness;
+  let store: PgEnvironmentStore;
+  const tenant = { ownerType: "tenant", tenantId: "t1" } as const;
+  beforeAll(async () => { pg = await createPgTestHarness(); });
+  beforeEach(async () => { await pg.reset(); store = new PgEnvironmentStore(pg.pool); });
+  afterAll(async () => { await pg.close(); });
+
+  const created = () => store.create({ id: "env_lock", owner: tenant, name: "lock", description: "", baseImage: "oma-base", initScript: "true\n", env: [], encryptedSecrets: {} });
+
+  /** A store whose next transaction stops once it has locked the Environment, until released. */
+  function editing() {
+    let held!: (pid: number) => void;
+    let release!: () => void;
+    const locked = new Promise<number>((resolve) => { held = resolve; });
+    const resumed = new Promise<void>((resolve) => { release = resolve; });
+    const pool = new Proxy(pg.pool, {
+      get(target, prop) {
+        if (prop !== "connect") return Reflect.get(target, prop, target);
+        return async () => {
+          const client = await target.connect();
+          const query = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+          (client as { query: unknown }).query = async (...args: unknown[]) => {
+            const result = await query(...args);
+            if (typeof args[0] === "string" && /FROM environments WHERE id = \$1 .*FOR UPDATE/s.test(args[0])) {
+              (client as { query: unknown }).query = query;
+              held((await query("SELECT pg_backend_pid() AS pid") as { rows: [{ pid: number }] }).rows[0].pid);
+              await resumed;
+            }
+            return result;
+          };
+          return client;
+        };
+      },
+    });
+    return { store: new PgEnvironmentStore(pool), locked, release };
+  }
+
+  /**
+   * Whether a transaction comes to wait for the lock the backend `pid`
+   * holds, watched until it does or `settled` says it never will.
+   */
+  async function blockedBy(pid: number, settled: () => boolean = () => false): Promise<boolean> {
+    while (!settled()) {
+      const { rows } = await pg.pool.query(`SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`, [pid]);
+      if (rows.length) return true;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return false;
+  }
+
+  it("passes over an Environment being edited rather than wait to claim the build the edit supersedes", async () => {
+    const env = await created();
+    const edit = editing();
+    onTestFinished(() => edit.release());
+    const changed = edit.store.update(tenant, env.id, { initScript: "echo v2\n" });
+    const pid = await edit.locked;
+    let settled = false;
+    const claim = store.claimBuild("builder-1", 60_000).finally(() => { settled = true; });
+    expect(await blockedBy(pid, () => settled)).toBe(false);
+    expect(await claim).toBeNull();
+    edit.release();
+    expect(await changed).toMatchObject({ initScript: "echo v2\n", status: "pending" });
+    expect((await store.claimBuild("builder-1", 60_000))?.build.initScript).toBe("echo v2\n");
+  });
+
+  it("finishes a build after an edit of its Environment, which supersedes it", async () => {
+    const env = await created();
+    const claimed = (await store.claimBuild("builder-1", 60_000))!;
+    const edit = editing();
+    onTestFinished(() => edit.release());
+    const changed = edit.store.update(tenant, env.id, { initScript: "echo v2\n" });
+    const pid = await edit.locked;
+    const finished = store.succeedBuild(claimed.lease, { image: "registry/env@sha256:new", manifest: {} });
+    // The builder waits for the edit's lock, holding nothing the edit needs.
+    expect(await blockedBy(pid)).toBe(true);
+    edit.release();
+    expect(await changed).toMatchObject({ status: "pending", image: null });
+    expect(await finished).toBe(false);
+    expect((await store.listBuilds(env.id)).map((build) => build.status)).toEqual(["pending", "superseded"]);
+  });
+
+  it("serializes edits worked out under the lock: each sees what the one before it wrote", async () => {
+    const env = await created();
+    const append = (name: string) => store.update(tenant, env.id, (current) => ({ env: [...current.env, { name, value: "1" }] }));
+    await Promise.all(["A", "B", "C", "D"].map(append));
+    expect((await store.get("t1", env.id))!.env.map((variable) => variable.name).sort()).toEqual(["A", "B", "C", "D"]);
   });
 });
 

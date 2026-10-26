@@ -71,6 +71,30 @@ describe("SandboxEnvironmentResolver", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toMatch(/first|rotated/);
   });
 
+  it("seals, keeps, rotates, copies and opens a secret under any valid key, the names every object inherits too", async () => {
+    const { stores, service, resolver } = await setup();
+    for (const key of ["constructor", "toString", "__proto__"]) {
+      const ref = { source: "environment" as const, key };
+      const env = await service.create("t1", { name: `key-${key}`, baseImage: "oma-base", env: [{ name: "API_TOKEN", secretRef: ref, value: CANARY }] });
+      expect(Object.keys((await stores.environmentStore.get("t1", env.id))!.encryptedSecrets)).toEqual([key]);
+      expect(await resolver.variables("t1", env.id)).toEqual({ API_TOKEN: CANARY });
+      await service.update("t1", env.id, { env: [{ name: "API_TOKEN", secretRef: ref }, { name: "MODE", value: "kept" }] });
+      expect(await resolver.variables("t1", env.id)).toEqual({ API_TOKEN: CANARY, MODE: "kept" });
+      await service.update("t1", env.id, { env: [{ name: "API_TOKEN", secretRef: ref, value: "rotated" }] });
+      const copy = await service.create("t1", { from: env.id, name: `copy-${key}` });
+      expect(await resolver.variables("t1", copy.id)).toEqual({ API_TOKEN: "rotated" });
+    }
+    // An unstored key is still missing, whatever an object inherits under its name.
+    const unstored = await service.create("t1", { name: "unstored", baseImage: "oma-base" });
+    await stores.environmentStore.update({ ownerType: "tenant", tenantId: "t1" }, unstored.id, {
+      env: [{ name: "API_TOKEN", secretRef: { source: "environment", key: "constructor" } }],
+    });
+    expect(await resolver.variables("t1", unstored.id)).toEqual({});
+    // A variable may be named so too.
+    const named = await service.create("t1", { name: "named", baseImage: "oma-base", env: [{ name: "__proto__", value: "plain" }] });
+    expect(Object.entries(await resolver.variables("t1", named.id))).toEqual([["__proto__", "plain"]]);
+  });
+
   it("refuses to open Tenant secrets without the key they were sealed under", async () => {
     const { stores, service } = await setup();
     const env = await service.create("t1", { name: "secret", baseImage: "oma-base",

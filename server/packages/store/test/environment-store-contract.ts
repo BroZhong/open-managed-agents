@@ -126,6 +126,18 @@ export function environmentStoreContract(name: string, create: () => Promise<Env
       expect(await store.listBuilds(env.id)).toHaveLength(1);
     });
 
+    it("works out an update from the variables it finds under its lock, writing nothing when that throws", async () => {
+      const env = await store.create(input(T1, { env: [{ name: "A", value: "1" }], encryptedSecrets: { S: "c1" } }));
+      const updated = await store.update(T1, env.id, (current) => {
+        expect(current).toEqual({ id: env.id, tenantId: "t1", env: [{ name: "A", value: "1" }], encryptedSecrets: { S: "c1" } });
+        return { name: "worked-out", env: [...current.env, { name: "B", value: "2" }], encryptedSecrets: { ...current.encryptedSecrets, S2: "c2" } };
+      });
+      expect(updated).toMatchObject({ name: "worked-out", env: [{ name: "A", value: "1" }, { name: "B", value: "2" }], encryptedSecrets: { S: "c1", S2: "c2" } });
+      await expect(store.update(T1, env.id, () => { throw new Error("refused"); })).rejects.toThrow("refused");
+      expect(await store.get("t1", env.id)).toMatchObject({ name: "worked-out", encryptedSecrets: { S: "c1", S2: "c2" } });
+      expect(await store.update(T2, env.id, () => { throw new Error("not its owner's to work out"); })).toBeNull();
+    });
+
     it("changes an Environment only for its owner", async () => {
       const own = await store.create(input(T1));
       const builtIn = await store.create(input(PLATFORM, { id: "env_builtin" }));

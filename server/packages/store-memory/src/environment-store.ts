@@ -13,7 +13,7 @@ import {
   type EnvironmentOwner,
   type EnvironmentStore,
   type EnvironmentStoreCreateInput,
-  type EnvironmentStoreUpdateInput,
+  type EnvironmentStoreUpdate,
   type SandboxEnvironmentRecord,
 } from "@oma-server/store";
 
@@ -101,9 +101,12 @@ export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBu
     return this.view(env);
   }
 
-  async update(owner: EnvironmentOwner, id: string, input: EnvironmentStoreUpdateInput): Promise<Environment | null> {
+  async update(owner: EnvironmentOwner, id: string, update: EnvironmentStoreUpdate): Promise<Environment | null> {
     const env = this.environments.get(id);
     if (!env || env.deletedAt || !owns(owner, env)) return null;
+    const input = typeof update === "function"
+      ? update(structuredClone({ id: env.id, tenantId: env.tenantId, env: env.env, encryptedSecrets: env.encryptedSecrets }))
+      : update;
     if (input.name !== undefined && input.name !== env.name) this.assertNameFree(owner, input.name, id);
     const now = new Date();
     const baseImage = input.baseImage ?? env.baseImage;

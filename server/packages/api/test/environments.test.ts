@@ -113,6 +113,27 @@ describe("Environment routes (ADR-0024)", () => {
     expect(missing).toMatchObject({ status: 400, body: { code: "environment_secret_missing" } });
   });
 
+  it("keeps the secret stored when an edit is written, not one a concurrent rotation replaced", async () => {
+    const { call, stores, secrets } = await setup();
+    const ref = { source: "environment", key: "TOKEN" };
+    const { body: env } = await call("t1", "POST", "/v1/environments", { ...create, env: [{ name: "TOKEN", secretRef: ref, value: SECRET }] });
+    const open = async () => secrets.open((await stores.environmentStore.get("t1", env.id))!.encryptedSecrets.TOKEN!, `environment:t1:${env.id}:TOKEN`);
+    // Hold an edit that sends the secret without a value until a rotation is written.
+    const update = stores.environmentStore.update.bind(stores.environmentStore);
+    let reached!: () => void;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { reached = resolve; });
+    const resumed = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(stores.environmentStore, "update").mockImplementationOnce(async (...args) => { reached(); await resumed; return update(...args); });
+    const edit = call("t1", "POST", `/v1/environments/${env.id}`, { env: [{ name: "TOKEN", secretRef: ref }, { name: "MODE", value: "edited" }] });
+    await held;
+    expect((await call("t1", "POST", `/v1/environments/${env.id}`, { env: [{ name: "TOKEN", secretRef: ref, value: "rotated" }] })).status).toBe(200);
+    expect(await open()).toBe("rotated");
+    release();
+    expect((await edit).body.env).toEqual([{ name: "TOKEN", secretRef: ref }, { name: "MODE", value: "edited" }]);
+    expect(await open()).toBe("rotated");
+  });
+
   it("rejects empty plain values, reserved and invalid names, oversize variables and scripts", async () => {
     const { call } = await setup();
     const reject = async (body: unknown, code: string) => {

@@ -15,7 +15,7 @@ import type {
   EnvironmentStatus,
   EnvironmentStore,
   EnvironmentStoreCreateInput,
-  EnvironmentStoreUpdateInput,
+  EnvironmentStoreUpdate,
   EnvironmentVariable,
   SandboxEnvironmentRecord,
 } from "../interfaces/environment-store.js";
@@ -205,7 +205,7 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
     });
   }
 
-  async update(owner: EnvironmentOwner, id: string, input: EnvironmentStoreUpdateInput): Promise<Environment | null> {
+  async update(owner: EnvironmentOwner, id: string, update: EnvironmentStoreUpdate): Promise<Environment | null> {
     return this.transaction(async (client) => {
       const params: unknown[] = [id];
       const where = ownedBy(owner, params);
@@ -215,6 +215,9 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
       );
       const row = rows[0];
       if (!row) return null;
+      const input = typeof update === "function"
+        ? update({ id: row.id, tenantId: row.tenant_id, env: row.env, encryptedSecrets: row.secrets })
+        : update;
       if (input.name !== undefined && input.name !== row.name) await this.assertNameFree(client, owner, input.name, id);
       const now = new Date();
       const sets: string[] = [];
@@ -296,40 +299,54 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
     if (!owner) throw new RangeError("Environment Build lease owner must not be empty");
     validateEnvironmentBuildLeaseMs(leaseMs);
     return this.transaction(async (client) => {
-      // Skip a row another builder is claiming; the claim re-checks the
-      // lease after the lock, by the database's clock.
-      const candidate = await client.query<{ id: string; status: EnvironmentBuildStatus }>(
-        `SELECT id, status FROM environment_builds
-         WHERE status = 'pending' OR (status = 'running' AND lease_expires_at <= clock_timestamp())
-         ORDER BY seq ASC
-         LIMIT 1
-         FOR UPDATE SKIP LOCKED`,
-      );
-      const head = candidate.rows[0];
-      if (!head) return null;
-      const { rows } = await client.query<BuildRow>(
-        `UPDATE environment_builds
-         SET status = 'running', attempts = attempts + 1, lease_owner = $2,
-             lease_expires_at = ${LEASE_EXPIRES("$3")},
-             started_at = COALESCE(started_at, clock_timestamp())
-         WHERE id = $1 AND (status = 'pending' OR (status = 'running' AND lease_expires_at <= clock_timestamp()))
-         RETURNING *`,
-        [head.id, owner, leaseMs],
-      );
-      const row = rows[0];
-      if (!row) return null;
-      await client.query(
-        `UPDATE environments SET status = 'building' WHERE id = $1 AND last_build_id = $2 AND deleted_at IS NULL`,
-        [row.environment_id, row.id],
-      );
-      const env = await client.query<{ env: EnvironmentVariable[] }>(`SELECT env FROM environments WHERE id = $1`, [row.environment_id]);
-      const build = rowToBuild(row);
-      return {
-        build,
-        lease: { buildId: build.id, owner, attempt: build.attempts },
-        env: env.rows[0]?.env ?? [],
-        reclaimed: head.status === "running",
-      };
+      // Lock the Environment before its build, the order every change to an
+      // Environment takes: the other order deadlocks with an edit. An
+      // Environment another transaction holds (an edit, or another
+      // builder's claim) is passed over; what it leaves claimable, a later
+      // poll takes.
+      const passed: string[] = [];
+      for (;;) {
+        // A list of parameters rather than <> ALL($n): pg-mem matches no row with ANY.
+        const excluded = passed.length ? `AND environment_id NOT IN (${passed.map((_, i) => `$${i + 1}`).join(", ")})` : "";
+        const candidate = await client.query<{ id: string; environment_id: string; status: EnvironmentBuildStatus }>(
+          `SELECT id, environment_id, status FROM environment_builds
+           WHERE (status = 'pending' OR (status = 'running' AND lease_expires_at <= clock_timestamp())) ${excluded}
+           ORDER BY seq ASC
+           LIMIT 1`,
+          passed,
+        );
+        const head = candidate.rows[0];
+        if (!head) return null;
+        const locked = await client.query(`SELECT id FROM environments WHERE id = $1 FOR UPDATE SKIP LOCKED`, [head.environment_id]);
+        // Under the lock the claim re-checks the build, by the database's
+        // clock: it may have been claimed or superseded since it was read.
+        const { rows } = locked.rows[0] ? await client.query<BuildRow>(
+          `UPDATE environment_builds
+           SET status = 'running', attempts = attempts + 1, lease_owner = $2,
+               lease_expires_at = ${LEASE_EXPIRES("$3")},
+               started_at = COALESCE(started_at, clock_timestamp())
+           WHERE id = $1 AND (status = 'pending' OR (status = 'running' AND lease_expires_at <= clock_timestamp()))
+           RETURNING *`,
+          [head.id, owner, leaseMs],
+        ) : { rows: [] };
+        const row = rows[0];
+        if (!row) {
+          passed.push(head.environment_id);
+          continue;
+        }
+        await client.query(
+          `UPDATE environments SET status = 'building' WHERE id = $1 AND last_build_id = $2 AND deleted_at IS NULL`,
+          [row.environment_id, row.id],
+        );
+        const env = await client.query<{ env: EnvironmentVariable[] }>(`SELECT env FROM environments WHERE id = $1`, [row.environment_id]);
+        const build = rowToBuild(row);
+        return {
+          build,
+          lease: { buildId: build.id, owner, attempt: build.attempts },
+          env: env.rows[0]?.env ?? [],
+          reclaimed: head.status === "running",
+        };
+      }
     });
   }
 
@@ -433,7 +450,8 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
   /**
    * End a held build with `status`, then let `record` write the outcome, in
    * one transaction. A lease that lapsed without a reclaim still finishes:
-   * only a newer holder or a supersede fences it out.
+   * only a newer holder or a supersede fences it out. The Environment is
+   * locked before the build, as every change to an Environment locks them.
    */
   private async finish(
     lease: EnvironmentBuildLease,
@@ -441,14 +459,19 @@ export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQue
     record: (client: PoolClient, environmentId: string) => Promise<void>,
   ): Promise<boolean> {
     return this.transaction(async (client) => {
+      // A build's Environment never changes: it is safe to read unlocked.
+      const { rows: [build] } = await client.query<{ environment_id: string }>(
+        `SELECT environment_id FROM environment_builds WHERE id = $1`, [lease.buildId]);
+      if (!build) return false;
+      await client.query(`SELECT id FROM environments WHERE id = $1 FOR UPDATE`, [build.environment_id]);
       await client.query(`SELECT id FROM environment_builds WHERE id = $1 FOR UPDATE`, [lease.buildId]);
-      const { rows } = await client.query<{ environment_id: string }>(
+      const { rows } = await client.query(
         `UPDATE environment_builds SET status = $4, finished_at = clock_timestamp()
-         WHERE id = $1 AND ${HELD} RETURNING environment_id`,
+         WHERE id = $1 AND ${HELD} RETURNING id`,
         [...leaseParams(lease), status],
       );
       if (!rows[0]) return false;
-      await record(client, rows[0].environment_id);
+      await record(client, build.environment_id);
       return true;
     });
   }

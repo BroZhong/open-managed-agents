@@ -220,6 +220,7 @@ export type {
   EnvironmentStatus,
   EnvironmentStore,
   EnvironmentStoreCreateInput,
+  EnvironmentStoreUpdate,
   EnvironmentStoreUpdateInput,
   EnvironmentVariable,
   SandboxEnvironmentRecord,
