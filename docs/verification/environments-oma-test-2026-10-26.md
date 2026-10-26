@@ -187,3 +187,30 @@ kubectl diff -f /tmp/oma-test.yaml; kubectl apply -f /tmp/oma-test.yaml
 - **还带 Whisper 的副本**：Tenant Environment 不随内置定义变化，它们的脚本仍是原来的（`init_script` 含 Whisper）。迁移 0029 建的 10 个按 Agent 副本（`env_agent_*`，7 个在 Tenant `f00c7d5a-…`，3 个在 `reconcile-*` 测试 Tenant），另有 4 个手工复制的（`video-production-copy`、`video-production-copy-2`、`finalcut-group-b-20261026`、`accept-figlet-1792978750`）。没有改动它们。要更新，可以由各 Tenant 对副本调用 `POST /v1/environments/{id}`，写入新的 `initScript`（迁移副本可直接用内置的新脚本；手工改过的副本要保留各自追加的部分），保存会排一次新构建；如果它们只是测试用的，也可以直接删掉。生产还没有应用 0026/0029，没有这类副本。
 - **vfs-dev**：#305 清点时拉下的 `oma-environments@sha256:54d89827…`（6.56 GB）已删除，其他镜像没动。构建目录 `~/workspace/yuzhong/oma-env-0e165408` 保留。
 - **同时在跑的测试**：这次 builder 重启时，另一组测试（Tenant `f00c7d5a-…`，`env-review-…-A`/`-B`）有一个构建正在进行（seq 27），它被新 Pod 重新领取（`attempt=2 reclaimed=true`），04:40:20Z 成功。API/Runner 是等那组测试的 Session 都结束后才发的。
+
+## 11. Server/Web 镜像改用北京时间标签（后续，2026-10-26）
+
+维护者规则：本项目的部署镜像（Server，供 oma-api、oma-runner、oma-image-builder 使用；Web）默认打构建时间标签，北京时间 `YYYYMMDDHHmm`；脏工作区加 `-dirty`；标签里不写部署环境；推送前查 registry，已存在的默认标签依次加 `-2`、`-3`…，显式 `--tag` 已存在则拒绝。镜像带 `org.opencontainers.image.revision`（完整 Git SHA）和 `org.opencontainers.image.created` 标签。Environment 镜像和 Base Image 的标签规则不变。提交 `7d360db8`（分支 `wt/time-image-tags`，基于 `678b2601`）。
+
+**构建**：vfs-dev 的 `~/workspace/yuzhong/oma-env-7d360db8`（git bundle，干净工作区，`.buildx-cache` 复制自 `oma-env-0e165408`），故意用 `TZ=UTC bash build.sh --push server web`，用时 19 s。标签仍按北京时间算出：
+
+| 镜像 | 标签 | digest | `revision` | `created` |
+|---|---|---|---|---|
+| `welltop/oma-server` | `202610261505` | `sha256:262d5021684cc10b0e6ad6d8714e4ecbcd9342ca7e570bf1b00aafbc904ccb90` | `7d360db8b6be449058e0cb73e1333b53a06389f5` | `2026-10-26T15:05:30+08:00` |
+| `welltop/oma-web` | `202610261505` | `sha256:72614397306179476fc54a6ad7440f305e6529be7ab9e48d7e1443a5f06926fa` | 同上 | 同上 |
+
+- 标签值来自 `docker buildx imagetools inspect --format '{{json .Image.Config.Labels}}'`。脚本输出 `Release images (tag 202610261505, git 7d360db8…)` 和 `GIT_REVISION=`。
+- 不覆盖：`bash build.sh --dry-run --push --tag 202610261505 server web` 输出 `Refusing to overwrite an existing tag: …/oma-server:202610261505`，退出码 1。`-2`/`-3` 由 `deploy/build-images.test.mjs` 用替身 `docker` 验证。
+- Server 镜像还从 `node-base` 继承了 `org.opencontainers.image.title="OMA Node build base"` 和对应的 description，这次没有覆盖。
+
+**部署：推迟**。07:00Z 起有另一个会话在用 oma-test（oma-image-builder 被换成 `oma-server@sha256:38949f53…`，正在建 ImageCache）。这次 oma-test 的 Deployment 一个都没动：oma-api、oma-runner 仍是 `03081cae…`，oma-web 仍是 `46c36354…`。以后发布时：
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+S=sha256:262d5021684cc10b0e6ad6d8714e4ecbcd9342ca7e570bf1b00aafbc904ccb90
+W=sha256:72614397306179476fc54a6ad7440f305e6529be7ab9e48d7e1443a5f06926fa
+node deploy/scripts/render.mjs test "$S" "$S" "$W" "$S" > /tmp/oma-test.yaml
+kubectl diff -f /tmp/oma-test.yaml   # 应只有四处镜像；那个会话改过的 ConfigMap 也会出现在 diff 里
+```
+
+这个镜像除了脚本改动，还包含 `678b2601`（store/api 修复）。`0e165408` 之后 `sandbox/`、`deploy/app/`、`deploy/environments/` 都没有改，所以 builder 启动时应该不会重建内置 Environment，也不会出现 `base_image_rebuild`（还没实测）。回滚到现在的镜像：api/runner 用 `03081cae…`，web 用 `46c36354…`，builder 用那个会话当时在用的镜像。
