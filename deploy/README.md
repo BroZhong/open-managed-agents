@@ -293,7 +293,17 @@ ssh vfs-dev \
   'cd ~/workspace/yuzhong/open-managed-agents && bash build.sh --push server web'
 ```
 
-The default image tag is the current 12-character Git SHA. Local caches under
+The default image tag is the build time in Beijing time (Asia/Shanghai),
+`YYYYMMDDHHmm`, e.g. `oma-server:202610261444` and `oma-web:202610261444`
+(the same tag for every image of one run). Tags never name a deployment:
+production and test release the same image. With `--push`, a tag that any of
+the images already has is never overwritten: the default becomes
+`202610261444-2`, `-3`, …, and an explicit `--tag` that exists is refused.
+Each image carries `org.opencontainers.image.revision` (the full Git SHA) and
+`org.opencontainers.image.created` labels, and the script prints the SHA with
+the tag (`Release images (tag …, git …)`, `GIT_REVISION=`). Tags are for
+people; releases still reference digests (`render.mjs … sha256:<digest>`).
+Images built before 2026-10-26 keep their Git SHA tags. Local caches under
 `.buildx-cache/` keep dependency layers warm across builds. BuildKit also keeps
 architecture-specific pnpm stores and npm download caches on the selected
 builder. Reuse that builder between releases; deleting it or pruning its cache
@@ -327,9 +337,10 @@ its versioned release tag; see [the sandbox recipe](../sandbox/auto-story-v2/REA
 for preparation, version pins and image checks. `AUTO_STORY_BASE_IMAGE` can
 override the clean base for this wrapper; it must satisfy the recipe's checks.
 
-Both build scripts support `--dry-run`. A dirty checkout is rejected unless
-`--allow-dirty` is explicit; auto-tagged dirty builds include a UTC timestamp so
-they cannot be mistaken for the commit image.
+Both build scripts support `--dry-run` (with `--push`, `build-images.sh` still
+asks the registry which tag is free). A dirty checkout is rejected unless
+`--allow-dirty` is explicit; its default tag ends in `-dirty`
+(`202610261444-dirty`) so it cannot be mistaken for a commit's image.
 
 ## Deployment scripts
 

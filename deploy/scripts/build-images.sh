@@ -4,7 +4,10 @@
 # Design constraints:
 #   - all runtime images are linux/amd64 because agent-platform runs amd64;
 #   - every Dockerfile starts from a pinned base in the Shanghai ACR;
-#   - clean Git commits receive reproducible SHA tags;
+#   - images are tagged with their build time in Beijing time (YYYYMMDDHHmm),
+#     never with a deployment, and labelled with their Git revision; digests,
+#     not tags, are what deployments reference;
+#   - a pushed tag is never overwritten;
 #   - local BuildKit caches survive source-only iterations;
 #   - building/pushing never mutates Kubernetes resources.
 set -euo pipefail
@@ -37,13 +40,21 @@ Usage: deploy/scripts/build-images.sh [options] [server] [web] [sandbox]
 Build OMA release images from the pinned Shanghai base images.
 
 Options:
-  --tag TAG       Image tag. Defaults to the current Git short SHA.
+  --tag TAG       Image tag. Defaults to the build time in Beijing time,
+                  YYYYMMDDHHmm (e.g. 202610261444), the same for every image.
+                  With --push, a default tag that any of the images already
+                  has becomes TAG-2, TAG-3, ...; an explicit TAG that exists
+                  is refused.
   --sandbox-template auto-story-v2
                   Only maintained sandbox template (default: auto-story-v2).
   --push          Push to the Shanghai ACR instead of loading locally.
-  --allow-dirty   Permit a dirty checkout. The auto tag gains a dirty timestamp.
-  --dry-run       Print commands without running Docker.
+  --allow-dirty   Permit a dirty checkout. The default tag gains -dirty.
+  --dry-run       Print the build commands without running them. With --push
+                  it still asks the registry which tag is free.
   -h, --help      Show this help.
+
+Images carry org.opencontainers.image.revision (the full Git SHA) and
+org.opencontainers.image.created labels; tags never name a deployment.
 
 With no component arguments, server and web are built. The sandbox component
 builds and verifies auto-story-v2 using sandbox/auto-story-v2/ and its pinned releases.
@@ -77,7 +88,7 @@ fi
 
 cd "${REPO_ROOT}"
 git rev-parse --is-inside-work-tree >/dev/null
-git_sha="$(git rev-parse --short=12 HEAD)"
+git_revision="$(git rev-parse HEAD)"
 dirty=false
 if [[ -n "$(git status --porcelain)" ]]; then
   dirty=true
@@ -88,14 +99,7 @@ if [[ "${dirty}" == true && "${allow_dirty}" == false ]]; then
   exit 1
 fi
 
-if [[ -z "${tag}" ]]; then
-  tag="${git_sha}"
-  if [[ "${dirty}" == true ]]; then
-    tag="${git_sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
-  fi
-fi
-
-if [[ ! "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+if [[ -n "${tag}" && ! "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
   echo "Invalid image tag: ${tag}" >&2
   exit 2
 fi
@@ -103,6 +107,65 @@ fi
 if ((${#components[@]} == 0)); then
   components=(server web)
 fi
+
+# One clock reading gives the default tag and the images' creation time.
+# Without zoneinfo, TZ=Asia/Shanghai would silently mean UTC.
+read -r build_minute created utc_offset < <(TZ=Asia/Shanghai date '+%Y%m%d%H%M %Y-%m-%dT%H:%M:%S+08:00 %z')
+if [[ "${utc_offset}" != "+0800" ]]; then
+  echo "TZ=Asia/Shanghai resolved to ${utc_offset:-nothing}, not +0800: install tzdata." >&2
+  exit 1
+fi
+
+# The images the selected components produce under tag $1.
+images_tagged() {
+  local component
+  for component in "${components[@]}"; do
+    case "${component}" in
+      server) printf '%s\n' "${REGISTRY}/oma-server:$1" ;;
+      web) printf '%s\n' "${REGISTRY}/oma-web:$1" ;;
+      sandbox) printf '%s\n' "${REGISTRY}/oma-sandbox:${sandbox_template}-$1" ;;
+    esac
+  done
+}
+
+# Print the first image the registry already has under tag $1; fail if none.
+existing_image() {
+  local image
+  while read -r image; do
+    if docker manifest inspect "${image}" </dev/null >/dev/null 2>&1; then
+      printf '%s\n' "${image}"
+      return 0
+    fi
+  done < <(images_tagged "$1")
+  return 1
+}
+
+if [[ -z "${tag}" ]]; then
+  tag="${build_minute}"
+  if [[ "${dirty}" == true ]]; then
+    tag="${build_minute}-dirty"
+  fi
+  if [[ "${push}" == true ]]; then
+    default_tag="${tag}"
+    suffix=1
+    while existing_image "${tag}" >/dev/null; do
+      suffix=$((suffix + 1))
+      tag="${default_tag}-${suffix}"
+    done
+  fi
+elif [[ "${push}" == true ]] && existing="$(existing_image "${tag}")"; then
+  echo "Refusing to overwrite an existing tag: ${existing}" >&2
+  exit 1
+fi
+
+git_described="${git_revision}"
+if [[ "${dirty}" == true ]]; then
+  git_described="${git_revision}-dirty"
+fi
+oci_labels=(
+  --label "org.opencontainers.image.revision=${git_revision}"
+  --label "org.opencontainers.image.created=${created}"
+)
 
 if [[ -L "${CACHE_ROOT}" ]]; then
   echo "Refusing to use a symlink as the managed build cache: ${CACHE_ROOT}" >&2
@@ -200,20 +263,22 @@ sandbox_image="${REGISTRY}/oma-sandbox:${sandbox_template}-${tag}"
 for component in "${components[@]}"; do
   case "${component}" in
     server)
-      echo "==> server: ${server_image}"
+      echo "==> server: ${server_image} (git ${git_described})"
       build_with_cache server \
         --file "${server_dockerfile}" \
         --build-arg "NODE_BASE=${NODE_BASE_IMAGE}" \
+        "${oci_labels[@]}" \
         --tag "${server_image}" \
         "${REPO_ROOT}"
       ;;
     web)
-      echo "==> web: ${web_image}"
+      echo "==> web: ${web_image} (git ${git_described})"
       build_with_cache web \
         --file "${REPO_ROOT}/deploy/Dockerfile.web" \
         --build-arg "NODE_BASE=${NODE_BASE_IMAGE}" \
         --build-arg "NGINX_BASE=${NGINX_BASE_IMAGE}" \
         --build-arg "VITE_API_URL=${WEB_API_URL}" \
+        "${oci_labels[@]}" \
         --tag "${web_image}" \
         "${REPO_ROOT}"
       ;;
@@ -239,7 +304,8 @@ for component in "${components[@]}"; do
   esac
 done
 
-printf '\nRelease images (tag %s):\n' "${tag}"
+printf '\nRelease images (tag %s, git %s):\n' "${tag}" "${git_described}"
+printf 'GIT_REVISION=%s\n' "${git_revision}"
 for component in "${components[@]}"; do
   case "${component}" in
     server) printf 'SERVER_IMAGE=%s\n' "${server_image}" ;;

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// Render one environment overlay with immutable images. Each version is a tag
-// or a sha256 digest in the welltop ACR repository for that component.
+// Render one environment overlay with immutable images. Each version is a
+// sha256 digest (preferred) or an immutable tag such as 202610261444 (the
+// Beijing build time build-images.sh tags with) in the welltop ACR repository
+// for that component.
 import { execFileSync } from 'node:child_process';
 
-const usage = 'Usage: render.mjs ENV API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION (ENV: production | test; versions: immutable tags or sha256:<digest>)';
+const usage = 'Usage: render.mjs ENV API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION (ENV: production | test; versions: sha256:<digest> or an immutable tag such as 202610261444)';
 const [env, ...versions] = process.argv.slice(2);
 if (!['production', 'test'].includes(env) || versions.length !== 4) throw new Error(usage);
 const registry = 'registry-vpc.cn-shanghai.aliyuncs.com/welltop';
