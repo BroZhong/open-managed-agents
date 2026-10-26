@@ -89,7 +89,6 @@ export class WarmPoolUpdater {
     const image = (await this.deps.store.getBuiltIn(this.deps.environmentId))?.image;
     if (!image) return "no-image";
     const current = await pool.image();
-    if (current === image) return "unchanged";
     let cache: ImageCacheState | undefined;
     if (caches) {
       cache = await caches.ensure(image);
@@ -102,6 +101,8 @@ export class WarmPoolUpdater {
         return cache.state === "failed" ? "cache-failed" : "waiting-for-cache";
       }
     }
+    // Also backfill a cache enabled later, or recreate one removed while the pool kept its image.
+    if (current === image) return "unchanged";
     await pool.setImage(image);
     this.logger.info(`warm_pool_updated pool=${pool.name} image=${image} previous=${current} cache=${cache?.id ?? "none"}`);
     if (!caches) {

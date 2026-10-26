@@ -39,18 +39,15 @@ async function setup(options: { caches?: FakeCaches | null; ready?: boolean } = 
   const logger = { info: (line: string) => lines.push(`info ${line}`), warn: (line: string) => lines.push(`warn ${line}`), error: (line: string) => lines.push(`error ${line}`) };
   const caches = options.caches === undefined ? new FakeCaches() : options.caches;
   const updater = new WarmPoolUpdater({ store, environmentId: "env_video_production", pool, caches, clock, logger, recheckMs: 30_000 });
-  return { store, image, pool, clock, lines, caches, updater };
+  return { store, image, pool, clock, lines, logger, caches, updater };
 }
 
 describe("WarmPoolUpdater: the Warm Pool runs video-production's image (ADR-0024)", () => {
-  it("changes nothing until the Environment has an image, nor when the pool already runs it", async () => {
+  it("changes nothing until the Environment has an image", async () => {
     const pending = await setup({ ready: false });
     expect(await pending.updater.reconcile()).toBe("no-image");
     expect(pending.pool.set).toEqual([]);
-    const ready = await setup();
-    ready.pool.current = ready.image;
-    expect(await ready.updater.reconcile()).toBe("unchanged");
-    expect(ready.caches!.asked).toEqual([]);
+    expect(pending.caches!.asked).toEqual([]);
   });
 
   it("with ImageCaches, points the pool at the new image only once its cache is ready", async () => {
@@ -84,6 +81,8 @@ describe("WarmPoolUpdater: the Warm Pool runs video-production's image (ADR-0024
       `info warm_pool_updated pool=oma-test-sandbox image=${image} previous=${OLD} cache=none`,
       `warn warm_pool_cold_refill pool=oma-test-sandbox: without an ImageCache every refill of the pool pulls ${image} in full`,
     ]);
+    expect(await updater.reconcile()).toBe("unchanged");
+    expect(pool.set).toEqual([image]);
   });
 
   it("runs at start, again after video-production's build and on every recheck, surviving API errors", async () => {
@@ -155,6 +154,51 @@ describe("AcsImageCaches", () => {
   const image = `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:${NEW_DIGEST}`;
   const name = `oma-test-${NEW_DIGEST.slice(0, 16)}`;
 
+  it("backfills an unchanged pool's cache, reuses it after restart and recreates it if removed", async () => {
+    const { store, pool, clock, logger } = await setup({ caches: null });
+    pool.current = image;
+    const calls: string[] = [];
+    let listed: Array<{ ImageCacheId: string; ImageCacheName: string; Status: string; Images: string[] }> = [];
+    const rpc: AcsRpc = async (action, query) => {
+      calls.push(action);
+      if (action === "ListImageCaches") return { ImageCaches: listed };
+      expect(query.ClientToken).toBe(name);
+      listed = [{ ImageCacheId: "imc-backfill", ImageCacheName: name, Status: "Creating", Images: [image] }];
+      return { ImageCacheId: "imc-backfill" };
+    };
+    const updater = () => new WarmPoolUpdater({
+      store, environmentId: "env_video_production", pool, clock, logger,
+      caches: new AcsImageCaches(config, rpc),
+    });
+    let running = updater();
+    try {
+      running.start();
+      await settle();
+      expect(calls).toEqual(["ListImageCaches", "CreateImageCache"]);
+      expect(pool.set).toEqual([]);
+
+      await running.stop();
+      running = updater();
+      running.start();
+      await settle();
+      expect(calls).toEqual(["ListImageCaches", "CreateImageCache", "ListImageCaches"]);
+
+      listed[0]!.Status = "Ready";
+      await clock.advance(30_000);
+      expect(calls).toHaveLength(4);
+      expect(calls.at(-1)).toBe("ListImageCaches");
+      expect(pool.set).toEqual([]);
+
+      listed = [];
+      await clock.advance(30_000);
+      expect(calls.slice(-2)).toEqual(["ListImageCaches", "CreateImageCache"]);
+      expect(calls.filter((action) => action === "CreateImageCache")).toHaveLength(2);
+      expect(pool.set).toEqual([]);
+    } finally {
+      await running.stop();
+    }
+  });
+
   it("creates one cache per image on the cluster's network, then reads its status by name", async () => {
     const calls: Array<[string, Record<string, string>]> = [];
     let listed: unknown[] = [];
@@ -182,25 +226,52 @@ describe("AcsImageCaches", () => {
     expect(calls.filter(([action]) => action === "CreateImageCache")).toHaveLength(1);
   });
 
-  it("signs an RPC call to the acc API, 2024-04-02 (ACS3-HMAC-SHA256), without sending the secret", async () => {
-    const requests: Array<{ url: string; body: string; headers: Record<string, unknown> }> = [];
+  it("sends List and Create using the official acc RPC contract without sending the secret", async () => {
+    // Alibaba Cloud's acc-20240402/src/client.ts: POST /, RegionId in query,
+    // Images and Tags flattened by OpenApiUtil.query, NetworkConfig encoded as JSON.
+    // https://github.com/aliyun/alibabacloud-typescript-sdk/blob/master/acc-20240402/src/client.ts
+    const requests: Array<{ method: string | undefined; url: string; body: string; headers: Record<string, unknown> }> = [];
+    let created = false;
     const server = createServer(async (request, response) => {
       let body = "";
       for await (const chunk of request) body += chunk;
-      requests.push({ url: request.url!, body, headers: request.headers });
+      requests.push({ method: request.method, url: request.url!, body, headers: request.headers });
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ RequestId: "r", ImageCaches: [] }));
+      if (request.headers["x-acs-action"] === "CreateImageCache") {
+        created = true;
+        response.end(JSON.stringify({ RequestId: "r", ImageCacheId: "imc-wire" }));
+      } else {
+        response.end(JSON.stringify({ RequestId: "r", ImageCaches: created
+          ? [{ ImageCacheId: "imc-wire", ImageCacheName: name, Status: "Ready", Images: [image] }]
+          : [] }));
+      }
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
       const address = server.address() as { port: number };
       const rpc = acsRpc({ ...config, endpoint: `127.0.0.1:${address.port}` }, "HTTP");
-      expect(await rpc("ListImageCaches", { RegionId: "cn-shanghai", ImageCacheName: name })).toEqual({ RequestId: "r", ImageCaches: [] });
-      const [sent] = requests;
-      expect(Object.fromEntries(new URL(sent!.url, "http://x").searchParams)).toEqual({ RegionId: "cn-shanghai", ImageCacheName: name });
-      expect(sent!.headers).toMatchObject({ "x-acs-action": "ListImageCaches", "x-acs-version": "2024-04-02" });
-      expect(sent!.headers.authorization).toMatch(/^ACS3-HMAC-SHA256 Credential=test-id,SignedHeaders=.*,Signature=[0-9a-f]{64}$/);
-      expect(JSON.stringify(sent)).not.toContain("test-secret-never-sent");
+      const caches = new AcsImageCaches(config, rpc);
+      expect(await caches.ensure(image)).toEqual({ state: "creating", id: "imc-wire", detail: "created" });
+      expect(await caches.ensure(image)).toEqual({ state: "ready", id: "imc-wire", detail: "Ready" });
+      expect(requests.map((sent) => sent.headers["x-acs-action"])).toEqual(["ListImageCaches", "CreateImageCache", "ListImageCaches"]);
+      for (const sent of requests) {
+        expect(sent.method).toBe("POST");
+        expect(new URL(sent.url, "http://x").pathname).toBe("/");
+        expect(sent.body).toBe("");
+        expect(sent.headers["x-acs-version"]).toBe("2024-04-02");
+        expect(sent.headers.authorization).toMatch(/^ACS3-HMAC-SHA256 Credential=test-id,SignedHeaders=.*,Signature=[0-9a-f]{64}$/);
+      }
+      const query = (index: number) => Object.fromEntries(new URL(requests[index]!.url, "http://x").searchParams);
+      expect(query(0)).toEqual({ RegionId: "cn-shanghai", ImageCacheName: name });
+      expect(query(2)).toEqual(query(0));
+      const { NetworkConfig: network, ...create } = query(1);
+      expect(create).toEqual({
+        RegionId: "cn-shanghai", ImageCacheName: name, ClientToken: name, "Images.1": image,
+        "Tags.1.Key": "oma.dev/environment", "Tags.1.Value": "test",
+        "Tags.2.Key": "oma.dev/managed-by", "Tags.2.Value": "oma-image-builder",
+      });
+      expect(JSON.parse(network!)).toEqual({ SecurityGroupId: config.securityGroupId, VSwitchIds: config.vSwitchIds });
+      expect(JSON.stringify(requests)).not.toContain("test-secret-never-sent");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

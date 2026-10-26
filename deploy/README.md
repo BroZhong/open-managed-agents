@@ -184,7 +184,10 @@ the image of `WARM_POOL_ENVIRONMENT` (`env_video_production`), so its
 Sessions claim without a swap: after each successful build of that
 Environment, at startup and every 30 s it compares the pool's `sandbox`
 container image with the Environment's and patches the SandboxSet (a JSON
-patch of that one field). `WARM_POOL_IMAGE_CACHE` decides what comes first:
+patch of that one field). With caching enabled it also ensures the current
+image's cache when the pool already runs that image, so enabling caching
+later or removing a cache triggers backfill without changing the pool.
+`WARM_POOL_IMAGE_CACHE` decides what comes first:
 
 | `WARM_POOL_IMAGE_CACHE` | Behaviour |
 | --- | --- |
@@ -196,7 +199,7 @@ Pods match an existing cache by themselves (the pool template's
 creates one for a new image (#299: 13 refills, no `matched-image-caches`).
 Caches are created through the ACS OpenAPI (`acc` 2024-04-02, as the bench
 did with `aliyun acc create-image-cache`), which needs an Alibaba Cloud
-credential the deployment does not have yet. To use `acs`, the maintainer
+credential. To use `acs`, the maintainer
 creates a RAM user with only:
 
 ```json
@@ -206,8 +209,11 @@ creates a RAM user with only:
 
 and stores its key as the Secret `oma-image-cache` (`ACCESS_KEY_ID`,
 `ACCESS_KEY_SECRET`) in the builder's namespace. Old caches are not deleted
-(that would need `acc:DeleteImageCache`). Today oma-test runs `none` (one
-replica) and production updates no pool until its release.
+(that would need `acc:DeleteImageCache`). The oma-test overlay enables `acs`
+(one pool replica); its dedicated RAM user is `oma-test-image-cache`.
+Provision `oma-image-cache` before starting that builder. Production still
+updates no pool until its release. A failed cache is kept for diagnosis and
+requires operator recovery; API errors are retried on the next reconciliation.
 
 | Configuration (`oma-image-builder-config`) | |
 | --- | --- |

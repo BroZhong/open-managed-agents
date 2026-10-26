@@ -237,7 +237,7 @@ test("only oma-test's builder keeps its Warm Pool on video-production, on the po
   const test = configMap(render("test"), "oma-image-builder-config");
   assert.equal(field(test, "WARM_POOL_ENVIRONMENT"), "env_video_production");
   assert.equal(field(test, "WARM_POOL_NAMESPACE"), "sandbox-system");
-  assert.equal(field(test, "WARM_POOL_IMAGE_CACHE"), "none");
+  assert.equal(field(test, "WARM_POOL_IMAGE_CACHE"), "acs");
   const rbac = readFileSync(new URL("deploy/environments/test/image-builder-warm-pool-rbac.yaml", root), "utf8");
   assert.match(rbac, new RegExp(`resourceNames: \\[${field(test, "SANDBOX_TEMPLATE")}\\]`));
   // Production serves from auto-story-v2 until its release: no pool updates.
