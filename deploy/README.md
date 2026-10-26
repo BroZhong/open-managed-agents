@@ -204,10 +204,12 @@ creates a RAM user with only:
 
 ```json
 {"Version": "1", "Statement": [{"Effect": "Allow",
-  "Action": ["acc:CreateImageCache", "acc:ListImageCaches"], "Resource": "*"}]}
+  "Action": ["acc:CreateImageCache", "acc:ListImageCaches"],
+  "Resource": "acs:acc:cn-shanghai:<account-id>:imagecache/*"}]}
 ```
 
-and stores its key as the Secret `oma-image-cache` (`ACCESS_KEY_ID`,
+Replace `<account-id>` with the deployment's Alibaba Cloud account, then
+store its key as the Secret `oma-image-cache` (`ACCESS_KEY_ID`,
 `ACCESS_KEY_SECRET`) in the builder's namespace. Old caches are not deleted
 (that would need `acc:DeleteImageCache`). The oma-test overlay enables `acs`
 (one pool replica); its dedicated RAM user is `oma-test-image-cache`.
