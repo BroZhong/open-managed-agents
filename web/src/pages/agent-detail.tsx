@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
-import { Pencil, Trash2, GitFork } from "lucide-react";
+import { Pencil, Trash2, GitFork, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { ForkAgentDialog } from "@/components/fork-agent-dialog";
 import { EquipPicker } from "@/components/equip-picker";
 import { StatusBadge } from "@/components/status-badge";
 import { useAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
+import { useEnvironment } from "@/lib/hooks/use-environments";
 import { useAgentSessions } from "@/lib/hooks/use-sessions";
 import { runningSessionsFirst } from "@/lib/session-order";
 import { cn, formatRelativeTime } from "@/lib/utils";
@@ -22,6 +23,7 @@ export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: agent, isLoading } = useAgent(id ?? "");
+  const { data: environment } = useEnvironment(agent?.environmentId ?? "");
   const deleteMutation = useDeleteAgent();
 
   const [forkOpen, setForkOpen] = useState(false);
@@ -129,19 +131,18 @@ export default function AgentDetailPage() {
               </div>
               <div>
                 <dt className="text-sm font-medium text-neutral-500">
-                  Sandbox
+                  Environment
                 </dt>
                 <dd className="mt-1">
-                  <span
-                    className={cn(
-                      "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                      agent.sandbox?.enabled
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-neutral-100 text-neutral-600"
-                    )}
-                  >
-                    {agent.sandbox?.enabled ? "Enabled" : "Disabled"}
-                  </span>
+                  {agent.environmentId ? (
+                    <Link
+                      to={`/environments/${encodeURIComponent(agent.environmentId)}`}
+                      className="inline-flex items-center gap-1 text-sm text-[var(--color-accent)] hover:underline"
+                    >
+                      {environment?.name ?? agent.environmentId}
+                      <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                  ) : <span className="text-sm text-neutral-500">Not configured</span>}
                 </dd>
               </div>
               {agent.description && (
