@@ -1,0 +1,266 @@
+{
+  "date": "2026-10-26",
+  "issues": [
+    306,
+    307,
+    311,
+    305
+  ],
+  "environment": "oma-test",
+  "schema": "oma_test",
+  "commit": "5abd8031",
+  "release": {
+    "oma-api": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:298ec946812be754666b2c264f49a90d713c255225fdb1dbd1d5db617b5db3f0",
+    "oma-runner": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:298ec946812be754666b2c264f49a90d713c255225fdb1dbd1d5db617b5db3f0",
+    "oma-web": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:46c363546a121bb75b612ba2a0a33249a03964d9f929838215df29c0b3119f8d",
+    "oma-image-builder": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:61e257409a100d8fcf1b479fc0bb5ef2cbf9fcaad7bec3f4b0c1ded614270a02 (unchanged)",
+    "tag": "5abd80311646",
+    "diff": [
+      "three Deployment images",
+      "oma-runner: env DEFAULT_SANDBOX_VFS_TOKEN and envFrom oma-auto-story-env removed",
+      "oma-runner-config: SANDBOX_IMAGE removed"
+    ],
+    "health": "ok"
+  },
+  "rollback": {
+    "oma-api": "oma-server@sha256:61e257409a100d8fcf1b479fc0bb5ef2cbf9fcaad7bec3f4b0c1ded614270a02",
+    "oma-runner": "oma-server@sha256:fc7eebd05e6b076c9664cf337b638cc24bdf1946c43509af3c8ee7bad01360bb",
+    "oma-web": "oma-web@sha256:d99b9db6e284cd6a97a3d6fa567aaa957298a778a6def256a01718213a059b87",
+    "restore": [
+      "oma-runner-config SANDBOX_IMAGE=oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+      "oma-runner env DEFAULT_SANDBOX_VFS_TOKEN (oma-secrets)",
+      "oma-runner envFrom secretRef oma-auto-story-env optional"
+    ],
+    "sql": "deploy/migrations/0029_environment_migration.rollback.sql (after the old images run)"
+  },
+  "migration0029": {
+    "appliedVia": "Supabase MCP execute_sql (atomic RPC, BEGIN/COMMIT stripped)",
+    "before": {
+      "videoProductionReady": 1,
+      "sandboxedAgents": 38,
+      "sandboxedAgentsWithoutEnvironment": 38,
+      "withSandboxEnv": 10,
+      "agentsWithImageOrEnv": 10,
+      "sessionsWithoutEnvironment": 1963,
+      "sessionSnapshotsWithImageOrEnv": 1848,
+      "tenantCopies": 0,
+      "agentsTotal": 50,
+      "sessionsTotal": 1963
+    },
+    "after": {
+      "videoProductionReady": 1,
+      "sandboxedAgents": 38,
+      "sandboxedAgentsWithoutEnvironment": 0,
+      "withSandboxEnv": 0,
+      "agentsWithImageOrEnv": 0,
+      "sessionsWithoutEnvironment": 14,
+      "sessionSnapshotsWithImageOrEnv": 0,
+      "tenantCopies": 10,
+      "agentsTotal": 50,
+      "sessionsTotal": 1963,
+      "backupAgents": 38,
+      "backupSessions": 1949
+    },
+    "agentsPerEnvironment": {
+      "env_video_production": 28,
+      "tenantCopies": 10,
+      "none (sandbox.enabled=false)": 12
+    },
+    "sessionsPerEnvironment": {
+      "env_video_production": 101,
+      "tenantCopies": 1848,
+      "none (Agent without Sandbox)": 14
+    },
+    "droppedNames": "all empty values (25-28 per Agent), none reserved-only; 7-14 kept per Agent; copies have 29-35 variables",
+    "plainCredentialsInCopies": {
+      "agents": [
+        "agent_M794Gt4iPwX-ZblaA_lW2",
+        "agent_tdpcn95CKCCQzEAa5SBGz"
+      ],
+      "names": [
+        "VFS_ACCESS_TOKEN",
+        "VFS_TOKEN"
+      ]
+    },
+    "copyBuilds": {
+      "started": "immediately, 10 concurrent build pods (4 vCPU / 8 GiB each)",
+      "result": "10 succeeded",
+      "duration": "25m49s-37m26s",
+      "distinctImages": 10
+    }
+  },
+  "acceptance": {
+    "tenant": "env-accept-1792978750",
+    "testEnvironment": {
+      "id": "env_uMYjLgDWttUpmSsW-keFZ",
+      "name": "accept-figlet-1792978750",
+      "from": "env_video_production",
+      "adds": "figlet (apt), PROBE, Tenant secret ACCEPT_CANARY",
+      "build1": {
+        "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:2016c260fd8b57acffd8a31262f860f671a8797603cd135b9278051f3c5383d0",
+        "window": "01:41-02:10Z (with 10 concurrent copy builds)"
+      },
+      "build2": {
+        "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:f0213c91264248d97d903124c76d1f84498bc4fd9daf7fac00e06a6a691ee853",
+        "window": "02:35-02:49Z",
+        "change": "init script writes /etc/oma-accept-version"
+      }
+    },
+    "sessions": [
+      {
+        "id": "sess_EWvwfxsBZZkddYLkJLsbk",
+        "purpose": "#305 runtime in video-production",
+        "agent": "agent_FDUTDBn4ogOGHyDEQIxwH (no environmentId given -> env_video_production)",
+        "environment": {
+          "id": "env_video_production",
+          "name": "video-production"
+        },
+        "span": {
+          "outcome": "ready",
+          "environmentId": "env_video_production",
+          "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3",
+          "swapped": false,
+          "claimMs": 589,
+          "durationMs": 942
+        },
+        "results": {
+          "proxyVars": "HTTP(S)_PROXY=sing-box.oma-infra:7890; NO_PROXY adds .aliyuncs.com,.aliyun.com,.npmmirror.com",
+          "github": "200 via 10.0.165.246:7890 (sing-box)",
+          "pipMirror": "200 direct 180.121.81.85:443; pip download six ok",
+          "ossInternal": "403 direct 100.118.102.35:443",
+          "mediakit": "doctor cloud_ready=true; cloud query-task NotFound with key, MissingAuthentication without",
+          "vfsPolicy": "{\"environment\":\"test\"}; RUNTIME_ENV=PRO blocked (environment_policy_conflict)",
+          "acceptanceVars": "PROBE unset, ACCEPT_CANARY unset, figlet absent"
+        }
+      },
+      {
+        "id": "sess_GvEL-gpjLW_zI1qNkj0mV",
+        "purpose": "#311 pre-migration Session (tenant smoke283-1792833235618, created 10-24)",
+        "environment": {
+          "id": "env_video_production",
+          "name": "video-production"
+        },
+        "span": {
+          "outcome": "ready",
+          "environmentId": "env_video_production",
+          "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3",
+          "swapped": false,
+          "claimMs": 550,
+          "durationMs": 840
+        },
+        "binding": {
+          "environment_id": "env_video_production",
+          "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3"
+        },
+        "results": "command ran as user in /home/user/workspace; ffmpeg 9.0.1, vfs-cli v0.3.21; platform variables set; PROBE/ACCEPT_CANARY unset"
+      },
+      {
+        "id": "sess_kAN5er_AON-5dwoK-sbDy",
+        "purpose": "#306 tool + #307 variables + running Sandbox after rebuild",
+        "agent": "agent_s2YUS6n7I0LZDTchZdX8U (environmentId = test Environment)",
+        "environment": {
+          "id": "env_uMYjLgDWttUpmSsW-keFZ",
+          "name": "accept-figlet-1792978750"
+        },
+        "sandbox": "oma-test-sandbox-2fs5b",
+        "turns": [
+          {
+            "span": {
+              "outcome": "ready",
+              "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:2016c260fd8b57acffd8a31262f860f671a8797603cd135b9278051f3c5383d0",
+              "swapped": true,
+              "claimMs": 24482,
+              "durationMs": 24938
+            },
+            "results": "figlet 2.2.5-3+b1 installed by the image, one tool_use (no install); PROBE=first; canary sha256/16 matches"
+          },
+          {
+            "after": "PROBE changed to second via POST /v1/environments/{id} (no build started)",
+            "span": {
+              "outcome": "ready",
+              "reuse": true,
+              "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:2016c260fd8b57acffd8a31262f860f671a8797603cd135b9278051f3c5383d0",
+              "durationMs": 391
+            },
+            "results": "PROBE=second, same Sandbox"
+          },
+          {
+            "after": "rebuild to build2",
+            "span": {
+              "startImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:f0213c91264248d97d903124c76d1f84498bc4fd9daf7fac00e06a6a691ee853",
+              "endImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:2016c260fd8b57acffd8a31262f860f671a8797603cd135b9278051f3c5383d0",
+              "reuse": true,
+              "durationMs": 323
+            },
+            "results": "no marker (old image), PROBE=second; binding and Sandbox CR image 2016c260"
+          }
+        ]
+      },
+      {
+        "id": "sess_xrCGt9qZrAq92qHymvJyw",
+        "purpose": "#306 new Session after rebuild + Session environmentId override",
+        "agent": "agent_FDUTDBn4ogOGHyDEQIxwH (bound to video-production)",
+        "environmentOverride": "env_uMYjLgDWttUpmSsW-keFZ",
+        "sandbox": "oma-test-sandbox-nh8xk",
+        "span": {
+          "outcome": "ready",
+          "environmentId": "env_uMYjLgDWttUpmSsW-keFZ",
+          "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:f0213c91264248d97d903124c76d1f84498bc4fd9daf7fac00e06a6a691ee853",
+          "swapped": true,
+          "claimMs": 24687,
+          "durationMs": 25111
+        },
+        "results": "marker accept-v2, PROBE=second, canary hash matches, figlet present; Sandbox CR image f0213c91"
+      }
+    ],
+    "commandVariableNames": "27 from the Environment + PIP_INDEX_URL, NPM_CONFIG_REGISTRY (platform default) + 11 WORKSPACE_ENV + shell (PATH, PWD, OLDPWD, SHLVL, USER, LOGNAME, E2B_SANDBOX); none of oma-auto-story-env keys",
+    "canary": {
+      "method": "grep -c only, value never printed",
+      "sandboxCRs": 0,
+      "pods": 0,
+      "sessionEvents": 0,
+      "apiAndRunnerLogs2h": 0,
+      "createResponse": 0,
+      "initRuntimeRequestEnvVars": [
+        "HOME",
+        "MEDIAKIT_OUTPUT_PATH",
+        "NODE_PATH",
+        "NPM_CONFIG_CACHE",
+        "NPM_CONFIG_PREFIX",
+        "PIP_CACHE_DIR",
+        "PYTHONPATH",
+        "STORY_SEED_WORKSPACE",
+        "TMPDIR",
+        "WORKSPACE_DIR",
+        "XDG_CACHE_HOME"
+      ]
+    },
+    "apiRules": {
+      "createAgentWithSandboxImage": "400 sandbox_image_removed",
+      "createOrUpdateAgentWithSandboxEnv": "400 sandbox_env_removed",
+      "createAgentWithoutEnvironment": "201 env_video_production",
+      "bindNeverBuiltEnvironment": "409 environment_not_ready",
+      "unbindSandboxedAgent": "400 environment_required",
+      "sessionOverrideUnknown": "404 environment_not_found"
+    }
+  },
+  "cleanup": {
+    "sessions": "4 terminated",
+    "sandboxes": "cwcdq, lcmbs, 2fs5b, nh8xk deleted; at most 2 test Sandboxes at once",
+    "apiKeys": {
+      "revoked": [
+        "apikey_envaccept1792978750",
+        "apikey_envacceptsmoke283"
+      ],
+      "check": "both answer 401 afterwards"
+    },
+    "leftInOmaTest": [
+      "tenant env-accept-1792978750: 2 Agents + test Environment",
+      "migration_0029_agents / migration_0029_sessions until accepted"
+    ],
+    "forMaintainer": [
+      "delete Secret oma-test/oma-auto-story-env (unreferenced)",
+      "move plaintext VFS credentials of two copies to Tenant secrets"
+    ]
+  }
+}
