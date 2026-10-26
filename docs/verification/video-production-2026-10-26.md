@@ -1,6 +1,6 @@
-# video-production：线上基线清单与 vfs-dev 预演（草稿）
+# video-production：线上基线、vfs-dev 预演与正式镜像的清单对比
 
-2026-10-26（Asia/Shanghai），#305。本记录是验收草稿：只覆盖 Environment 定义本身（`sandbox/environments/video-production/`）和能在 vfs-dev 上做的检查。oma-test 上的构建、按命令注入和 Warm Pool 验收要等 #301（`oma-media`）、#303（builder）、#307（按命令注入）完成后补在这里。
+2026-10-26（Asia/Shanghai），#305。本记录覆盖 Environment 定义本身（`sandbox/environments/video-production/`）、vfs-dev 预演，以及 oma-test 上 builder 构建的正式镜像与线上 0.3.3 的逐项对比。oma-test 的构建、Sandbox 内验收、builder 重启、Base Image 演练和 Warm Pool 见 [environments-oma-test-2026-10-26.md](environments-oma-test-2026-10-26.md)；按命令注入（代理、MediaKit）等新 Runner 上线后补。
 
 **结论：**
 
@@ -11,6 +11,7 @@
    - `offline_whisper` 调用的是没有沿用的旧脚本 `prepare-whisper.py`；Whisper 推理本身（两个模型）通过。
    - `vfs_audio_contract_and_embedded_skills` 被 test 策略拦下。线上镜像挂上同一个策略后，这一项也同样失败。
 5. **替身不能代表 `oma-media`。** FFmpeg、Node、rg/fd、Pi 工具是从线上镜像复制进替身的。所以 FFmpeg/MediaKit 的检查通过，只说明脚本装的工具能和同一份 FFmpeg 配合，不说明 `oma-media` 正确。
+6. **oma-test 正式构建（2026-10-26，`oma-media-0.1.2`）与预演结论一致。** 镜像 `oma-environments@sha256:54d89827…`；对比结果与预演相同，而且 ffmpeg/ffprobe/node/rg/fd 的 sha256 与线上完全相同（`oma-media` 用同一份源码和 configure 选项编译）。逐项见下文“差异”。
 
 ## 线上基线
 
@@ -107,38 +108,45 @@ LABEL dev.oma.environment=env_video_production dev.oma.build=dryrun-305-vfs-dev
 | Pi 工具 smoke | 0.83.0，7 个工具都通过（来自替身，不是脚本装的） |
 | ACS Jupyter 启动 | 3 s 内 `/api/status` 正常；PID 1 是 `tini -g -- bash /root/.jupyter/start-up.sh` |
 
-## 差异：预演镜像相对线上 0.3.3
+## 差异：正式镜像相对线上 0.3.3
 
-对两份清单逐项比较。验收时要对正式构建再做一次。
+正式镜像 `oma-environments@sha256:54d89827…`（oma-test builder 构建，`oma-media-0.1.2`）对线上 `oma-sandbox@sha256:67a46af6…`。两份清单都用 `fixtures/sandbox-inventory.py` 采集：正式镜像在 vfs-dev 上 pull 后以 root、`--network none` 运行（2026-10-25T20:28:29Z）。没有列出的项完全相同。
 
 | 项 | 线上 | video-production | 原因 |
 |---|---|---|---|
 | dpkg `tini` | 无 | 0.19.0-1+b3 | `oma-base` 的入口（ADR-0024） |
-| dpkg `ca-certificates` | 20250419~deb12u1 | ~deb12u2 | 构建时 bookworm 的更新；由 Base Image 决定 |
-| 其余 dpkg（319 个） | — | 相同 | libgl1 及其 32 个依赖与 0.3.1 一致 |
-| Python（5 个解释器的全部包） | — | 相同 | venv 锁定为线上的 `pip freeze`，其余作为约束 |
-| `/usr/local/bin/vfs-cli` 属主 | 501:staff（归档原样） | root:root | 脚本用 `install -o root` |
-| 镜像 ENV | 代理、`HOME`、`WORKSPACE_DIR`、`MEDIAKIT_*`、缓存路径，`PATH` 以 `/usr/local/bin` 开头 | 只有 ACS 的 ENV，`PATH` 以 `/opt/venv/bin` 开头 | 只有 PID 1 看得到镜像 ENV。命令里的代理和 `MEDIAKIT_*` 来自本定义，路径来自 Host 的 Workspace 变量；登录 shell 的 PATH 两边相同，`python3` 都指向包装脚本。`PATH` 和 `HOME` 由 #301 决定，代理不能写进镜像 |
+| dpkg `ca-certificates` | 20250419~deb12u1 | ~deb12u2 | 构建 Base Image 时 bookworm 的更新，由 Base Image 决定 |
+| 其余 319 个 dpkg 包 | — | 相同 | libgl1 由脚本按线上版本安装，其余来自 Base Image |
+| Python（5 个解释器：Gemini venv 186、Whisper venv 25、`/opt/venv` 173、`/usr/bin/python3` 3、`/usr/local/bin/python3` 186） | — | 包与版本全部相同 | venv 锁定为线上的 `pip freeze`，其余作为约束 |
+| npm（`/opt/oma-pi-tools` Pi 0.83.0、全局包） | — | 相同 | Pi 工具运行时由 `oma-base` 提供，版本与 Host 一致；预期中的“Pi 版本差异”实际没有出现 |
+| 二进制 ffmpeg、ffprobe、node、rg、fd | — | sha256 相同 | `oma-media` 用同一份 FFmpeg 源码与 configure 选项编译；node/rg/fd 来自 `oma-base` 的固定发布包 |
+| 二进制 vfs-cli、mediakit-cli、ossutil | — | sha256 相同；vfs-cli 属主 501:50 → root:root | 脚本校验归档和二进制哈希后用 `install -o root` 安装 |
+| `python3`/`pip3` 的解析结果 | `/usr/local/bin/…`（包装脚本） | `/opt/venv/bin/…` | 只在按镜像 ENV 的 PATH 解析时不同（ACS 的 PATH 以 `/opt/venv/bin` 开头）。登录 shell 的 PATH 两边相同，命令里的 `python3` 都是指向 Gemini venv 的包装脚本（sha256 相同） |
+| 镜像 ENV | 代理 6 个、`HOME`、`WORKSPACE_DIR`、`MEDIAKIT_*`、`NODE_PATH`、`NPM_CONFIG_*`、`PIP_CACHE_DIR`、`PYTHONPATH`、`STORY_SEED_WORKSPACE`、`TMPDIR`、`XDG_CACHE_HOME` | 只有 ACS 的 ENV | ADR-0024：镜像不带变量。镜像 ENV 只有 PID 1 看得到；命令里的代理和 `MEDIAKIT_*` 来自本定义的变量（按命令注入，待新 Runner），路径类变量来自 Host 的 Workspace 变量 |
 | 入口 | `bash /root/.jupyter/start-up.sh` | `tini -g --` + 原命令 | ADR-0024 |
+| Labels | 0.3.3 的标签 | `oma-media` 的标签 + `dev.oma.environment`、`dev.oma.build`、`dev.oma.base-image` | builder 记录来源 |
+| 层数 / 压缩大小 | 65 / 1.875 GB | 43 / 1.882 GB | 新层主要是 Whisper 模型与 venv（约 0.86 GB） |
 | `/etc/oma/proxy.env` | 有 | 无 | 代理由按命令注入的平台默认变量提供 |
-| `/etc/vfs-cli/policy.json` | 运行时由 ConfigMap 挂载（只读，0444） | 镜像内文件（root，0644） | issue：Warm Pool 不再挂载 ConfigMap。普通用户同样不能修改 |
-| `/opt/auto-story` 下的记录（`versions.json`、`tool-sha256.txt`、`*-packages.txt`、`requirements.txt`、`whisper-requirements.txt`、`runtime-overlay/`、`vfs-cli-0.3.2x/`） | 有 | 无 | 改由构建清单 `/opt/oma/manifest.json` 记录 |
-| `prepare-whisper.py`、`whisper-models.json`、`/usr/local/bin/auto-story-transcribe` | 有 | 无 | 旧的镜像命令。Skill 自带转写脚本（`whisper-subtitles-2026-09-17`），只依赖 venv 和模型 |
-| `/usr/local/bin/auto-story-smoke`、`runtime-overlay/smoke.py` | 有 | 无 | 验收脚本不进镜像，从仓库上传后执行 |
-| `/opt/pi-search`（rg/fd 版本记录） | 有 | 替身里没有 | 由 #301 决定 |
-| `/home/user/.cache`、`.local`、`.mediakit` | 有，root 属主的 npm 缓存 | 无 | `oma-base` 的 `/home/user` 不带缓存（ADR-0024）；`.mediakit` 是旧构建跑 smoke 时留下的 |
-| ffmpeg/ffprobe/node/rg/fd、Pi 工具 | — | 相同 | 预演从线上复制；正式版来自 `oma-media`，验收时再比较 |
+| `/etc/vfs-cli/policy.json` | 镜像里是空目录，运行时由 ConfigMap 挂载 | 镜像内文件，root 0644，字节与 ConfigMap 相同 | Warm Pool 不再挂载 ConfigMap；普通用户同样不能修改 |
+| `/opt/auto-story` 下的记录（`versions.json`、`tool-sha256.txt`、`debian-packages.txt`、`python-packages.txt`、`whisper-packages.txt`、`requirements.txt`、`whisper-requirements.txt`、`runtime-overlay/`、`vfs-cli-0.3.20/`、`vfs-cli-0.3.21/`） | 有 | 无 | 改由构建清单 `/opt/oma/manifest.json` 记录 |
+| Whisper 辅助：`prepare-whisper.py`、`whisper-models.json`、`/usr/local/bin/auto-story-transcribe` | 有 | 无 | 旧镜像命令；Skill 自带转写脚本，只依赖 venv 和 `/opt/auto-story/models` |
+| `/usr/local/bin/auto-story-smoke`、`runtime-overlay/smoke.py` | 有 | 无 | 验收脚本不进镜像，验收时上传执行 |
+| `/opt/pi-search` | 有（rg/fd 版本记录） | 无；新增 `/opt/oma`（`bin/write-manifest`、`images/`、`smoke/`、`manifest.json`） | 版本由 `/opt/oma/images/oma-base.json` 和清单记录 |
+| `/home/user` | 754 个条目，742 个不归 user（root 属主的 npm 缓存、`.local`、`.mediakit`） | 3 个 skeleton 文件，全部归 user | `oma-base` 的 home 不带缓存，builder 构建后修正归属（ADR-0024） |
 
-## oma-test 验收还要做的
+## oma-test 验收：已完成与待完成
 
-- **构建与就绪：** `video-production` 由 builder 构建并就绪；对正式镜像跑 `sandbox-inventory.py`，把上表换成正式结果，并逐项说明 Base Image 带来的差异（Pi 版本、`/home/user` 布局、`PATH` 等）。
-- **原 smoke：** 在 Sandbox 里以普通用户跑。需要说明的两项：
-  - `offline_whisper` 去掉对旧脚本的调用，只保留推理部分；
-  - VFS 检查在 test 策略下改用测试端点，或者记录为被策略拦下。
+**已完成**（2026-10-26，详见 [environments-oma-test-2026-10-26.md](environments-oma-test-2026-10-26.md)）：
+
+- **构建与就绪：** builder 构建 347.8 s 后就绪，`init.sh` 部分 194 s，其中包括从 ACS 经 sing-box 下载 630 MB 模型；正式镜像的清单对比见上表。
+- **原 smoke：** 在 Sandbox 里以普通用户跑，15 项过 13 项。两项失败按原样记录、没有改 smoke：`offline_whisper` 调用旧脚本（推理本身单独测过，通过）；VFS 检查被 test 策略拦下。
+- **Base Image 带的东西：** `oma-media-0.1.2` 带 procps、unzip、fontconfig、`libglib2.0-0`；导入 cv2 和 smoke 都通过。
+- **策略文件、Warm Pool、ImageCache、builder 重启、Base Image 演练：** 通过。
+
+**待新 Runner（迁移 0029 之后）：**
+
 - **代理：** 在 Sandbox 命令里，GitHub 经 sing-box，阿里云镜像源和 OSS 内网直连（对照 sing-box 日志里的 Pod IP）。依赖 #307 的按命令注入。
 - **平台密钥：** MediaKit 真实调用成功，证明平台密钥经按命令注入到达 Sandbox。
-- **Base Image 带的东西：** `oma-media` 带 procps、unzip、fontconfig、`libglib2.0-0`（cv2 需要）；smoke 依赖它们，脚本不安装。
-- **构建时下载：** 从 ACS 经 sing-box 下载 630 MB 模型要多久，没有测（vfs-dev 经本机代理用 75 s）。
 
 ## 复现
 

@@ -1,0 +1,498 @@
+{
+ "issues": [
+  303,
+  305
+ ],
+ "parent": 298,
+ "date": "2026-10-26",
+ "cluster": "agent-platform, namespace oma-test, schema oma_test",
+ "deployed": {
+  "oma-api": "oma-server@sha256:61e257409a100d8fcf1b479fc0bb5ef2cbf9fcaad7bec3f4b0c1ded614270a02 (017d2b18)",
+  "oma-image-builder": "oma-server@sha256:61e257409a100d8fcf1b479fc0bb5ef2cbf9fcaad7bec3f4b0c1ded614270a02 (017d2b18)",
+  "oma-web": "oma-web@sha256:d99b9db6e284cd6a97a3d6fa567aaa957298a778a6def256a01718213a059b87 (017d2b18)",
+  "oma-runner": "oma-server@sha256:fc7eebd05e6b076c9664cf337b638cc24bdf1946c43509af3c8ee7bad01360bb (6c79c1e, unchanged: needs migration 0029)",
+  "migrations": [
+   "0026",
+   "0028"
+  ],
+  "builderConfig": {
+   "BASE_IMAGE_OMA_BASE": "oma-sandbox@sha256:618d3a4f… (oma-base-0.1.2)",
+   "BASE_IMAGE_OMA_MEDIA": "oma-sandbox@sha256:9a57f901… (oma-media-0.1.2)",
+   "WARM_POOL_ENVIRONMENT": "env_video_production",
+   "WARM_POOL_IMAGE_CACHE": "none",
+   "SANDBOX_TEMPLATE": "oma-test-sandbox"
+  }
+ },
+ "builds": [
+  {
+   "seq": 1,
+   "id": "envb_PWjXV8oGDAKQfjFRvu-cr",
+   "environment": "env_video_production",
+   "baseImage": "oma-media",
+   "baseImageDigest": "sha256:9a57f901",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:08:25.185Z",
+   "finishedAt": "2026-10-25T20:14:12.994Z",
+   "totalS": 347.8,
+   "queueToAttemptS": 0.3,
+   "attemptToPullStartS": 47.6,
+   "pullS": 51,
+   "buildS": 194,
+   "pushS": 30,
+   "verifyClaimMs": 20741,
+   "verifySwapped": true,
+   "verifyTotalS": 21.0,
+   "image": "sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3",
+   "note": "built-in written at builder start; verification swapped the pool Sandbox off the transitional image"
+  },
+  {
+   "seq": 2,
+   "id": "envb_FiyjDOUxasn93st_SuwEf",
+   "environment": "env_7E0ESvHTfFMTdllAU4cLa (demo-ok)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:16:45.002Z",
+   "finishedAt": "2026-10-25T20:18:14.233Z",
+   "totalS": 89.2,
+   "queueToAttemptS": 0.7,
+   "attemptToPullStartS": 25.3,
+   "pullS": 43,
+   "buildS": 9,
+   "pushS": 4,
+   "verifyClaimMs": 3467,
+   "verifySwapped": true,
+   "verifyTotalS": 3.7,
+   "image": "sha256:3c68483e20c244a3f454f6675ab8e3c6bee8e8d918046061b7d83eec86b61dd3",
+   "note": "create with script (apt, pip, GitHub via proxy, profile.d) -> ready"
+  },
+  {
+   "seq": 3,
+   "id": "envb_iVHrgDv7Ylw8wD2rVNXIk",
+   "environment": "env_xwpQN8B8fQoQfMTqTu8L2 (demo-fail)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "failed",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:18:40.684Z",
+   "finishedAt": "2026-10-25T20:20:08.778Z",
+   "totalS": 88.1,
+   "queueToAttemptS": 5.0,
+   "attemptToPullStartS": 31.3,
+   "pullS": 46,
+   "buildS": null,
+   "pushS": null,
+   "verifyClaimMs": null,
+   "verifySwapped": null,
+   "verifyTotalS": null,
+   "image": null,
+   "note": "environment_build_script_failed: The init script failed at line 5: tabulate-cli-that-does-not-exist --version (exit status 127); attempts=1 (no retry)"
+  },
+  {
+   "seq": 4,
+   "id": "envb_d9YN-RedM1NwAZJDNsTVf",
+   "environment": "env_xwpQN8B8fQoQfMTqTu8L2 (demo-fail)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:20:21.857Z",
+   "finishedAt": "2026-10-25T20:22:08.401Z",
+   "totalS": 106.5,
+   "queueToAttemptS": 4.0,
+   "attemptToPullStartS": 44.2,
+   "pullS": 43,
+   "buildS": 4,
+   "pushS": 4,
+   "verifyClaimMs": 3458,
+   "verifySwapped": true,
+   "verifyTotalS": 3.6,
+   "image": "sha256:54ecaab7ab2b325bcee5c637f3b7e263959ae0e566c147037222bdfa824bfdeb",
+   "note": "fixed script -> ready"
+  },
+  {
+   "seq": 5,
+   "id": "envb_XmrxA3htESC8gQH3jz5Cn",
+   "environment": "env_7E0ESvHTfFMTdllAU4cLa (demo-ok)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "superseded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:22:38.617Z",
+   "finishedAt": "2026-10-25T20:23:27.928Z",
+   "totalS": 49.3,
+   "queueToAttemptS": 2.2,
+   "attemptToPullStartS": 33.2,
+   "pullS": null,
+   "buildS": null,
+   "pushS": null,
+   "verifyClaimMs": null,
+   "verifySwapped": null,
+   "verifyTotalS": null,
+   "image": null,
+   "note": "script v2 (demo-v2); the v3 update at 20:23:27.928 superseded it during the base pull; pod deleted (logged 20:23:30.874)"
+  },
+  {
+   "seq": 6,
+   "id": "envb_5uUsz1YGZJsJk3WqbKetS",
+   "environment": "env_7E0ESvHTfFMTdllAU4cLa (demo-ok)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:23:27.928Z",
+   "finishedAt": "2026-10-25T20:24:59.962Z",
+   "totalS": 92.0,
+   "queueToAttemptS": 2.9,
+   "attemptToPullStartS": 25.2,
+   "pullS": 45,
+   "buildS": 7,
+   "pushS": 4,
+   "verifyClaimMs": 3745,
+   "verifySwapped": true,
+   "verifyTotalS": 3.9,
+   "image": "sha256:fe30f066c0b23483dffd2767ca9128ebd887c74c371e02b24ce6868e447285f8",
+   "note": "script v3: manifest localBin has demo-v3, no demo-v2"
+  },
+  {
+   "seq": 7,
+   "id": "envb_3Ag1k2ketlh4EjdrtyDRl",
+   "environment": "env_7E0ESvHTfFMTdllAU4cLa (demo-ok)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:007d0b4c (0.1.0)",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:33:09.219Z",
+   "finishedAt": "2026-10-25T20:34:42.392Z",
+   "totalS": 93.2,
+   "queueToAttemptS": 0.3,
+   "attemptToPullStartS": 25.5,
+   "pullS": 44,
+   "buildS": 8,
+   "pushS": 3,
+   "verifyClaimMs": 7854,
+   "verifySwapped": true,
+   "verifyTotalS": 8.2,
+   "image": "sha256:d5ee716ea5917c58ef954ef8fefdbb25bf08f81f2fe928b528efbb68fdde6d43",
+   "note": "drill: BASE_IMAGE_OMA_BASE -> oma-base-0.1.0, builder restarted 04:32:20+08"
+  },
+  {
+   "seq": 8,
+   "id": "envb_cus2hG8-awdQWBrtsPyMQ",
+   "environment": "env_xwpQN8B8fQoQfMTqTu8L2 (demo-fail)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:007d0b4c (0.1.0)",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:33:09.225Z",
+   "finishedAt": "2026-10-25T20:36:05.734Z",
+   "totalS": 176.5,
+   "queueToAttemptS": 0.3,
+   "attemptToPullStartS": 34.5,
+   "pullS": 46,
+   "buildS": 4,
+   "pushS": 4,
+   "verifyClaimMs": 83087,
+   "verifySwapped": false,
+   "verifyTotalS": 84.0,
+   "image": "sha256:0f864a846fa301f023e34ad96ee17ab28d06ff5209526deb788ee00f4952e8e0",
+   "note": "drill; the 1-replica pool was taken by build 7, so the claim waited for a new pool Sandbox (no swap)"
+  },
+  {
+   "seq": 9,
+   "id": "envb_CIJbJ9RQcugGvZu6GSsSv",
+   "environment": "env_7E0ESvHTfFMTdllAU4cLa (demo-ok)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:37:43.437Z",
+   "finishedAt": "2026-10-25T20:40:19.357Z",
+   "totalS": 155.9,
+   "queueToAttemptS": 0.3,
+   "attemptToPullStartS": 24.3,
+   "pullS": 44,
+   "buildS": 10,
+   "pushS": 4,
+   "verifyClaimMs": 69222,
+   "verifySwapped": false,
+   "verifyTotalS": 69.9,
+   "image": "sha256:4d7b5796814e01950252515afa5669cdb778107864aff9e1faf233c3c8a6898b",
+   "note": "drill restore: ConfigMap back on oma-base-0.1.2, builder restarted 04:36:35+08; claim waited for a new pool Sandbox"
+  },
+  {
+   "seq": 10,
+   "id": "envb_kZj8Zf5vGM3WON2-yBXGu",
+   "environment": "env_xwpQN8B8fQoQfMTqTu8L2 (demo-fail)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:37:43.444Z",
+   "finishedAt": "2026-10-25T20:39:06.916Z",
+   "totalS": 83.5,
+   "queueToAttemptS": 0.3,
+   "attemptToPullStartS": 25.3,
+   "pullS": 45,
+   "buildS": 4,
+   "pushS": 4,
+   "verifyClaimMs": 3328,
+   "verifySwapped": true,
+   "verifyTotalS": 3.6,
+   "image": "sha256:a362f5b2394dc664b1851fdbb90a6994089657e5a6192b296b13cf343776426e",
+   "note": "drill restore"
+  },
+  {
+   "seq": 11,
+   "id": "envb_36f5L1VzkIQtlNflgwqar",
+   "environment": "env_xwpQN8B8fQoQfMTqTu8L2 (demo-fail)",
+   "baseImage": "oma-base",
+   "baseImageDigest": "sha256:618d3a4f",
+   "status": "succeeded",
+   "attempts": 1,
+   "createdAt": "2026-10-25T20:42:05.813Z",
+   "finishedAt": "2026-10-25T20:43:41.121Z",
+   "totalS": 95.3,
+   "queueToAttemptS": 3.0,
+   "attemptToPullStartS": 35.1,
+   "pullS": 43,
+   "buildS": 4,
+   "pushS": 4,
+   "verifyClaimMs": 3811,
+   "verifySwapped": true,
+   "verifyTotalS": 4.0,
+   "image": "sha256:2db1c41497ef9808e2c09264959c9f5655c0541110bc4b9f52794f8cc5317d6f",
+   "note": "explicit rebuild (oma-cli environment rebuild), followed with environment logs --follow"
+  }
+ ],
+ "superseded": {
+  "build": "envb_XmrxA3htESC8gQH3jz5Cn",
+  "supersededAfterStartS": 47.1,
+  "podDeletedLoggedAt": "2026-10-25T20:23:30.874Z",
+  "finalBuild": "envb_5uUsz1YGZJsJk3WqbKetS",
+  "finalManifestLocalBin": "demo-v3 present, demo-v2 absent"
+ },
+ "secretsCheck": {
+  "imageConfigsScanned": [
+   "sha256:54d89827… (video-production)",
+   "sha256:fe30f066… (demo-ok v3)"
+  ],
+  "needles": [
+   "demo secret value",
+   "sing-box",
+   "7890",
+   "PROXY",
+   "proxy",
+   "oma-auth",
+   "auth.json",
+   "password",
+   "Bearer",
+   "DEMO_SECRET",
+   "DEMO_PLAIN",
+   "plain-value",
+   "ali-shanghai",
+   "AKID",
+   "LTAI"
+  ],
+  "hits": 0,
+  "imageEnvEqualsAcsBase": true,
+  "buildLog": "DEMO_PLAIN=plain-value; DEMO_SECRET=unset during the init script",
+  "buildPod": {
+   "source": "pod-runner.ts buildPodManifest at 017d2b18, rendered for oma-test",
+   "automountServiceAccountToken": false,
+   "envFrom": null,
+   "env": [
+    "OMA_BASE_IMAGE",
+    "OMA_TARGET_IMAGE",
+    "OMA_BUILD_NONCE",
+    "CONTAINERS_STORAGE_CONF",
+    "BUILDAH_ISOLATION",
+    "REGISTRY_AUTH_FILE"
+   ],
+   "volumes": {
+    "context": "ConfigMap oma-env-build-<id>-<attempt>",
+    "registry-auth": "Secret ali-shanghai, only .dockerconfigjson -> auth.json, mode 0400",
+    "containers": "emptyDir"
+   },
+   "privileged": false,
+   "activeDeadlineSeconds": 3900
+  }
+ },
+ "cli": {
+  "get": "environment get --environment-id: status, image digest, manifest (8 sections), lastBuild; secret variables show secretRef only",
+  "logs": "environment logs --build-id/--follow: every build's log incl. superseded and failed",
+  "rebuild": "environment rebuild: tenant 202 (build 11); built-in 403 environment_read_only",
+  "console": "GET https://agentry-test.welltop.tech/environments/env_video_production -> 200 text/html (route /environments/:id)"
+ },
+ "builderRestarts": {
+  "earlier": [
+   "2026-10-26T04:28:47+08:00",
+   "2026-10-26T04:30:09+08:00"
+  ],
+  "now": [
+   {
+    "restartAt": "2026-10-25T22:46:48Z",
+    "rolledOutS": 62
+   },
+   {
+    "restartAt": "2026-10-25T22:48:10Z",
+    "rolledOutS": 53
+   }
+  ],
+  "before": {
+   "environments": 3,
+   "builtins": 1,
+   "builds": 11,
+   "maxSeq": 11,
+   "openBuilds": 0
+  },
+  "after": {
+   "environments": 3,
+   "builtins": 1,
+   "builds": 11,
+   "maxSeq": 11,
+   "openBuilds": 0,
+   "videoProductionUpdatedAt": "2026-10-26T04:08:25.185+08:00"
+  },
+  "builderLogAfterRestart": "only 'image-builder listening on http://localhost:3002'",
+  "warmPoolGeneration": {
+   "before": 2,
+   "after": 2
+  }
+ },
+ "baseImageDrill": {
+  "toDigest": "oma-sandbox@sha256:007d0b4c13559f976ceb1dced5b1687fbbd0d88c6a0fb4563eae4692e07d6ac8 (oma-base-0.1.0, deprecated)",
+  "rebuilt": [
+   "env_7E0ESvHTfFMTdllAU4cLa",
+   "env_xwpQN8B8fQoQfMTqTu8L2"
+  ],
+  "notRebuilt": [
+   "env_video_production (oma-media)"
+  ],
+  "restoredTo": "oma-sandbox@sha256:618d3a4f… (oma-base-0.1.2)",
+  "restoreRebuilt": [
+   "env_7E0ESvHTfFMTdllAU4cLa",
+   "env_xwpQN8B8fQoQfMTqTu8L2"
+  ],
+  "builderLog": "base_image_rebuild environment=<id> base=oma-base digest=<new> per Environment, then environment_build_start/end"
+ },
+ "warmPool": {
+  "sandboxSet": "sandbox-system/oma-test-sandbox",
+  "generation": 2,
+  "image": "welltop/oma-environments@sha256:54d89827…",
+  "previousImage": "welltop/oma-sandbox@sha256:2dd85aa3… (transitional, #301)",
+  "imageCache": {
+   "id": "imc-uf60a5qikevuelu3vmjm",
+   "name": "oma-test-54d89827f163bc38",
+   "createdAt": "2026-10-25T20:16:31Z",
+   "readyAt": "2026-10-25T20:20:11Z",
+   "size": 5,
+   "network": "sg-uf6bikdzvy9di9y8wp89 + 3 vSwitches (as imc-uf6c2ys46pzt3c3grd74)",
+   "tags": [
+    "oma.dev/test-only=true",
+    "oma.dev/issue=305",
+    "oma.dev/environment=test",
+    "oma.dev/managed-by=oma-image-builder"
+   ]
+  },
+  "poolPod": {
+   "name": "oma-test-sandbox-cwcdq",
+   "createdAt": "2026-10-25T20:43:37Z",
+   "mainContainerStartedAt": "2026-10-25T20:44:05Z",
+   "matchedImageCaches": "imc-uf60a5qikevuelu3vmjm"
+  }
+ },
+ "videoProductionSandbox": {
+  "sandbox": "sandbox-system--oma-test-sandbox-sgfc5",
+  "claimMs": 227,
+  "swapped": false,
+  "createMs": 272,
+  "checks": {
+   "identity": "uid=1000(user), HOME=/home/user, /home/user user:user 755",
+   "autoStorySmoke": {
+    "passed": 13,
+    "total": 15,
+    "failed": {
+     "offline_whisper": "calls /opt/auto-story/prepare-whisper.py, not carried over; inference itself passes (whisper_offline)",
+     "vfs_audio_contract_and_embedded_skills": "blocked by the test policy (VFS_PIXEL_DIRECTOR_URL); same with the live image + same policy"
+    }
+   },
+   "runtimeOverlaySmoke": "media_python (libGL, SceneDetect cut at frame 20, Pillow, fonttools), pip mirror, numpy/OpenCV versions pass; stops at /etc/oma/proxy.env, not generated by design",
+   "piTools": "0.83.0, 7 tools ok",
+   "whisperOffline": "base.en and small, int8_float32, local_files_only",
+   "importsLibGL": "python and python3 -I: cv2 4.11.0, scenedetect 0.7.1, PIL 11.3.0, fontTools 4.61.1, numpy 1.26.4, libGL.so.1 loaded",
+   "policyFile": "/etc/vfs-cli root:root 755; policy.json root:root 644, 22 B, {\"environment\":\"test\"}, sha256 3af5e4d4…; append/rename/create as user: Permission denied",
+   "policyVfsCli": "RUNTIME_ENV=PRO -> exit 2 environment_policy_conflict, policy_environment=test, policy_path=/etc/vfs-cli/policy.json",
+   "tools": "ffmpeg 9.0.1, vfs-cli v0.3.21, mediakit-cli 0.2.1, ossutil 2.2.0, node v22.23.2, tini 0.19.0",
+   "homeLeftovers": "0 files not owned by user",
+   "proxyInCommand": "none (Sandbox created without per-command env; needs the new Runner)"
+  }
+ },
+ "inventoryDiff": {
+  "live": "oma-sandbox@sha256:67a46af6… (auto-story-v2 0.3.3)",
+  "video": "oma-environments@sha256:54d89827…",
+  "capturedAt": "2026-10-25T20:28:29Z on vfs-dev (docker, --network none, root)",
+  "dpkg": {
+   "live": 320,
+   "video": 321,
+   "added": [
+    "tini"
+   ],
+   "changed": {
+    "ca-certificates": [
+     "20250419~deb12u1",
+     "20250419~deb12u2"
+    ]
+   }
+  },
+  "python": "5 interpreters identical (186/25/173/3/186 packages)",
+  "npm": "identical",
+  "fonts": "18 = 18",
+  "users": "identical",
+  "loginEnv": "identical",
+  "binaries": "same sha256 for ffmpeg, ffprobe, node, rg, fd, vfs-cli, mediakit-cli, ossutil, curl, git, jq, ps, unzip, fc-list, jupyter; tini added; python3/pip3 differ only when resolved with the image ENV PATH",
+  "home": {
+   "live": [
+    754,
+    742
+   ],
+   "video": [
+    3,
+    0
+   ]
+  },
+  "image": {
+   "live": {
+    "layers": 65,
+    "bytes": 1874914169
+   },
+   "video": {
+    "layers": 43,
+    "bytes": 1882472976
+   }
+  }
+ },
+ "pendingNewRunner": [
+  "#305: Agent commands carry the proxy variables (GitHub via sing-box, Aliyun mirrors and OSS internal direct)",
+  "#305: a real MediaKit call proves platform secrets reach the Sandbox per command",
+  "#306/#307: bindability, per-command env transport, spans with the Environment"
+ ],
+ "cleanup": {
+  "buildPods": 0,
+  "buildConfigMaps": 0,
+  "testSandboxes": 0,
+  "apiKey": {
+   "id": "apikey_mjaW8iwQBM1iOP-A7FUQV",
+   "revokedAt": "2026-10-26T06:52:40.519+08:00",
+   "afterRevoke": "401"
+  },
+  "kept": [
+   "demo-ok",
+   "demo-fail (tenant env-demo-303-202610252009)",
+   "ImageCache imc-uf60a5qikevuelu3vmjm",
+   "Warm Pool on video-production"
+  ]
+ }
+}
