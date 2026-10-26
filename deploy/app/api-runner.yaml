@@ -171,7 +171,8 @@ data:
   SANDBOX_ENABLED: 'true'
   # The Warm Pool (SandboxSet) every Sandbox is claimed from (ADR-0024); each
   # claim passes the image of the Session's Environment.
-  SANDBOX_TEMPLATE: auto-story-v2
+  # Production: sandbox/warm-pool/oma-sandbox.yaml.
+  SANDBOX_TEMPLATE: oma-sandbox
   # Labels every Sandbox created (oma.dev/environment); the test overlay sets test.
   OMA_ENVIRONMENT: production
   E2B_API_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:8080

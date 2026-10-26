@@ -49,12 +49,10 @@ data:
   BUILTIN_ENVIRONMENTS_DIR: /app/sandbox/environments
   # Verification claims one Sandbox from the Warm Pool (the Runner's pool),
   # and the builder keeps that pool on the image of WARM_POOL_ENVIRONMENT.
-  SANDBOX_TEMPLATE: auto-story-v2
+  # The pool's RBAC is deploy/image-builder-warm-pool-rbac.yaml.
+  SANDBOX_TEMPLATE: oma-sandbox
   WARM_POOL_NAMESPACE: sandbox-system
-  # Production keeps auto-story-v2 until its release: no pool updates yet.
-  # With the release: env_video_production, SANDBOX_TEMPLATE oma-sandbox,
-  # deploy/image-builder-warm-pool-rbac.yaml applied.
-  WARM_POOL_ENVIRONMENT: ''
+  WARM_POOL_ENVIRONMENT: env_video_production
   # acs: create the new image's ACS ImageCache and update the pool only once
   # it is Ready (needs the oma-image-cache Secret, deploy/README.md); none:
   # update the pool at once, every refill pulling the whole image.

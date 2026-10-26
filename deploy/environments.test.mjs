@@ -88,12 +88,14 @@ test("each environment's Runners label their Sandboxes with it; the API creates 
 const digestPinned = /^[a-z0-9.-]+\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/;
 
 test("each environment's Runners claim from their Warm Pool; the image is each Session's Environment's (ADR-0024)", () => {
-  const pool = readFileSync(new URL("sandbox/warm-pool/oma-test-sandbox.yaml", root), "utf8");
-  assert.match(pool.match(/^\s+image: (\S+)$/m)?.[1] ?? "", digestPinned);
+  for (const name of ["oma-test-sandbox", "oma-sandbox"]) {
+    const pool = readFileSync(new URL(`sandbox/warm-pool/${name}.yaml`, root), "utf8");
+    assert.match(pool.match(/^\s+image: (\S+)$/m)?.[1] ?? "", digestPinned, name);
+  }
   const test = configMap(render("test"), "oma-runner-config");
   assert.equal(field(test, "SANDBOX_TEMPLATE"), "oma-test-sandbox");
   const production = configMap(render("production"), "oma-runner-config");
-  assert.equal(field(production, "SANDBOX_TEMPLATE"), "auto-story-v2");
+  assert.equal(field(production, "SANDBOX_TEMPLATE"), "oma-sandbox");
   for (const docs of [test, production]) assert.equal(field(docs, "SANDBOX_IMAGE"), undefined);
   assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /SANDBOX_IMAGE/);
 });
@@ -106,15 +108,25 @@ test("no environment injects the removed per-Agent or default Sandbox variables 
   assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /oma-auto-story-env|AUTO_STORY_|OPENGROVE_WW_|name: DEFAULT_SANDBOX_/);
 });
 
-test("the oma-test Warm Pool is the auto-story-v2 template without base-secret pod env or the policy mount (ADR-0024)", () => {
-  const pool = readFileSync(new URL("sandbox/warm-pool/oma-test-sandbox.yaml", root), "utf8");
-  const manifest = pool.split("\n").filter((line) => !line.startsWith("#")).join("\n");
-  assert.match(manifest, /^kind: SandboxSet\nmetadata:\n  name: oma-test-sandbox\n  namespace: sandbox-system\n  labels:\n    oma\.dev\/test-only: "true"$/m);
-  assert.match(manifest, /^  replicas: 1$/m);
-  assert.match(manifest, /image\.alibabacloud\.com\/enable-image-cache: "true"/);
-  // video-production carries /etc/vfs-cli/policy.json in its image.
-  assert.doesNotMatch(manifest, /base-secret|secretKeyRef|auto-story-source|vfs-cli|^\s+env:|^\s+volumes:/m);
-  assert.doesNotMatch(manifest, /name: auto-story-v2/);
+test("the Warm Pools are the auto-story-v2 template without base-secret pod env or the policy mount (ADR-0024)", () => {
+  const manifest = (name) => readFileSync(new URL(`sandbox/warm-pool/${name}.yaml`, root), "utf8")
+    .split("\n").filter((line) => !line.startsWith("#")).join("\n");
+  const test = manifest("oma-test-sandbox");
+  assert.match(test, /^kind: SandboxSet\nmetadata:\n  name: oma-test-sandbox\n  namespace: sandbox-system\n  labels:\n    oma\.dev\/test-only: "true"$/m);
+  assert.match(test, /^  replicas: 1$/m);
+  const production = manifest("oma-sandbox");
+  assert.match(production, /^kind: SandboxSet\nmetadata:\n  name: oma-sandbox\n  namespace: sandbox-system\nspec:$/m);
+  assert.match(production, /^  replicas: 8$/m);
+  assert.doesNotMatch(production, /test-only/);
+  // The same template apart from the test-only labels and the size.
+  const template = (text) => text.slice(text.indexOf("  template:")).replace(/^\s+oma\.dev\/test-only: "true"\n/m, "");
+  assert.equal(template(production), template(test).replace(/(image: )\S+/, `$1${production.match(/image: (\S+)/)[1]}`));
+  for (const pool of [test, production]) {
+    assert.match(pool, /image\.alibabacloud\.com\/enable-image-cache: "true"/);
+    // video-production carries /etc/vfs-cli/policy.json in its image.
+    assert.doesNotMatch(pool, /base-secret|secretKeyRef|auto-story-source|vfs-cli|^\s+env:|^\s+volumes:/m);
+    assert.doesNotMatch(pool, /name: auto-story-v2/);
+  }
 });
 
 test("test sandbox RBAC grants only the oma-test Runner identity", () => {
@@ -233,16 +245,19 @@ test("the image builder writes the built-ins shipped in the Server image", () =>
   }
 });
 
-test("only oma-test's builder keeps its Warm Pool on video-production, on the pool its RBAC names", () => {
-  const test = configMap(render("test"), "oma-image-builder-config");
-  assert.equal(field(test, "WARM_POOL_ENVIRONMENT"), "env_video_production");
-  assert.equal(field(test, "WARM_POOL_NAMESPACE"), "sandbox-system");
-  assert.equal(field(test, "WARM_POOL_IMAGE_CACHE"), "acs");
-  const rbac = readFileSync(new URL("deploy/environments/test/image-builder-warm-pool-rbac.yaml", root), "utf8");
-  assert.match(rbac, new RegExp(`resourceNames: \\[${field(test, "SANDBOX_TEMPLATE")}\\]`));
-  // Production serves from auto-story-v2 until its release: no pool updates.
-  const production = configMap(render("production"), "oma-image-builder-config");
-  assert.equal(field(production, "WARM_POOL_ENVIRONMENT"), "");
-  assert.equal(field(production, "WARM_POOL_IMAGE_CACHE"), "acs");
-  for (const key of ["IMAGE_CACHE_SECURITY_GROUP_ID", "IMAGE_CACHE_VSWITCH_IDS", "ALIYUN_REGION"]) assert.ok(field(production, key), key);
+test("each builder keeps its Runners' Warm Pool on video-production, cached first, on the pool its RBAC names", () => {
+  for (const [env, rbacFile] of [
+    ["test", "deploy/environments/test/image-builder-warm-pool-rbac.yaml"],
+    ["production", "deploy/image-builder-warm-pool-rbac.yaml"],
+  ]) {
+    const docs = render(env);
+    const builder = configMap(docs, "oma-image-builder-config");
+    assert.equal(field(builder, "SANDBOX_TEMPLATE"), field(configMap(docs, "oma-runner-config"), "SANDBOX_TEMPLATE"), env);
+    assert.equal(field(builder, "WARM_POOL_ENVIRONMENT"), "env_video_production", env);
+    assert.equal(field(builder, "WARM_POOL_NAMESPACE"), "sandbox-system", env);
+    assert.equal(field(builder, "WARM_POOL_IMAGE_CACHE"), "acs", env);
+    for (const key of ["IMAGE_CACHE_SECURITY_GROUP_ID", "IMAGE_CACHE_VSWITCH_IDS", "ALIYUN_REGION"]) assert.ok(field(builder, key), `${env} ${key}`);
+    const rbac = readFileSync(new URL(rbacFile, root), "utf8");
+    assert.match(rbac, new RegExp(`resourceNames: \\[${field(builder, "SANDBOX_TEMPLATE")}\\]`), env);
+  }
 });

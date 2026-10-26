@@ -10,7 +10,7 @@ the machine's default context may point to another cluster. The Host and web
 console are in `oma-infra`; SandboxSets are in `sandbox-system`.
 
 The Host claims every Sandbox from its deployment's **Warm Pool**
-(`SANDBOX_TEMPLATE`: production `auto-story-v2`, oma-test `oma-test-sandbox`)
+(`SANDBOX_TEMPLATE`: production `oma-sandbox`, oma-test `oma-test-sandbox`)
 with the image of its Session's **Environment**, through E2B domain
 `sandbox.agentry.welltop.tech`.
 Sandbox images come from the Shanghai ACR repository
