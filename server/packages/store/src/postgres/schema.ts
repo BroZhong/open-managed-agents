@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
   updated_at   TIMESTAMPTZ NOT NULL
 );
 ALTER TABLE ${s}.agents ADD COLUMN IF NOT EXISTS thinking TEXT;
+-- The Environment (ADR-0024) the Agent's new Sessions run in; NULL: none.
+ALTER TABLE ${s}.agents ADD COLUMN IF NOT EXISTS environment_id TEXT;
 CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 
 CREATE TABLE IF NOT EXISTS ${s}.loops (
@@ -153,6 +155,8 @@ ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS thinking TEXT;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS delegation JSONB;
+-- The Environment the Session is frozen to at creation (ADR-0024); NULL: none.
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS environment_id TEXT;
 
 -- One coordination lock orders quota admissions and multi-row transitions.
 CREATE TABLE IF NOT EXISTS ${s}.delegation_lock (id TEXT PRIMARY KEY);
@@ -180,10 +184,10 @@ ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOO
 -- Runner reconciles it with the gateway. NULL when Ready or Cold.
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creating_since TIMESTAMPTZ;
 -- What the Session API reports of the binding (ADR-0023): when its state
--- began, by the database clock (its last move, its first environment failure
--- since, or its recovery; NULL before its first move), and the last
--- environment failure observed in that state: code, reason and time. A move
--- or a preparation that ends ready clears the failure.
+-- began, by the database clock (its last move, its first Sandbox
+-- unavailability since, or its recovery; NULL before its first move), and the
+-- last Sandbox unavailability observed in that state: code, reason and time.
+-- A move or a preparation that ends ready clears the failure.
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS state_since TIMESTAMPTZ;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_code TEXT;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_reason TEXT;
@@ -194,6 +198,12 @@ ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_at 
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_sandbox_id TEXT;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_set_hash TEXT;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_generation BIGINT;
+-- What sandbox_id was created with (ADR-0024): its Session's Environment and
+-- the image it was claimed with. Set with sandbox_id by the move to Ready
+-- that recorded its creation, NULL with it, and NULL for a Sandbox adopted
+-- by reconciliation.
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS environment_id TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS image TEXT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);
@@ -276,6 +286,78 @@ CREATE TABLE IF NOT EXISTS ${s}.users (
   created_at    TIMESTAMPTZ NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON ${s}.users (lower(username));
+
+-- Environments (ADR-0024): a Base Image, an init script and variables, built
+-- once into the image that serves Sandboxes. Built-in Environments have
+-- owner_type 'platform', no tenant and a fixed id. env holds plain values and
+-- secret references; secrets holds the Tenant secrets' ciphertexts by key.
+-- image is the digest serving Sandboxes (NULL until a build first succeeds);
+-- last_build_id is the most recent build. Deletion is soft.
+CREATE TABLE IF NOT EXISTS ${s}.environments (
+  id             TEXT PRIMARY KEY,
+  owner_type     TEXT NOT NULL CHECK (owner_type IN ('platform', 'tenant')),
+  tenant_id      TEXT,
+  name           TEXT NOT NULL,
+  description    TEXT NOT NULL,
+  base_image     TEXT NOT NULL,
+  init_script    TEXT NOT NULL,
+  env            JSONB NOT NULL,
+  secrets        JSONB NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('pending', 'building', 'failed', 'ready')),
+  image          TEXT,
+  manifest       JSONB,
+  last_build_id  TEXT,
+  created_at     TIMESTAMPTZ NOT NULL,
+  updated_at     TIMESTAMPTZ NOT NULL,
+  deleted_at     TIMESTAMPTZ,
+  CHECK ((owner_type = 'platform') = (tenant_id IS NULL))
+);
+-- Names are unique per owner among Environments that are not deleted.
+CREATE UNIQUE INDEX IF NOT EXISTS environments_tenant_name_unique
+  ON ${s}.environments (tenant_id, name) WHERE owner_type = 'tenant' AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS environments_platform_name_unique
+  ON ${s}.environments (owner_type, name) WHERE owner_type = 'platform' AND deleted_at IS NULL;
+
+-- Environment Builds, written in the transaction that changes the Environment
+-- (ADR-0018: the API executes nothing). A row snapshots what to build; the
+-- image builder claims a pending row, or a running one whose lease expired,
+-- by lease_owner/lease_expires_at, and records its outcome. A newer change, or
+-- deleting the Environment, supersedes the active build. seq orders builds.
+CREATE TABLE IF NOT EXISTS ${s}.environment_builds (
+  id                 TEXT PRIMARY KEY,
+  seq                BIGSERIAL,
+  environment_id     TEXT NOT NULL,
+  owner_type         TEXT NOT NULL,
+  tenant_id          TEXT,
+  status             TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'superseded')),
+  base_image         TEXT NOT NULL,
+  init_script        TEXT NOT NULL,
+  definition_sha256  TEXT NOT NULL,
+  base_image_digest  TEXT,
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  lease_owner        TEXT,
+  lease_expires_at   TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL,
+  started_at         TIMESTAMPTZ,
+  finished_at        TIMESTAMPTZ,
+  error_code         TEXT,
+  error_message      TEXT,
+  image              TEXT,
+  manifest           JSONB,
+  log_key            TEXT
+);
+-- Infrastructure failures retried (0030): a claim counts an attempt, never a retry.
+ALTER TABLE ${s}.environment_builds ADD COLUMN IF NOT EXISTS retries INTEGER NOT NULL DEFAULT 0;
+-- An Environment's builds; then at most one active build per Environment.
+-- (pg-mem serves a lookup from the first index on its columns, ignoring a
+-- partial index's predicate, so the plain index comes first.)
+CREATE INDEX IF NOT EXISTS environment_builds_environment_idx
+  ON ${s}.environment_builds (environment_id);
+CREATE UNIQUE INDEX IF NOT EXISTS environment_builds_active_unique
+  ON ${s}.environment_builds (environment_id) WHERE status IN ('pending', 'running');
+-- The builder's claim scan, oldest first.
+CREATE INDEX IF NOT EXISTS environment_builds_claim_idx
+  ON ${s}.environment_builds (seq) WHERE status IN ('pending', 'running');
 `;
 }
 

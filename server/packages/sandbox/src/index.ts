@@ -5,6 +5,7 @@
 export type {
   SandboxClient,
   SandboxHandle,
+  SandboxClaim,
   SandboxCreateOptions,
   SandboxExecChunk,
   SandboxExecOptions,
@@ -19,6 +20,9 @@ export {
   CREATE_REQUEST_MS,
   INTENT_DEADLINE_SECONDS,
   SandboxCreateRejected,
+  CLAIM_IMAGE_METADATA,
+  imageDigest,
+  isDigestPinnedImage,
 } from "./sandbox-client.js";
 
 export {
@@ -83,28 +87,32 @@ export {
 
 export {
   DefaultSandboxManager,
+  CommandVariablesUnavailable,
   SandboxSessionClosed,
   SandboxUnavailable,
   type SandboxUnavailableReason,
   type SandboxPrepareObserver,
   type SandboxPrepareOutcome,
+  type SandboxPrepareContext,
   type SandboxManager,
   type SandboxSession,
   type SandboxManagerDeps,
   type SandboxDescriptor,
   type EnvSpec,
-  type SandboxEnvironmentBinding,
+  type CommandVariables,
+  type SandboxBinding,
   type PrepareOptions,
   type SkillInstallObserver,
 } from "./sandbox-manager.js";
 
-export { BINDING_REREAD_MS, type EnvironmentSignals } from "./environment-signals.js";
+export { BINDING_REREAD_MS, type SandboxSignals } from "./sandbox-signals.js";
 
 export {
   DefaultTurnSandboxes,
   isSandboxedAgent,
   type TurnSandboxes,
   type TurnSandboxesDeps,
+  type SandboxEnvironments,
   type SandboxLease,
   type SandboxLeaseRequest,
   type TurnSettlement,
@@ -113,3 +121,9 @@ export {
 export { skillsInstallFailedText, type TurnExecutorGuard } from "./turn-executor.js";
 
 export { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";
+
+export { FAKE_ENVIRONMENT_IMAGE, fakeEnvironments, type FakeEnvironments } from "./fake-environments.js";
+
+export { ENVIRONMENT_VARIABLE_NAME, PLATFORM_DEFAULT_ENV, isReservedEnvironmentVariable } from "./environment-variables.js";
+
+export { shellQuote } from "./shell-quote.js";

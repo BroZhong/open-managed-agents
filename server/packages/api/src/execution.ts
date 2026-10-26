@@ -7,14 +7,15 @@ import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
 import { runtimeAdapters } from "./lib/runtime-adapters.js";
 import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { sandboxBaseEnvFromKubernetes } from "./lib/sandbox-base-secret.js";
-import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
-import { environmentSignals } from "./lib/environment-signals.js";
+import { sandboxSignals } from "./lib/sandbox-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
+import { SandboxEnvironmentResolver } from "./lib/environments.js";
+import { PlatformSecrets } from "./lib/platform-secrets.js";
 
 export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
@@ -26,13 +27,16 @@ export async function startExecution(deps: PgStores & {
     setGlobalDispatcher(new ProxyAgent(proxyUrl));
   }
   const workspaceConfig = deps.local ? undefined : workspaceConfigFromEnv(process.env);
-  const sandboxEnvPolicy = deps.local ? {} : sandboxEnvPolicyFromHost(process.env, await sandboxBaseEnvFromKubernetes(process.env));
+  // The platform values Environments' platform secret references resolve to
+  // (ADR-0024), refreshed every minute so a rotation needs no restart.
+  const platformSecrets = deps.local ? PlatformSecrets.of({}) : await PlatformSecrets.load(() => sandboxBaseEnvFromKubernetes(process.env));
+  platformSecrets.start(Number(process.env.PLATFORM_SECRETS_REFRESH_MS ?? 60_000));
   const modelProviders = new ModelProviderService(deps.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
   const piAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviders.configureRuntime(deps.sessionStore) });
   // The packaged mock emits model spans and text chunks; lifecycle events stay
   // owned by the SessionRouter. The local infrastructure profile runs only mock.
   const mockAdapter = new MockAdapter({ delayMs: Number(process.env.MOCK_DELAY_MS ?? 75) });
-  // The gateway, the native lifecycle and the environment hints the Sandbox
+  // The gateway, the native lifecycle and the `sandbox` hints the Sandbox
   // Manager and the sweeper share.
   const native = !execution?.sandboxManager && workspaceConfig ? {
     client: new E2BSandboxClient({
@@ -45,10 +49,10 @@ export async function startExecution(deps: PgStores & {
     environment: workspaceConfig.environment,
     lifecycle: await sandboxLifecycle(deps.pool),
     // A Turn waiting for a binding another Runner creates or reclaims continues on its hint.
-    hints: environmentSignals(deps.signals),
+    hints: sandboxSignals(deps.signals),
   } : undefined;
   const sandboxManager = execution?.sandboxManager ?? (native ? new DefaultSandboxManager({
-    sandboxClient: native.client, environment: native.environment, lifecycle: native.lifecycle, environmentSignals: native.hints,
+    sandboxClient: native.client, environment: native.environment, lifecycle: native.lifecycle, sandboxSignals: native.hints,
     // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
     skillBundleStore: deps.skillBundleStore,
   }) : undefined);
@@ -57,7 +61,9 @@ export async function startExecution(deps: PgStores & {
   // The Turn side of the Sandbox protocol (ADR-0023): the Router only acquires
   // and releases leases; bindings, resource uses and activity live behind it.
   const sandboxes = sandboxManager && workspaceMount ? new DefaultTurnSandboxes({
-    manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount, ...sandboxEnvPolicy,
+    manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount,
+    // A Session's Environment supplies its image and its commands' variables (ADR-0024).
+    environments: new SandboxEnvironmentResolver(deps.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY, platformSecrets),
     onError: reportDrainFailure,
   }) : undefined;
   const router = new SessionRouter({
@@ -86,8 +92,8 @@ export async function startExecution(deps: PgStores & {
   // Runner's Sandbox Manager, as termination does.
   const sweeper = native && sandboxManager ? new SandboxSweeper({
     client: native.client, facts: native.lifecycle, bindings: deps.delegationStore, manager: sandboxManager,
-    environment: native.environment, environmentSignals: native.hints,
+    environment: native.environment, sandboxSignals: native.hints,
   }) : undefined;
   sweeper?.start();
-  return { router, ready: () => dispatch.ready, stop: async () => { await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };
+  return { router, ready: () => dispatch.ready, stop: async () => { platformSecrets.stop(); await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };
 }

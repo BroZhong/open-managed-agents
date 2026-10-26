@@ -1,0 +1,205 @@
+{
+  "deployment": {
+    "namespace": "oma-test",
+    "deployment": "oma-image-builder",
+    "commit": "d19ecc30655d",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:38949f530044a9a291024a2c1fb945c434a624e8a6c14d27dd5162935750375d",
+    "previousImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:03081cae4cb0b710afa9a80f510128a14db5a279480c61a8d91aa1af4e77ed73",
+    "mode": "acs",
+    "appliedAt": "2026-10-26T07:00:30.373894+00:00"
+  },
+  "iam": {
+    "userName": "oma-test-image-cache",
+    "policyName": "OmaTestImageCacheCreateList",
+    "policy": {
+      "Version": "1",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "acc:CreateImageCache",
+            "acc:ListImageCaches"
+          ],
+          "Resource": "acs:acc:cn-shanghai:<account>:imagecache/*"
+        }
+      ]
+    },
+    "namespace": "oma-test",
+    "secretName": "oma-image-cache",
+    "credentialPrintedOrPersistedLocally": false,
+    "defaultVersion": "v2"
+  },
+  "gate": {
+    "at": "2026-10-26T07:04:50.768Z",
+    "phase": "passed",
+    "fixture": "oma-cache-test-gate-20261026",
+    "fixtureUid": "16ba3a5b-c3bf-4677-920d-8c60d485e166",
+    "cacheId": "imc-uf6do32uk5dsbid1cj13",
+    "observedCreating": 16,
+    "listCalls": 18,
+    "patchCount": 1,
+    "outcome": "updated",
+    "repeated": "unchanged",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+    "generation": 2,
+    "replicas": 0
+  },
+  "fixturePod": {
+    "observedAt": "2026-10-26T07:06:48.827147+00:00",
+    "fixture": "oma-cache-test-gate-20261026",
+    "fixtureUid": "16ba3a5b-c3bf-4677-920d-8c60d485e166",
+    "sandbox": "oma-cache-test-gate-20261026-mzhd8",
+    "sandboxUid": "9739a801-e495-4bed-aeef-91387f8ca4a4",
+    "pod": "oma-cache-test-gate-20261026-mzhd8",
+    "podUid": "ac5d9826-77fd-4f84-871e-f50bd4e82c3a",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+    "imageId": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+    "ready": true,
+    "restartCount": 0,
+    "createdAt": "2026-10-26T07:06:09Z",
+    "startedAt": "2026-10-26T07:06:48Z",
+    "creationToStartSeconds": 39.0,
+    "matchedImageCaches": [
+      {
+        "imageCacheId": "imc-uf6do32uk5dsbid1cj13",
+        "size": 4
+      }
+    ],
+    "imageCacheHitEvents": [
+      {
+        "reason": "ImageCacheHit",
+        "message": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched",
+        "firstTimestamp": "2026-10-26T07:06:18Z",
+        "lastTimestamp": "2026-10-26T07:06:18Z"
+      }
+    ]
+  },
+  "smoke": {
+    "exitCode": 0,
+    "stdout": "CACHE_SMOKE_OK\nPython 3.11.2\nffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers\nmedia_imports_ok\n",
+    "stderr": ""
+  },
+  "cleanup": {
+    "at": "2026-10-26T07:07:53.168857+00:00",
+    "fixtureResourcesRemaining": 0,
+    "managedCacheRetained": true,
+    "dedicatedIdentityAndSecretRetained": true
+  },
+  "final": {
+    "observedAt": "2026-10-26T07:08:05.225165+00:00",
+    "targetImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+    "cacheName": "oma-test-490544134a0313d8",
+    "cacheCount": 1,
+    "caches": [
+      {
+        "ImageCacheId": "imc-uf6do32uk5dsbid1cj13",
+        "ImageCacheName": "oma-test-490544134a0313d8",
+        "Images": [
+          "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111"
+        ],
+        "Status": "Ready",
+        "Size": 4,
+        "CreateTime": "2026-10-26T07:01:24Z",
+        "ReadyTime": "2026-10-26T07:04:42Z",
+        "ResourceGroupId": "rg-acfm4eyp5bgknqq"
+      }
+    ],
+    "pool": {
+      "name": "oma-test-sandbox",
+      "uid": "0d826d0d-d7e0-4649-97c0-80295e8a277e",
+      "generation": 3,
+      "resourceVersion": "66484454",
+      "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+      "replicas": 1,
+      "status": {
+        "availableReplicas": 1,
+        "updatedAvailableReplicas": 1,
+        "replicas": 1,
+        "selector": "agents.kruise.io/sandbox-claimed=false,agents.kruise.io/sandbox-pool=oma-test-sandbox",
+        "currentRevision": "oma-test-sandbox-74445588ff",
+        "updateRevision": "74445588ff"
+      }
+    },
+    "sandboxes": [
+      {
+        "name": "oma-test-sandbox-c9ltj",
+        "uid": "239e095e-29e1-439f-be87-261540dfe40a",
+        "creationTimestamp": "2026-10-26T04:11:50Z",
+        "claimed": "true",
+        "ownerNames": []
+      },
+      {
+        "name": "oma-test-sandbox-dk4dt",
+        "uid": "29703cbc-17d0-4854-97c9-2a058b440967",
+        "creationTimestamp": "2026-10-26T03:40:22Z",
+        "claimed": "true",
+        "ownerNames": []
+      },
+      {
+        "name": "oma-test-sandbox-tclcw",
+        "uid": "227686c6-bae7-4642-8264-247a75f193a4",
+        "creationTimestamp": "2026-10-26T04:54:22Z",
+        "claimed": "false",
+        "ownerNames": [
+          "oma-test-sandbox"
+        ]
+      }
+    ],
+    "pods": [
+      {
+        "name": "oma-test-sandbox-tclcw",
+        "uid": "f091bfbd-8173-48a5-8b32-cfe6a41b1213",
+        "creationTimestamp": "2026-10-26T04:54:22Z",
+        "deletionTimestamp": null,
+        "phase": "Running",
+        "enableImageCache": "true",
+        "matchedImageCaches": null,
+        "containers": [
+          {
+            "name": "sandbox",
+            "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+            "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:490544134a0313d850ad29eb56ad516a13efd9a23dd469706e3a3a6534fdd111",
+            "ready": true,
+            "restartCount": 0,
+            "startedAt": "2026-10-26T04:55:38Z",
+            "creationToStartSeconds": 76.0
+          }
+        ]
+      }
+    ],
+    "cacheHitEvents": [],
+    "builder": {
+      "name": "oma-image-builder",
+      "generation": 11,
+      "images": [
+        "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:38949f530044a9a291024a2c1fb945c434a624e8a6c14d27dd5162935750375d"
+      ],
+      "status": {
+        "replicas": 1,
+        "updatedReplicas": 1,
+        "readyReplicas": 1,
+        "availableReplicas": 1
+      },
+      "config": {
+        "WARM_POOL_IMAGE_CACHE": "acs",
+        "WARM_POOL_ENVIRONMENT": "env_video_production",
+        "SANDBOX_TEMPLATE": "oma-test-sandbox",
+        "OMA_ENVIRONMENT": "test"
+      }
+    }
+  },
+  "apiHealth": {
+    "status": "ok"
+  },
+  "tests": {
+    "apiWarmPoolAndConfig": 20,
+    "deploymentContracts": 16,
+    "apiTypecheck": "passed"
+  },
+  "verificationBoundaries": [
+    "Ready gate uses actual WarmPoolUpdater/AcsImageCaches/KubernetesWarmPool and real ACS/Kubernetes with a controlled Environment store, not a deployed builder rebuilding a new Environment image.",
+    "Cache creation and restart reuse were performed by the deployed oma-test builder.",
+    "IAM scope is this account Shanghai imagecache/*, not a Kubernetes namespace boundary.",
+    "Pod startup duration is one sample, not a capacity or performance benchmark."
+  ]
+}

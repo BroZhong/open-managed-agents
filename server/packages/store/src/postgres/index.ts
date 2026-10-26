@@ -1,5 +1,7 @@
 import { PgModelProviderStore } from "./model-provider-store.js";
 export { PgModelProviderStore } from "./model-provider-store.js";
+import { PgEnvironmentStore } from "./environment-store.js";
+export { PgEnvironmentStore } from "./environment-store.js";
 import { PgSessionShareStore } from "./session-share-store.js";
 export { PgSessionShareStore } from "./session-share-store.js";
 export { PgSessionCleanupStore } from "./session-cleanup-store.js";
@@ -58,6 +60,7 @@ export interface PgStores {
   workspaceStore: WorkspaceMetadataStore;
   loopStore: PgLoopStore;
   delegationStore: PgDelegationStore;
+  environmentStore: PgEnvironmentStore;
 }
 
 export interface CreatePgStoresOpts {
@@ -87,5 +90,6 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     workspaceStore: new PgWorkspaceMetadataStore(pool),
     loopStore: new PgLoopStore(pool),
     delegationStore: new PgDelegationStore(pool, opts.payloads),
+    environmentStore: new PgEnvironmentStore(pool),
   };
 }

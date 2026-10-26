@@ -368,7 +368,7 @@ export interface SpanSkillsInstallEndEvent extends BaseEvent {
 }
 
 /**
- * One preparation of the Turn's environment (ADR-0023): at Turn start,
+ * One preparation of the Turn's Sandbox (ADR-0023): at Turn start,
  * connecting to the Sandbox a Ready binding records and verifying its mount,
  * beside the model's first request; for a tool, bringing the binding to Ready
  * (connect, wait for another Turn's create, reconcile, create) and verifying
@@ -379,6 +379,12 @@ export interface SpanSkillsInstallEndEvent extends BaseEvent {
 export interface SpanSandboxPrepareStartEvent extends BaseEvent {
   type: "span.sandbox_prepare_start";
   prepareId: string;
+  /**
+   * The Session's Environment and the image a claim would use (ADR-0024);
+   * absent when the Session has none, or it serves no image.
+   */
+  environmentId?: string;
+  image?: string;
 }
 
 export interface SpanSandboxPrepareEndEvent extends BaseEvent {
@@ -389,7 +395,7 @@ export interface SpanSandboxPrepareEndEvent extends BaseEvent {
    * `deferred`: the Turn-start connect found no Sandbox to connect (the
    * recorded one is gone, or the binding moved on); the first tool brings
    * the binding to Ready.
-   * `failed`: an environment failure; `code` is the one the tools that
+   * `failed`: a Sandbox unavailability; `code` is the one the tools that
    * waited for it carry in their results' details.
    * `aborted`: the Turn stopped waiting for it first, as `reason` says.
    */
@@ -400,6 +406,21 @@ export interface SpanSandboxPrepareEndEvent extends BaseEvent {
   /** `failed` only: `sandbox_unavailable` or `sandbox_creating`. */
   code?: string;
   reason?: string;
+  /**
+   * As the start's (ADR-0024); for `ready`, what `sandboxId` was created
+   * with: the claim's Environment and image, or for a Sandbox it reused the
+   * binding's record (absent when not recorded).
+   */
+  environmentId?: string;
+  image?: string;
+  /**
+   * `ready` after a preparation that claimed `sandboxId` from the Warm Pool
+   * only. `swapped`: whether the claim replaced the warm Sandbox's container
+   * with `image` in place (absent when unobserved). `claimMs`: how long the
+   * claim took.
+   */
+  swapped?: boolean;
+  claimMs?: number;
 }
 
 export type SpanEvent =

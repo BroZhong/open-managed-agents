@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { DelegationStore, DelegationExecution, DelegationAcceptInput, DelegationCaller, DelegationCommand, DelegationOutcome, DelegationWait, EnvironmentBinding, EnvironmentFailure, EnvironmentLockResult, EnvironmentStatus, InstalledSkillSet, ResourceUseLease, SkillSetRecordOutcome } from "./interfaces/delegation-store.js";
+import type { DelegationStore, DelegationExecution, DelegationAcceptInput, DelegationCaller, DelegationCommand, DelegationOutcome, DelegationWait, SandboxBindingRow, SandboxUnavailability, BindingLockResult, SandboxStatus, InstalledSkillSet, ResourceUseLease, SkillSetRecordOutcome } from "./interfaces/delegation-store.js";
 import type { SessionStore } from "./interfaces/session-store.js";
 import type { PendingEventStore, PendingEventFence } from "./interfaces/pending-event-store.js";
 import type { EventLogStoreAppendInput } from "./interfaces/event-log-store.js";
@@ -25,13 +25,13 @@ const identity = (caller: DelegationCaller) => JSON.stringify([caller.tenantId, 
 const callerFilter = (caller: DelegationCaller) => ({ tenantId: caller.tenantId, callerSessionId: caller.callerSessionId, callerTurnId: caller.callerTurnId, callerToolUseId: caller.callerToolUseId });
 export abstract class TransactionalDelegationStore implements DelegationStore {
   protected abstract transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T>;
-  abstract withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
+  abstract withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T>;
   abstract installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
   abstract recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
-  /** The binding's row as `environment` reads it, without its lock; undefined before its first use. */
-  protected abstract environmentRecord(bindingId: string): Promise<EnvironmentRecord | undefined>;
-  async environment(bindingId: string): Promise<EnvironmentStatus> {
-    const row = await this.environmentRecord(bindingId);
+  /** The binding's row as `sandbox` reads it, without its lock; undefined before its first use. */
+  protected abstract bindingRecord(bindingId: string): Promise<SandboxBindingRecord | undefined>;
+  async sandbox(bindingId: string): Promise<SandboxStatus> {
+    const row = await this.bindingRecord(bindingId);
     if (!row) return { state: "cold", since: null, lastError: null };
     const state = row.lastError ? "unavailable" : row.sandboxId !== null ? "ready" : row.creatingSince !== null ? "creating" : "cold";
     return { state, since: row.stateSince, lastError: row.lastError };
@@ -131,7 +131,9 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         if (!child || child.status === "terminated") throw new Error("Child Session terminated; cannot resume");
       } else {
         await tx.assertWorkspaceNotDeleted(parent.tenantId, parent.workspaceId);
+        // A Child Session runs in its parent's Environment, sharing its Sandbox binding (ADR-0024).
         child = await tx.sessions.create({ tenantId: parent.tenantId, agentId: parent.agentId, agent: { ...parent.agent, model: input.parentModel }, workspaceId: parent.workspaceId,
+          environmentId: parent.environmentId,
           delegation: { parentSessionId: parent.id, parentTurnId: input.callerTurnId, parentToolUseId: input.callerToolUseId, sandboxSessionId: input.sandboxSessionId } });
       }
       const previous = await tx.read<DelegationExecution>("executions", { childId: child.id });
@@ -199,10 +201,10 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       return execution;
     });
   }
-  /** The execution's claim uses its Child Session's environment from its start until the Router acquires it. */
+  /** The execution's claim uses its Child Session's Sandbox binding from its start until the Router acquires it. */
   private async putResourceUse(tx: DelegationTransaction, execution: DelegationExecution, fence: PendingEventFence) {
     const child = await tx.sessions.getById(execution.childId);
-    if (!child?.delegation) throw new Error("Child Session environment binding missing");
+    if (!child?.delegation) throw new Error("Child Session Sandbox binding missing");
     await tx.put("resource_uses", fence.eventId, { sessionId: execution.childId,
       sandboxSessionId: child.delegation.sandboxSessionId, pendingEventId: fence.eventId,
       ownerId: fence.ownerId, generation: fence.generation });
@@ -369,7 +371,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         if (await tx.pending.ownsClaim(use.sessionId, use.pendingEventId, use)) return true;
         await tx.remove("resource_uses", use.pendingEventId);
       }
-      // A queued accepted child still depends on the same environment (e.g.
+      // A queued accepted child still depends on the same Sandbox (e.g.
       // parent-created /tmp inputs), even before it can obtain an execution slot.
       for (const execution of await tx.read<DelegationExecution>("executions", { status: "queued" })) {
         const child = await tx.sessions.getById(execution.childId);
@@ -382,15 +384,15 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
 export function delegationFenceLost(sessionId: string, fence: PendingEventFence): never { throw new PendingEventClaimLostError(sessionId, fence.eventId, fence.ownerId, fence.generation); }
 /**
  * A binding's row as the Session API reads it (ADR-0023): what it records,
- * when its state began and its last environment failure (migration 0025).
+ * when its state began and its last Sandbox unavailability (migration 0025).
  */
-export interface EnvironmentRecord {
+export interface SandboxBindingRecord {
   sandboxId: string | null;
   creatingSince: Date | null;
   stateSince: Date | null;
-  lastError: (EnvironmentFailure & { at: Date }) | null;
+  lastError: (SandboxUnavailability & { at: Date }) | null;
 }
 /** The binding a Session's Sandbox is reached through: its root's, which a Child Session shares. */
-export function environmentBindingId(session: Pick<Session, "id" | "delegation">): string {
+export function sandboxBindingId(session: Pick<Session, "id" | "delegation">): string {
   return session.delegation?.sandboxSessionId ?? session.id;
 }

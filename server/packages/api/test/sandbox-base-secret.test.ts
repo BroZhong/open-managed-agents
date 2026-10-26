@@ -89,7 +89,8 @@ describe("sandboxBaseEnvFromKubernetes", () => {
         "https://10.96.0.1:443/api/v1/namespaces/sandbox-system/secrets/base-secret",
         {
           method: "GET",
-          headers: { Authorization: `Bearer ${credentialSentinel}` },
+          headers: { Authorization: `Bearer ${credentialSentinel}`, Accept: "application/json" },
+          body: undefined,
           dispatcher: mocks.dispatcher,
           signal: expect.any(AbortSignal),
           redirect: "error",
@@ -136,14 +137,15 @@ describe("sandboxBaseEnvFromKubernetes", () => {
     expect(Object.getPrototypeOf(env)).toBe(Object.prototype);
   });
 
-  it.each([403, 404, 500])("reports HTTP %s without leaking or parsing the response body", async (status) => {
-    const failed = new Response(`${secretSentinel} ${credentialSentinel}`, { status });
-    const json = vi.spyOn(failed, "json");
-    mocks.fetch.mockResolvedValue(failed);
-    await expectSafeFailure(`HTTP ${status}`);
-    expect(json).not.toHaveBeenCalled();
-    expect(failed.bodyUsed).toBe(true);
-    expect(mocks.close).toHaveBeenCalledOnce();
+  it.each([403, 404, 500])("reports HTTP %s without leaking the response body, even a Status's text", async (status) => {
+    for (const body of [`${secretSentinel} ${credentialSentinel}`, JSON.stringify({ kind: "Status", reason: secretSentinel, message: credentialSentinel })]) {
+      vi.clearAllMocks();
+      const failed = new Response(body, { status });
+      mocks.fetch.mockResolvedValue(failed);
+      await expectSafeFailure(`Sandbox base Secret request failed with HTTP ${status}`);
+      expect(failed.bodyUsed).toBe(true);
+      expect(mocks.close).toHaveBeenCalledOnce();
+    }
   });
 
   it.each(["network", "timeout"])("sanitizes %s failures and closes the dispatcher", async (kind) => {

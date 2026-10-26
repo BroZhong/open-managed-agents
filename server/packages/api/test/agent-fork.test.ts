@@ -13,7 +13,7 @@ async function setup() {
   const skillStore = new InMemorySkillStore();
   const skillBundleStore = new InMemorySkillBundleStore();
   const app = createApp({ apiKeyStore: { async findByKeyHash() { return null; } }, agentStore, agentFileStore, skillStore, skillBundleStore });
-  const source = await agentStore.create({ tenantId: "dev", name: "Original", description: "Research", model: "m", system: "s", runtime: "pi-agent", tools: ["Read"], sandbox: { enabled: true, env: { LANG: "en_US" } } });
+  const source = await agentStore.create({ tenantId: "dev", name: "Original", description: "Research", model: "m", system: "s", runtime: "pi-agent", tools: ["Read"], sandbox: { enabled: true } });
   await agentFileStore.upsert("dev", source.id, "SOUL.md", "Private instructions");
   const skill = await seedSkill(skillStore, skillBundleStore,
     { tenantId: "dev", name: "research", description: "Edited Agent Skill", ownerType: "agent", ownerId: source.id, sourceSkillId: "deleted-library-skill" },
@@ -55,8 +55,8 @@ describe("Agent fork", () => {
     expect((await agentFileStore.get("dev", source.id, "SOUL.md"))?.content).toBe("Private instructions");
     expect((await agentStore.getById(source.id))?.skills).toEqual([skill.id]);
     const storedCopy = (await agentStore.getById(copy.id))!;
-    storedCopy.sandbox!.env!.LANG = "fr";
-    expect(source.sandbox!.env!.LANG).toBe("en_US");
+    storedCopy.sandbox!.enabled = false;
+    expect(source.sandbox!.enabled).toBe(true);
   });
 
   it("rejects cross-tenant sources and invalid names without creating an Agent", async () => {

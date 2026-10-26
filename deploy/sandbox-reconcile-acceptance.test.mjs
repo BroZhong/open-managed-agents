@@ -42,7 +42,7 @@ test("percentile and distribution use nearest rank and ignore non-numbers", () =
   assert.deepEqual(distribution([3, undefined, 1, NaN, 2]), { count: 3, min: 1, p50: 2, p95: 3, max: 3 });
 });
 
-test("tool results are counted once, with the environment code from details or the text", () => {
+test("tool results are counted once, with the Sandbox code from details or the text", () => {
   const events = turn({ marker: "m1", failFirst: "sandbox_creating" });
   const results = toolResults(events);
   assert.equal(results.length, 2, "display events derived from native entries are not counted again");
@@ -54,7 +54,7 @@ test("tool results are counted once, with the environment code from details or t
   assert.deepEqual(toolResults(host).map((r) => [r.source, r.name, r.code]), [["host", "bash", "sandbox_unavailable"]]);
 });
 
-test("a Turn that recovered from an environment error used its Sandbox and records no session.error", () => {
+test("a Turn that recovered from a Sandbox error used its Sandbox and records no session.error", () => {
   const s = summarizeSession(turn({ marker: "m2", failFirst: "sandbox_creating" }), { marker: "m2" });
   assert.equal(s.completed, true);
   assert.equal(s.sandboxUsed, true);
@@ -93,13 +93,13 @@ test("the burst passes only when every Turn completed, used its Sandbox, and no 
   const ready = (id) => [id, { sandbox_id: `sb-${id}`, creating_since: null, past_deadline: false }];
   const entries = [ok("a"), ok("b"), { sessionId: "c", submitted: false, summary: null }];
   const bindings = new Map([ready("a"), ready("b")]);
-  const environments = new Map([["a", { state: "ready", since: at(0), last_error: null }], ["b", { state: "ready", last_error: { code: "sandbox_creating" } }]]);
+  const sandboxes = new Map([["a", { state: "ready", since: at(0), last_error: null }], ["b", { state: "ready", last_error: { code: "sandbox_creating" } }]]);
   const seen = { a: { creatingSince: at(0), readyAt: at(30) }, b: { creatingSince: at(0) } };
-  const pass = summarizeBurst(entries, { bindings, environments, seen });
+  const pass = summarizeBurst(entries, { bindings, sandboxes, seen });
   assert.deepEqual(pass.checks.filter((c) => c.acceptance).map((c) => c.ok), [true, true, true, true]);
   assert.equal(pass.metrics.submitted, 2);
   assert.deepEqual(pass.metrics.toolErrorsByCode, { sandbox_creating: 2 });
-  assert.deepEqual(pass.metrics.environment, { byState: { ready: 2 }, lastErrorCodes: { sandbox_creating: 1 } });
+  assert.deepEqual(pass.metrics.sandbox, { byState: { ready: 2 }, lastErrorCodes: { sandbox_creating: 1 } });
   assert.deepEqual(pass.metrics.creatingToReadySampledMs, { count: 1, min: 30000, p50: 30000, p95: 30000, max: 30000 });
   assert.equal(pass.checks.find((c) => c.name.includes("rolling restart")).ok, false, "no takeover is reported, not failed");
 
@@ -269,8 +269,8 @@ function fakeOmaTest() {
     const body = init.body ? JSON.parse(init.body) : undefined;
     let m;
     if (method === "POST" && path === "/v1/agents") {
-      assert.equal(body.sandbox.image, "oma-scale-test-20261021");
-      assert.equal(body.sandbox.env.VFS_TOKEN, "");
+      assert.deepEqual(body.sandbox, { enabled: true });
+      assert.equal(body.environmentId, "env_video_production");
       return json({ id: "agent_1" }, 201);
     }
     if (method === "POST" && path === "/v1/sessions") {
@@ -293,7 +293,7 @@ function fakeOmaTest() {
         sessions.get(m[1]).terminated = true;
         return json({ type: "session_terminated", id: m[1] });
       }
-      return json({ id: m[1], status: "idle", environment: { state: "ready", since: new Date().toISOString(), last_error: null } });
+      return json({ id: m[1], status: "idle", sandbox: { state: "ready", since: new Date().toISOString(), last_error: null } });
     }
     if (path === "/v1/sessions") return json({ data: [], has_more: false });
     if ((m = path.match(/^\/v1\/workspaces\/[^/]+\/files\/(.+)\.txt$/))) return json({ url: `https://files.example/${m[1]}` });

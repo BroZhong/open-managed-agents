@@ -113,27 +113,30 @@ describe("POST /v1/agents", () => {
     process.env.AUTH_DISABLED = "true";
   });
 
-  it("preserves custom sandbox environment and rejects invalid values on create and update", async () => {
+  it("accepts sandbox.enabled only: sandbox.image and sandbox.env are refused with their codes (ADR-0024)", async () => {
     const { app } = createTestApp();
-    const definition = {
-      name: "custom-agent", runtime: "pi-agent", model: "openai-codex/gpt-5.6-sol", system: "Use equipped skills",
-      sandbox: { enabled: true, image: "auto-story-v2", env: { CUSTOM: "a=b\nsecond line", MEDIAKIT_RUNTIME: "pi-agent" } },
-    };
+    const definition = { name: "custom-agent", runtime: "pi-agent", model: "openai-codex/gpt-5.6-sol", system: "Use equipped skills", sandbox: { enabled: true } };
     const request = (path: string, body: unknown) => app.request(path, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const created = await request("/v1/agents", definition);
     expect(created.status).toBe(201);
     const agent = await created.json();
-    expect(agent.sandbox).toEqual(definition.sandbox);
-    for (const sandbox of [null, [], { env: [] }, { env: { KEY: 42 } }, { env: { "BAD-NAME": "private-sentinel" } }]) {
-      const response = await request("/v1/agents", { ...definition, sandbox });
-      expect(response.status).toBe(400);
-      expect(await response.text()).not.toContain("private-sentinel");
-      expect((await request(`/v1/agents/${agent.id}`, { sandbox })).status).toBe(400);
+    expect(agent.sandbox).toEqual({ enabled: true });
+    for (const [sandbox, code] of [
+      [null, "validation_error"], [[], "validation_error"], [{ enabled: "yes" }, "validation_error"],
+      [{ enabled: true, image: "auto-story-v2" }, "sandbox_image_removed"],
+      [{ enabled: true, env: { KEY: "private-sentinel" } }, "sandbox_env_removed"],
+    ] as const) {
+      for (const response of [await request("/v1/agents", { ...definition, sandbox }), await request(`/v1/agents/${agent.id}`, { sandbox })]) {
+        expect(response.status).toBe(400);
+        const text = await response.text();
+        expect(text).not.toContain("private-sentinel");
+        expect(JSON.parse(text).code).toBe(code);
+      }
     }
     const unchanged = await (await app.request(`/v1/agents/${agent.id}`)).json();
-    expect(unchanged.sandbox).toEqual(definition.sandbox);
+    expect(unchanged.sandbox).toEqual({ enabled: true });
   });
 
   it("creates an agent with valid input", async () => {
@@ -362,16 +365,13 @@ describe("POST /v1/agents", () => {
         model: "claude-3",
         system: "You are helpful",
         runtime: "mock",
-        sandbox: { enabled: true, image: "open-managed-agents/sandbox:latest" },
+        sandbox: { enabled: true },
       }),
     });
 
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.sandbox).toEqual({
-      enabled: true,
-      image: "open-managed-agents/sandbox:latest",
-    });
+    expect(body.sandbox).toEqual({ enabled: true });
   });
 
   it("returns 400 when an MCP server URL is not HTTP(S)", async () => {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent } from "@oma-server/store";
@@ -53,7 +53,7 @@ it("ends a Pi Turn whose first tool call finds the Skill Install failed: the cal
   };
   const pi = new PiAgentAdapter({ configureModelRuntime: (_input, runtime) => registerCustomProvider(runtime, provider, model) });
   const stores = createMemoryStores();
-  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${provider.id}/scripted-model`, system: "", runtime: "pi-agent", sandbox: { enabled: true } });
+  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${provider.id}/scripted-model`, system: "", runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const sandbox = new FakeSandboxClient();
@@ -61,7 +61,7 @@ it("ends a Pi Turn whose first tool call finds the Skill Install failed: the cal
   sandbox.skillInstallFault = (stage) => { if (stage === "switch") throw new Error("No space left on device"); };
   const errors: unknown[] = [];
   const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => pi,
-    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
+    sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(), manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore,
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       onError: ({ error }) => errors.push(error) }),

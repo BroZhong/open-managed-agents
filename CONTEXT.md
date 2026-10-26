@@ -9,8 +9,10 @@ Use `kubectl --kubeconfig "$HOME/.kube/agent-platform-config"` explicitly;
 the machine's default context may point to another cluster. The Host and web
 console are in `oma-infra`; SandboxSets are in `sandbox-system`.
 
-The Host enables sandboxes with global default template
-`auto-story-v2` (the sole maintained Sandbox template) and E2B domain `sandbox.agentry.welltop.tech`.
+The Host claims every Sandbox from its deployment's **Warm Pool**
+(`SANDBOX_TEMPLATE`: production `auto-story-v2`, oma-test `oma-test-sandbox`)
+with the image of its Session's **Environment**, through E2B domain
+`sandbox.agentry.welltop.tech`.
 Sandbox images come from the Shanghai ACR repository
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 See `deploy/k8s.yaml` and `sandbox/README.md` for deployment configuration.
@@ -18,12 +20,12 @@ Historical test reports describe their original runs, not the current deployment
 
 ## Repository boundaries
 
-`sandbox/` contains the sole maintained template, its image recipe and required
-build tools. `deploy/` contains application deployment and shared infrastructure.
+`sandbox/` contains the Base Image recipes, the Warm Pool manifests, the
+`auto-story-v2` template and its recipe, and required build tools. `deploy/` contains application deployment and shared infrastructure.
 Business Agent presets, prompts, workflows and Skill content belong outside
 this repository; the platform still provides Skill Library, Equip and Skill
-Install mechanisms. The legacy `AUTO_STORY_*` environment injection remains
-required by existing production Agents and must be migrated before removal.
+Install mechanisms. What a Sandbox runs, image and variables, comes only from
+its Session's Environment; there is no per-Agent or deployment-wide injection.
 
 ## Language
 
@@ -52,7 +54,7 @@ configuration recorded by a resumed wait retain precedence. Pi adapts the
 preference to model capabilities.
 
 **Child Session**:
-A durable Session created by a parent's `Agent` tool. It belongs to the same configured Agent and Tenant, retains its creation parent Session/Turn/tool-use identity, and shares the Workspace and Sandbox binding by default. It does not copy the parent conversation. `childId` is the Session ID; `resume` submits a new Delegation Input to that same Child Session.
+A durable Session created by a parent's `Agent` tool. It belongs to the same configured Agent and Tenant, retains its creation parent Session/Turn/tool-use identity, and shares the Workspace and **Sandbox Binding** by default. It does not copy the parent conversation. `childId` is the Session ID; `resume` submits a new Delegation Input to that same Child Session.
 _Avoid_: plugin child, business subtype, temporary agent
 
 **Delegation Input**:
@@ -174,6 +176,30 @@ _Avoid_: Tenant, home directory, snapshot, Turn output transaction
 
 ## Sandbox provisioning
 
+**Environment**:
+A named recipe for a Sandbox's software — a **Base Image**, an init script and environment variables — built once into an image. Agents and Sessions reference it by ID; only an Environment that serves an image (a rebuild in progress or failed keeps serving the last) may be bound to an Agent or chosen for a Session, and a rebuild only replaces the image new Sandboxes start from. A Session freezes its Environment at creation; Child Sessions use their parent's. See ADR-0024.
+_Avoid_: template, sandbox image, setup script, Environment Spec
+
+**Built-in Environment**:
+An **Environment** the platform defines and every Tenant can see and copy but not change. It differs from a Tenant's Environment only in permissions, never in how it is built or run. `video-production` is the first.
+_Avoid_: system template, preset, default image
+
+**Base Image**:
+One of the platform images an **Environment** builds on (`oma-base`, or `oma-media` with FFmpeg). It carries what the platform needs inside every Sandbox, including the Pi tool runtime, so a new Base Image rebuilds every Environment on it.
+_Avoid_: template, SandboxSet, custom base image
+
+**Environment Build**:
+One request to turn an **Environment**'s Base Image and init script into an image, queued by a change or a rebuild and run by the image builder. An infrastructure failure is retried as another attempt of the same build; a newer change supersedes it. A successful build becomes the Environment's image; a failed one leaves the previous image serving.
+_Avoid_: commit, snapshot, provisioning, setup
+
+**Warm Pool**:
+The single set of pre-started Sandboxes per deployment that every Sandbox is claimed from, whatever its **Environment**. A claim whose image differs from the pool's has its container swapped to the Environment's image in place.
+_Avoid_: sandbox pool, template, per-Environment pool
+
+**Sandbox Binding**:
+The durable record of which Sandbox serves a Session and the **Child Sessions** sharing it, with the Environment, image and **Skill Set** it was prepared with.
+_Avoid_: environment binding
+
 **Sandbox Manager**:
 The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, describe — shared by both the Sandbox-as-Tool mode and the future Agent-in-the-Sandbox mode. It reads an **Environment Spec** to know what to build and verifies its mounted Workspace before execution, performs the **Skill Install** when the installed **Skill Set** differs, and releases execution resources. It knows no Agent runtime or business ownership policy; the Host supplies trusted storage coordinates and short-lived bundle URLs.
 _Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
@@ -186,35 +212,36 @@ shortens the running timeout to 30 minutes under binding coordination. Unknown
 execution or a missing callback leaves the existing finite deadline; it never
 creates permanent resource protection. A new admitted generation supersedes old
 abandoned business uses. Ordinary tools reuse a prepared handle within the Turn.
-Exceptions may restore Paused or rebuild a confirmed missing environment, but
+Exceptions may restore Paused or rebuild a confirmed missing Sandbox, but
 never implicitly replay the uncertain command. Completed OSS writes survive;
 local processes, memory and dependencies need not. No OMA idle scanner or
 never-timeout policy remains. See ADR-0019 and `docs/sandbox-lifecycle-deployment.md`.
 
-The environment binding records intent; whether a Sandbox exists is the
+The Sandbox Binding records intent; whether a Sandbox exists is the
 gateway's answer. A binding is Ready (it names a Sandbox), Creating (an intent
 committed at a database-clock time) or Cold. A Creating binding past its
 180-second intent deadline is Unresolved: the next use asks the gateway for the
 Sandboxes labelled with the binding and adopts one or returns it to Cold, so
 no create outcome, known or not, blocks a Session. See ADR-0023.
-`GET /v1/sessions/{id}` reports the binding as the Session's environment:
+`GET /v1/sessions/{id}` reports the binding as the Session's `sandbox`:
 cold, creating or ready as above, or unavailable while the binding records
-the last **Environment failure** of its current state.
+the last **Sandbox unavailability** of its current state; the Session's
+`environment` is the **Environment** it was created with.
 
-**Environment failure**:
-A tool call that did not run because the Session's Sandbox was not ready: it could not be connected, its Workspace mount verified, or it created. It is a tool error whose result carries `details.code` `sandbox_unavailable` and a `details.reason`, which the model may retry; it never ends the **Turn** by itself. A Turn prepares its Sandbox beside the model's first request, and each preparation is visible as `span.sandbox_prepare_start`/`_end`. A Turn in which a tool call met one, and whose environment never became ready again, ends with `session.error` `sandbox_unavailable`, written only at the Turn's end; a failed preparation no tool call waited for shows in its span only. See ADR-0023 and `docs/sandbox-lifecycle-deployment.md`.
-_Avoid_: prepare failure, sandbox_prepare_failed
+**Sandbox unavailability**:
+A tool call that did not run because the Session's Sandbox was not ready: it could not be connected, its Workspace mount verified, or it created. It is a tool error whose result carries `details.code` `sandbox_unavailable` and a `details.reason`, which the model may retry; it never ends the **Turn** by itself. A Turn prepares its Sandbox beside the model's first request, and each preparation is visible as `span.sandbox_prepare_start`/`_end`. A Turn in which a tool call met one, and whose Sandbox never became ready again, ends with `session.error` `sandbox_unavailable`, written only at the Turn's end; a failed preparation no tool call waited for shows in its span only. See ADR-0023 and `docs/sandbox-lifecycle-deployment.md`.
+_Avoid_: Environment failure, prepare failure, sandbox_prepare_failed
 
 **Environment Spec**:
-The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and the **Skill Set** to install. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
-_Avoid_: config, sandbox config, environment, EnvVars
+The recipe the Host computes for one sandbox from the Session's **Environment**, its bound **Workspace** and the **Skill Set** to install, and hands to the **Sandbox Manager**: which image, which env, which Workspace, which Skills. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what a sandbox needs) and the Manager (which owns the mechanism of building it).
+_Avoid_: config, sandbox config, Environment (the resource it is computed from), EnvVars
 
 **Workspace Store**:
 The home of a **Workspace**'s persistent files. The Host accesses it through `ArtifactStore`; `OSSArtifactStore` implements the file API and exact-prefix mount-probe readback. The Sandbox mounts the same OSS prefix directly through CSI and restricted Agent Identity credentials. Storage does not hydrate, scan, hash or synchronize a local copy at Turn boundaries. `WorkspaceMetadataStore` separately stores the Workspace record and name.
 _Avoid_: sync engine, baseline, checkpoint publisher
 
 **Skill Install**:
-Placing one **Skill Set** version into a Sandbox at `/skills/<name>/`. The environment binding records which Sandbox and which Skill Set hash were last installed; when both match the current ones the install is skipped with no OSS or Sandbox call, which is why **Child Sessions** sharing the binding never reinstall an unchanged set. Otherwise the Sandbox downloads the bundles itself through short-lived presigned URLs for the OSS internal endpoint (it holds no OSS credentials), extracts them into a version directory that is owned by root and read-only, and atomically switches the `/skills` symlink to it; the binding is updated only after complete success. A change takes effect at the start of the next **Turn**; Turns sharing the Sandbox may see the new version after the switch, but never a half-installed tree. The install runs beside inference, the first tool call waits for it, and a failure ends the Turn with `skills_install_failed` (a Turn that never used the Sandbox keeps its answer); each install that runs is visible as `span.skills_install_start`/`_end` in the Session's events. Names must be safe single directory components, unique among the Agent's equipped Skills, or the Turn ends with `skills_invalid` before it runs; `/skills` lies outside the Workspace mount and is never written back. See ADR-0022.
+Placing one **Skill Set** version into a Sandbox at `/skills/<name>/`. The **Sandbox Binding** records which Sandbox and which Skill Set hash were last installed; when both match the current ones the install is skipped with no OSS or Sandbox call, which is why **Child Sessions** sharing the binding never reinstall an unchanged set. Otherwise the Sandbox downloads the bundles itself through short-lived presigned URLs for the OSS internal endpoint (it holds no OSS credentials), extracts them into a version directory that is owned by root and read-only, and atomically switches the `/skills` symlink to it; the binding is updated only after complete success. A change takes effect at the start of the next **Turn**; Turns sharing the Sandbox may see the new version after the switch, but never a half-installed tree. The install runs beside inference, the first tool call waits for it, and a failure ends the Turn with `skills_install_failed` (a Turn that never used the Sandbox keeps its answer); each install that runs is visible as `span.skills_install_start`/`_end` in the Session's events. Names must be safe single directory components, unique among the Agent's equipped Skills, or the Turn ends with `skills_invalid` before it runs; `/skills` lies outside the Workspace mount and is never written back. See ADR-0022.
 _Avoid_: projection, sync, refresh, mount (nothing is copied on every Turn and nothing is mounted)
 
 ## Example Dialogue

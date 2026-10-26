@@ -8,7 +8,7 @@ export const agents: Command[] = [
     api: ["GET /v1/agents"],
     run: (c) =>
       c.http.pages("/v1/agents", c.flags, (x) =>
-        pick(x, ["id", "name", "description", "runtime", "model"]),
+        pick(x, ["id", "name", "description", "runtime", "model", "environmentId"]),
       ),
   },
   {
@@ -39,10 +39,14 @@ const config: Record<string, Flag> = {
 const configFlags = Object.fromEntries(
   Object.entries(config).map(([k, v]) => [k, { ...v, field: k }]),
 );
+/** The Environment an Agent's new Sessions run in (one that serves an image); a new Agent that names none runs in env_video_production. */
+const environmentFields: Record<string, Flag> = {
+  environmentId: string("Environment ID"),
+};
 for (const action of ["create", "update"] as const)
   agents.push({
     path: `agent ${action}`,
-    description: `${action} Agent configuration. Existing Sessions retain their snapshots.`,
+    description: `${action} Agent configuration. Existing Sessions retain their snapshots and Environment.`,
     flags: {
       ...(action === "update" ? id("agent") : {}),
       ...configFlags,
@@ -50,8 +54,14 @@ for (const action of ["create", "update"] as const)
         field: "system",
         source: "text-file",
       }),
+      environment: string(
+        action === "create"
+          ? "Environment ID new Sessions run in, one that has built (default env_video_production)"
+          : "Environment ID new Sessions run in, one that has built",
+        { field: "environmentId" },
+      ),
     },
-    bodyFields: config,
+    bodyFields: { ...config, ...environmentFields },
     requiredBody:
       action === "create" ? ["name", "runtime", "model", "system"] : [],
     exclusive: [["system", "system-file"]],
@@ -62,6 +72,8 @@ for (const action of ["create", "update"] as const)
       if (!Object.keys(b).length) invalid("Provide at least one update field");
       for (const k of ["name", "model", "system"])
         if (k in b && !b[k]) invalid(`${k} cannot be empty`, k);
+      if ("environmentId" in b && !b.environmentId)
+        invalid("Environment ID cannot be empty", "--environment");
     },
     run: (c) =>
       write(c, {

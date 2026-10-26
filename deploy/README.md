@@ -17,10 +17,10 @@ See [the 2026-10-11 native lifecycle release](../docs/verification/native-sandbo
 
 | Scope | Namespace | Resources |
 | --- | --- | --- |
-| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
+| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress; `oma-image-builder` is declared but not yet applied in production |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
 | Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
-| Test environment | `oma-test` | Its own `oma-api`, `oma-runner`, `oma-web`, Redis and `oma-console` Ingress; see [Environments](#environments) |
+| Test environment | `oma-test` | Its own `oma-api`, `oma-runner`, `oma-web`, `oma-image-builder` (and its build pods), Redis and `oma-console` Ingress; see [Environments](#environments) |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to the API Service and all other paths to `oma-web`. The Server therefore
@@ -74,16 +74,20 @@ Manifests are Kustomize overlays on one base:
 
 | Path | Contents |
 | --- | --- |
-| `app/` | API, Runner, Web and Ingress without a namespace; production configuration values |
+| `app/` | API, Runner, image builder, Web and Ingress without a namespace; production configuration values |
 | `environments/production/` | `oma-infra`; keeps the live `/api` route to the legacy `oma-server` Service |
 | `environments/test/` | `oma-test`, test configuration patches, ServiceAccount and Redis |
 | `environments/test/sandbox-rbac.yaml` | Read grant on `sandbox-system/base-secret`; applied separately because the overlay rewrites namespaces |
+| `environments/test/image-builder-warm-pool-rbac.yaml` | The oma-test builder may get and patch the `oma-test-sandbox` SandboxSet; applied separately for the same reason |
+| `image-builder-warm-pool-rbac.yaml` | The production equivalent for the `oma-sandbox` pool; applied with the production release of Environments |
 
-`scripts/render.mjs` renders an overlay and substitutes the three image
-placeholders. Each version is an immutable tag or a `sha256:` digest:
+`scripts/render.mjs` renders an overlay and substitutes the four image
+placeholders; the image builder runs the Server image like the API and the
+Runner, released on its own. Each version is an immutable tag or a `sha256:`
+digest:
 
 ```bash
-node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION
+node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION
 ```
 
 The production overlay matches the live Deployments, ConfigMaps, Services and
@@ -97,10 +101,10 @@ Release the same image to test before production:
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
-node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-test.yaml
+node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION > /tmp/oma-test.yaml
 kubectl diff -f /tmp/oma-test.yaml
 kubectl apply -f /tmp/oma-test.yaml
-for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
+for d in redis oma-api oma-runner oma-web oma-image-builder; do kubectl -n oma-test rollout status deploy/$d; done
 curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status == "ok")'
 ```
 
@@ -129,7 +133,7 @@ and restart the test Deployments. Keep the test `PG_PASSWORD`:
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
-for s in ali-shanghai certwelltoptech2026 oma-pi-gateway oma-auto-story-env; do
+for s in ali-shanghai certwelltoptech2026 oma-pi-gateway; do
   kubectl -n oma-infra get secret "$s" -o json \
     | jq '.metadata = {name: .metadata.name, namespace: "oma-test"}' \
     | kubectl apply -f -
@@ -139,6 +143,136 @@ kubectl -n oma-infra get secret oma-secrets -o json \
       '.metadata = {name: "oma-secrets", namespace: "oma-test"} | .data.PG_PASSWORD = $pg' \
   | kubectl apply -f -
 ```
+
+## Image builder (ADR-0024)
+
+`oma-image-builder` builds Environments: it claims `environment_builds` rows
+from PostgreSQL by lease, runs each build in its own pod in its namespace,
+pushes the image to `welltop/oma-environments:<environment>-<envId>-<buildId>`
+(the repository is created on the first push), claims one Sandbox from the
+Warm Pool with the new digest to verify it, and only then makes the
+Environment ready. The API only queues builds and reads their logs, which the
+builder keeps in the Host Bucket under `__oma/environment-builds/`. It is one
+replica with `Recreate`: on SIGTERM it deletes its build pods and releases
+their leases, and the next builder resumes those builds at once; after an
+abrupt stop it reclaims them when their leases expire (90 s) and removes the
+earlier attempts' pods. A build fails 60 minutes after its first claim; a
+script failure is final, an infrastructure failure is retried twice. Resuming
+after a stop or restart starts a new attempt but uses no retry: migration
+`0030_environment_build_retries.sql` adds `environment_builds.retries` for
+that count, so apply it (as in "Test migrations") before starting a builder
+image that has it.
+
+At startup, before it claims anything, the builder:
+
+1. writes every Built-in Environment of `sandbox/environments/<name>/`
+   (shipped in the Server image) by its fixed id: a new one is created and
+   built; a changed init script or Base Image queues a rebuild; changed
+   variables, name or description apply without a build; an unchanged one is
+   left alone, so restarts create and build nothing, except that a built-in
+   whose latest build failed is queued once more: restarting the builder is
+   how an operator retries a failed built-in (Tenants get 403 on rebuilding
+   one);
+2. queues a rebuild of every Environment, built-in or a Tenant's, whose
+   latest build finished on another digest of its Base Image than the one
+   configured now (each build records the digest it ran on). Each rebuild is
+   its own build: one failing leaves the others, and every Environment keeps
+   serving its current image until its rebuild succeeds.
+
+It then keeps the Warm Pool (`SANDBOX_TEMPLATE` in `WARM_POOL_NAMESPACE`) on
+the image of `WARM_POOL_ENVIRONMENT` (`env_video_production`), so its
+Sessions claim without a swap: after each successful build of that
+Environment, at startup and every 30 s it compares the pool's `sandbox`
+container image with the Environment's and patches the SandboxSet (a JSON
+patch of that one field). With caching enabled it also ensures the current
+image's cache when the pool already runs that image, so enabling caching
+later or removing a cache triggers backfill without changing the pool; a cache
+seen ready is listed again only every 10 minutes, not on every 30 s check.
+`WARM_POOL_IMAGE_CACHE` decides what comes first:
+
+| `WARM_POOL_IMAGE_CACHE` | Behaviour |
+| --- | --- |
+| `acs` | Create an ACS ImageCache for the new image (`oma-<environment>-<digest prefix>`, on the cluster pods' security group and vSwitches, about 4 min) and patch the pool only once it is `Ready`; until then, or if it fails (`warm_pool … state=failed`), the pool keeps its image. |
+| `none` | Patch the pool at once and log `warm_pool_cold_refill`: until a cache exists every refill pulls the whole image (1.9 GB, 73–81 s in #299). |
+
+Pods match an existing cache by themselves (the pool template's
+`image.alibabacloud.com/enable-image-cache: "true"`); nothing in the cluster
+creates one for a new image (#299: 13 refills, no `matched-image-caches`).
+Caches are created through the ACS OpenAPI (`acc` 2024-04-02, as the bench
+did with `aliyun acc create-image-cache`), which needs an Alibaba Cloud
+credential. To use `acs`, the maintainer
+creates a RAM user with only:
+
+```json
+{"Version": "1", "Statement": [{"Effect": "Allow",
+  "Action": ["acc:CreateImageCache", "acc:ListImageCaches"],
+  "Resource": "acs:acc:cn-shanghai:<account-id>:imagecache/*"}]}
+```
+
+Replace `<account-id>` with the deployment's Alibaba Cloud account, then
+store its key as the Secret `oma-image-cache` (`ACCESS_KEY_ID`,
+`ACCESS_KEY_SECRET`) in the builder's namespace. Old caches are not deleted
+(that would need `acc:DeleteImageCache`). The oma-test overlay enables `acs`
+(one pool replica); its dedicated RAM user is `oma-test-image-cache`.
+Provision `oma-image-cache` before starting that builder. Production still
+updates no pool until its release. A failed cache is kept for diagnosis and
+requires operator recovery; API errors are retried on the next reconciliation.
+
+| Configuration (`oma-image-builder-config`) | |
+| --- | --- |
+| `BASE_IMAGE_OMA_BASE`, `BASE_IMAGE_OMA_MEDIA` | The Base Images by digest; equal to `sandbox/oma-{base,media}/image.lock.json` (checked by `environments.test.mjs`) |
+| `BUILDAH_IMAGE` | buildah v1.43.5 by digest under `welltop/buildah`, mirrored with `scripts/build-base-images.sh --push buildah` on vfs-dev |
+| `ENVIRONMENT_IMAGE_REPOSITORY` | `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments` |
+| `OMA_ENVIRONMENT` | The tag prefix and the label of build pods and verification Sandboxes (`production`, `test`) |
+| `BUILD_REGISTRY_AUTH_SECRET`, `BUILD_IMAGE_PULL_SECRET` | `ali-shanghai`: mounted into build pods as the push credential (the only Secret a build pod sees), and pulls buildah |
+| `BUILD_PROXY_URL`, `BUILD_NO_PROXY` | sing-box for GitHub downloads, with the Aliyun mirrors and cluster addresses direct; given to the init script through `build.env`, never kept in an image |
+| `SANDBOX_TEMPLATE`, `E2B_*` | The Runners' Warm Pool and gateway, for the verification claim |
+| `BUILD_NAMESPACE` | The builder's own namespace (downward API) |
+| `BUILTIN_ENVIRONMENTS_DIR` | `/app/sandbox/environments`, the Built-in Environments in the image |
+| `WARM_POOL_ENVIRONMENT`, `WARM_POOL_NAMESPACE`, `WARM_POOL_IMAGE_CACHE` | The Environment whose image the pool runs (empty: no pool updates), the pool's namespace, and `acs` or `none` (below) |
+| `ALIYUN_REGION`, `IMAGE_CACHE_SECURITY_GROUP_ID`, `IMAGE_CACHE_VSWITCH_IDS` | Where an ACS ImageCache's puller runs (`acs` only) |
+
+The builder holds PG, the Workspace OSS keys (for logs) and the E2B key; no
+encryption key and no Sandbox base Secret: Environment secrets never reach a
+build. Its Role in its own namespace allows only `pods`
+(create/delete/get/list/watch), `pods/log` (get) and `configmaps`
+(create/delete/list, the build context each pod owns). It reads no Secret,
+but a pod it creates may mount any Secret of its namespace (`oma-secrets` in
+`oma-infra`); ADR-0024 accepts this until builds get their own namespace.
+The cross-namespace grant on the environment's Warm Pool (get/patch of one
+SandboxSet by name) is applied separately; ACS ImageCache (#305) is an Alibaba
+Cloud API, granted by RAM, not by Kubernetes RBAC.
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+kubectl apply -f deploy/environments/test/image-builder-warm-pool-rbac.yaml
+```
+
+**Release order:** Base Images, then the image builder — wait until the
+Environments it rebuilds are ready — then the Runner, whose Pi version must
+match the new Base Images. Sandboxes keep their Environment's previous image
+until its rebuild is ready, so a Runner released early would pair a new Pi
+with old images.
+
+To bump a Base Image (for example a Pi upgrade):
+
+1. Build and push it from its recipe (`sandbox/oma-base` or `sandbox/oma-media`,
+   on vfs-dev; `oma-media` builds on `oma-base`, so a new `oma-base` usually
+   means a new `oma-media` too) and commit the new `image.lock.json`.
+2. Set `BASE_IMAGE_OMA_BASE` / `BASE_IMAGE_OMA_MEDIA` in
+   `deploy/app/image-builder.yaml` to the lock files' `ref`
+   (`environments.test.mjs` fails until they match) and release the builder
+   only (`render.mjs` with the new `BUILDER_VERSION`, the other images
+   unchanged).
+3. The restarted builder queues a rebuild of every Environment on the changed
+   Base Image (`base_image_rebuild environment=…` log lines). Wait until each is
+   ready: `oma-cli environment list` (status), `oma-cli environment logs
+   --environment-id <id> --follow`, or the builder's
+   `environment_build_end … outcome=` lines. A failed one keeps serving its
+   previous image; fix its script and `oma-cli environment rebuild`.
+4. When `video-production` is ready the builder points the Warm Pool at its
+   image (`warm_pool_updated`), after its ImageCache with `acs`.
+5. Release the Runner (and API/Web) on the new Server image.
 
 ## Image pipeline
 
@@ -168,7 +302,17 @@ ssh vfs-dev \
   'cd ~/workspace/yuzhong/open-managed-agents && bash build.sh --push server web'
 ```
 
-The default image tag is the current 12-character Git SHA. Local caches under
+The default image tag is the build time in Beijing time (Asia/Shanghai),
+`YYYYMMDDHHmm`, e.g. `oma-server:202610261444` and `oma-web:202610261444`
+(the same tag for every image of one run). Tags never name a deployment:
+production and test release the same image. With `--push`, a tag that any of
+the images already has is never overwritten: the default becomes
+`202610261444-2`, `-3`, …, and an explicit `--tag` that exists is refused.
+Each image carries `org.opencontainers.image.revision` (the full Git SHA) and
+`org.opencontainers.image.created` labels, and the script prints the SHA with
+the tag (`Release images (tag …, git …)`, `GIT_REVISION=`). Tags are for
+people; releases still reference digests (`render.mjs … sha256:<digest>`).
+Images built before 2026-10-26 keep their Git SHA tags. Local caches under
 `.buildx-cache/` keep dependency layers warm across builds. BuildKit also keeps
 architecture-specific pnpm stores and npm download caches on the selected
 builder. Reuse that builder between releases; deleting it or pruning its cache
@@ -202,9 +346,10 @@ its versioned release tag; see [the sandbox recipe](../sandbox/auto-story-v2/REA
 for preparation, version pins and image checks. `AUTO_STORY_BASE_IMAGE` can
 override the clean base for this wrapper; it must satisfy the recipe's checks.
 
-Both build scripts support `--dry-run`. A dirty checkout is rejected unless
-`--allow-dirty` is explicit; auto-tagged dirty builds include a UTC timestamp so
-they cannot be mistaken for the commit image.
+Both build scripts support `--dry-run` (with `--push`, `build-images.sh` still
+asks the registry which tag is free). A dirty checkout is rejected unless
+`--allow-dirty` is explicit; its default tag ends in `-dirty`
+(`202610261444-dirty`) so it cannot be mistaken for a commit's image.
 
 ## Deployment scripts
 
@@ -237,10 +382,39 @@ deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-pro
 
 ```
 
-Pool deployment does not change the Server's `SANDBOX_TEMPLATE` setting.
-The ConfigMap and the SDK fallback default to `auto-story-v2`; explicit Agent
-template selection still takes precedence. Existing Session sandboxes need a
-rebuild or a new Session to pick up a changed image or template.
+Every Sandbox is claimed from the Runner's Warm Pool, `SANDBOX_TEMPLATE`
+(production `auto-story-v2`, oma-test `oma-test-sandbox`), a required key,
+with the image of its Session's Environment (ADR-0024): a claim of the pool's
+own image keeps the warm container, any other swaps it in place. Agent
+template selection and a Runner-wide image no longer exist. A Sandbox keeps
+the image it was created with until it is reclaimed or rebuilt. The oma-test
+pool is `sandbox/warm-pool/oma-test-sandbox.yaml`; see `sandbox/README.md`.
+
+### Environment migration (0029)
+
+Migration `0029_environment_migration.sql` binds every Sandboxed Agent to
+`env_video_production` (a Tenant copy of it for an Agent that set
+`sandbox.env`), freezes existing Sessions to their Agent's Environment and
+removes `sandbox.image` / `sandbox.env` from stored Agents and Session
+snapshots. Order: Base Images, then oma-image-builder (it upserts and builds
+the built-in; wait until `env_video_production` is ready), then the
+migration, then API, Runner and Web. The migration refuses to run, changing
+nothing, until the built-in serves an image. Record the affected counts
+before and after:
+
+```bash
+node deploy/scripts/migration-for-env.mjs test deploy/scripts/environment-migration-counts.sql > /tmp/0029-counts.sql
+node deploy/scripts/migration-for-env.mjs test deploy/migrations/0029_environment_migration.sql > /tmp/0029-test.sql
+```
+
+Run the counts with psql as the migration role before and after the
+migration; it prints counts and dropped variable names, never values. The
+migration keeps what it changed in `migration_0029_agents` /
+`migration_0029_sessions` for `0029_environment_migration.rollback.sql`
+(apply it once the previous image runs; it keeps a copy that a Session or
+Agent created since references); drop both tables once the release is
+accepted. After it, the `oma-auto-story-env` Secret is no longer referenced
+and can be deleted.
 
 ## What the repository owns
 
@@ -327,10 +501,10 @@ Runner's node process (`kill-runner`) and summarizes `sandbox_sweep` log lines
 (`sweep-logs`). The script header lists every assumption about event and API shapes that
 must be re-checked once #284–#291 land; they are collected in its `SHAPES` object.
 
-The test Agent uses the separate SandboxSet `sandbox-system/oma-scale-test-20261021` and
-blanks business credentials and URLs in `sandbox.env`, as the 2026-10-21 burst did, so the
-burst does not drain the shared `auto-story-v2` pool. With 5 warm replicas, about 195 of 200
-creates are cold starts; check cluster capacity first. Run phases one at a time and do not
+The test Agent runs in `VERIFY_ENVIRONMENT_ID` (default `env_video_production`); to keep
+business credentials out of the burst, as the 2026-10-21 one did, bind a ready Tenant
+Environment whose variables are inert. Its Sandboxes come from the Runner's Warm Pool; with
+5 warm replicas, about 195 of 200 creates are cold starts; check cluster capacity first. Run phases one at a time and do not
 interrupt them.
 
 ```bash
@@ -353,7 +527,7 @@ node deploy/scripts/migration-for-env.mjs test deploy/migrations/0025_binding_en
 # 4. The new image, built on vfs-dev from the release commit (see "Image pipeline"), then
 #    "Test releases": the full manifest also returns oma-runner to 2 replicas. deploy-app.sh
 #    targets production only.
-node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-test.yaml
+node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION > /tmp/oma-test.yaml
 kubectl diff -f /tmp/oma-test.yaml; kubectl apply -f /tmp/oma-test.yaml
 for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
 curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status == "ok")'
@@ -391,7 +565,7 @@ $R finish                              # deletes the run directory from the API 
 | #292 acceptance | Evidence |
 | --- | --- |
 | Old column dropped; pending rows reconciled | `migration post`; `migration after-sweep`; `unresolved` 0 in the report after a period (Creating(epoch) rows without a Sandbox reconcile on first use) |
-| 200 + rolling restart: no binding Creating past its deadline, no Turn ending with `sandbox_unavailable` | `check` (also: every Turn completed and used its Sandbox; prepare p50/p95/max, tool error codes, takeovers, `environment.state`) |
+| 200 + rolling restart: no binding Creating past its deadline, no Turn ending with `sandbox_unavailable` | `check` (also: every Turn completed and used its Sandbox; prepare p50/p95/max, tool error codes, takeovers, `sandbox.state`) |
 | No orphan after one sweep | `report-rows` on the report after one period: no `kill` or `adopt` row of this run |
 | kill -9 during create: tools again within 180 s of the takeover | `kill-start`, `mark kill`, `kill-finish` (also within 180 s + 60 s of the intent) |
 | `sandbox_sweep` periodic and equal to the read-only report | `sweep-logs`: consecutive rounds 5–15 min apart, the first round after the report equals its planned counters |
@@ -402,17 +576,19 @@ Runner's schedule. Write the result to `docs/verification/sandbox-reconcile-oma-
 with the evidence JSON. Rollback: Runners to 0, the rollback SQL through
 `migration-for-env.mjs test`, then the images in `rollback-images.txt` through `render.mjs test`.
 
-### Shared native sandbox credentials
+### Platform secrets for Environments
 
-The Host reads `sandbox-system/base-secret` at startup and supplies its valid
-environment-variable keys to E2B `Sandbox.create({ envs })` for every Agent,
-including newly created Agents. A SandboxSet's Kubernetes `env` alone does not
-populate the E2B command environment. No shell profile or `ACS_SYNC_ENVS` bridge
-is used by this integration.
+The Runner reads `sandbox-system/base-secret` at startup. Its valid
+environment-variable keys are the platform values that an Environment's
+platform secret references (`secretRef.source = platform`, which only copies of
+a built-in carry) resolve to, injected into each command of a Session in that
+Environment (ADR-0024). Nothing is passed at Sandbox creation, so no value is
+written into a Sandbox CR. A reference the Secret lacks is left out and logged
+once by name.
 
 The existing Secret is the source; no cross-namespace copy is maintained.
-`source.env` and other file-like keys are excluded. Values remain in Host memory
-and E2B's runtime environment, never in Agent records or Host `process.env`.
+`source.env` and other file-like keys are excluded. Values remain in Runner
+memory, never in Agent or Environment records or Host `process.env`.
 The dedicated Host ServiceAccount can only `get` this one Secret:
 
 ```bash
@@ -425,22 +601,11 @@ but unavailable Secret prevents startup; omission of both settings disables the
 integration for local development. HTTPS requests use the ServiceAccount CA and
 bypass the outbound LLM proxy.
 
-For an existing deployment, patch these two ConfigMap keys and the Deployment's
-ServiceAccount together with the updated Server image; routine image-only
-releases do not update those fields. Do not apply the full application manifest
-just to enable credentials, because unrelated live configuration may differ.
-
-Precedence remains explicit: legacy deployment defaults < base Secret < Agent
-`sandbox.env` < explicitly scoped WW values < fixed Workspace environment. The
-existing `oma-auto-story-env` only supplements keys absent from the base Secret,
-so old preset copies cannot override a rotated shared credential. Without a
-base Secret, the legacy preset retains its original behavior. Values explicitly
-configured on an Agent still override shared defaults.
-
-After Secret rotation, roll the Host. Its next Turn creates a new sandbox for an
-existing Session using the fresh values; Workspace files stay in OSS. Updating
-the Secret does not mutate environments of already running processes. Verify
-with E2B `commands.run()` and only emit presence/equality booleans, never values.
+Runners re-read it every 60 s (`PLATFORM_SECRETS_REFRESH_MS`), keeping the
+last good values when a read fails, so after a rotation the next command of
+every Session gets the new values within a minute, without a restart. Verify
+with E2B `commands.run()` and only emit presence/equality booleans, never
+values.
 
 Use the dedicated kubeconfig instead of whichever context happens to be the
 local default:
@@ -467,7 +632,4 @@ Agent presets are not shipped here; supply business Skills through the platform.
 
 The manifest was aligned with the Shanghai deployment on 2026-09-16, including
 its direct Pi gateway mounts, internal E2B endpoints, proxy overrides and Host
-4 CPU / 8 GiB limits. Secrets are referenced by name only. The existing
-`oma-auto-story-env` compatibility injection is still used by three Agents and
-is retained until those settings are migrated. Removing repository presets
-must not silently remove their deployed credentials.
+4 CPU / 8 GiB limits. Secrets are referenced by name only.

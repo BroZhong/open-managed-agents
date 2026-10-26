@@ -19,6 +19,11 @@ NGINX_UPSTREAM="${NGINX_UPSTREAM:-nginx:1.27-alpine}"
 NODE_BASE_IMAGE="${NODE_BASE_IMAGE:-${REGISTRY}/node-base:22-slim-pnpm-${PNPM_VERSION}}"
 NGINX_BASE_IMAGE="${NGINX_BASE_IMAGE:-${REGISTRY}/nginx-base:1.27-alpine}"
 
+# buildah for Environment build pods (ADR-0024, #299), copied as is: the image
+# builder's BUILDAH_IMAGE pins this digest under welltop/buildah.
+BUILDAH_UPSTREAM="${BUILDAH_UPSTREAM:-quay.io/buildah/stable:v1.43.5@sha256:4cb71c73553ba30c0891a004636a43ee3e0aa0a04ef6cba760404b2c87949d5c}"
+BUILDAH_IMAGE="${BUILDAH_IMAGE:-${REGISTRY}/buildah:v1.43.5}"
+
 push=false
 force=false
 dry_run=false
@@ -26,9 +31,10 @@ components=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/build-base-images.sh [options] [node] [nginx]
+Usage: deploy/scripts/build-base-images.sh [options] [node] [nginx] [buildah]
 
-Build the pinned base images used by OMA application builds.
+Build the pinned base images used by OMA application builds, and mirror the
+pinned buildah image Environment build pods run (its digest unchanged).
 
 Options:
   --push       Push images to the Shanghai ACR instead of loading locally.
@@ -36,7 +42,7 @@ Options:
   --dry-run    Print commands without running Docker.
   -h, --help   Show this help.
 
-With no component arguments, both bases are processed. Existing remote
+With no component arguments, every component is processed. Existing remote
 tags are skipped during --push unless --force is supplied.
 EOF
 }
@@ -47,14 +53,14 @@ while (($# > 0)); do
     --force) force=true ;;
     --dry-run) dry_run=true ;;
     -h|--help) usage; exit 0 ;;
-    node|nginx) components+=("$1") ;;
+    node|nginx|buildah) components+=("$1") ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
 if ((${#components[@]} == 0)); then
-  components=(node nginx)
+  components=(node nginx buildah)
 fi
 
 run() {
@@ -103,6 +109,29 @@ build_base() {
     "${REPO_ROOT}/deploy/base-images"
 }
 
+# Copy an image by digest, keeping the digest: the consumer pins it.
+mirror_image() {
+  local component="$1" upstream="$2" target="$3"
+  local digest="${upstream##*@}"
+  if [[ "${push}" != true ]]; then
+    echo "==> ${component}: mirroring needs --push (${upstream} -> ${target})"
+    return 0
+  fi
+  if target_exists "${target}"; then
+    echo "==> ${component}: already exists, skipping ${target}"
+  else
+    echo "==> ${component}: ${upstream} -> ${target}"
+    run docker buildx imagetools create --tag "${target}" "${upstream}"
+  fi
+  [[ "${dry_run}" == true ]] && return 0
+  local mirrored
+  mirrored="$(docker buildx imagetools inspect "${target}" | awk '/^Digest:/ && !digest { digest = $2 } END { print digest }')"
+  if [[ "${mirrored}" != "${digest}" ]]; then
+    echo "${target} is ${mirrored:-unknown}, not ${digest}: update BUILDAH_IMAGE in deploy/app/image-builder.yaml" >&2
+    return 1
+  fi
+}
+
 for component in "${components[@]}"; do
   case "${component}" in
     node)
@@ -116,9 +145,13 @@ for component in "${components[@]}"; do
         "${REPO_ROOT}/deploy/base-images/Dockerfile.nginx" \
         "${NGINX_UPSTREAM}" "${NGINX_BASE_IMAGE}"
       ;;
+    buildah)
+      mirror_image buildah "${BUILDAH_UPSTREAM}" "${BUILDAH_IMAGE}"
+      ;;
   esac
 done
 
 printf '\nBase image references:\n'
 printf 'NODE_BASE_IMAGE=%s\n' "${NODE_BASE_IMAGE}"
 printf 'NGINX_BASE_IMAGE=%s\n' "${NGINX_BASE_IMAGE}"
+printf 'BUILDAH_IMAGE=%s@%s\n' "${BUILDAH_IMAGE%:*}" "${BUILDAH_UPSTREAM##*@}"

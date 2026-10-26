@@ -127,7 +127,7 @@ explicitly. The following commands are for the separately authorized release:
 4. Render reviewed immutable image tags independently, then stage both roles:
 
    ```sh
-   node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-split.yaml
+   node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION > /tmp/oma-split.yaml
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra diff -f /tmp/oma-split.yaml
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra apply -f /tmp/oma-split.yaml
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra rollout status deployment/oma-api

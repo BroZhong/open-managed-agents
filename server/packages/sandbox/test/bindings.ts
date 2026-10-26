@@ -1,9 +1,12 @@
-import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet } from "@oma-server/store";
-import type { SandboxEnvironmentBinding } from "../src/sandbox-manager.js";
-import type { EnvironmentSignals } from "../src/environment-signals.js";
+import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type InstalledSkillSet } from "@oma-server/store";
+import type { SandboxBinding } from "../src/sandbox-manager.js";
+import type { SandboxSignals } from "../src/sandbox-signals.js";
 
-/** A binding row (ADR-0023): Ready while `sandboxId` is set, Creating while `creatingSince` is. */
-export interface BindingRow { sandboxId: string | null; creatingSince: Date | null }
+/**
+ * A binding row (ADR-0023): Ready while `sandboxId` is set, Creating while
+ * `creatingSince` is; what the Sandbox was created with (ADR-0024) is set with it.
+ */
+export type BindingRow = Omit<SandboxBindingRow, "now">;
 
 /** A controllable database clock. */
 export function databaseClock(start = new Date("2026-10-22T13:20:00Z")) {
@@ -17,18 +20,22 @@ export function databaseClock(start = new Date("2026-10-22T13:20:00Z")) {
  * with the database clock `clock`.
  */
 export function durableBinding(id = "root", clock: () => Date = () => new Date()) {
-  let row: BindingRow = { sandboxId: null, creatingSince: null };
+  let row: BindingRow = { sandboxId: null, environmentId: null, image: null, creatingSince: null };
   let installed: InstalledSkillSet | null = null;
   let queue: Promise<unknown> = Promise.resolve();
   const binding = {
     id,
-    withLock<T>(work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+    withLock<T>(work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
       const result = queue.then(async () => {
         const read = row;
         const { value, next } = await work({ ...read, now: clock() });
         // A write committed elsewhere while `work` ran fails the move.
-        if (row !== read) throw new EnvironmentBindingChanged(id);
-        if (next) row = next === "creating" ? { sandboxId: null, creatingSince: clock() } : { sandboxId: next === "cold" ? null : next.ready, creatingSince: null };
+        if (row !== read) throw new SandboxBindingChanged(id);
+        if (next) {
+          const ready = typeof next === "object" ? next : undefined;
+          row = { sandboxId: ready?.ready ?? null, environmentId: ready?.environmentId ?? null, image: ready?.image ?? null,
+            creatingSince: next === "creating" ? clock() : null };
+        }
         return value;
       });
       queue = result.catch(() => {});
@@ -45,13 +52,15 @@ export function durableBinding(id = "root", clock: () => Date = () => new Date()
     installed: () => installed,
     row: () => row,
     /** A write committed elsewhere: another Runner, a reclamation, a migration. */
-    write: (next: BindingRow) => { row = next; },
+    write: (next: Pick<BindingRow, "sandboxId" | "creatingSince"> & Partial<BindingRow>) => {
+      row = Object.assign(next, { environmentId: next.environmentId ?? null, image: next.image ?? null });
+    },
   };
-  return binding satisfies SandboxEnvironmentBinding;
+  return binding satisfies SandboxBinding;
 }
 
 /**
- * The `environment` hints of Runners sharing one Redis: every subscriber, the
+ * The `sandbox` hints of Runners sharing one Redis: every subscriber, the
  * publisher's own Runner included, hears each publish a moment later. While
  * `losing`, hints are published and never delivered.
  */
@@ -70,5 +79,5 @@ export function signalBus() {
     },
     subscribers: () => listeners.size,
   };
-  return bus satisfies EnvironmentSignals;
+  return bus satisfies SandboxSignals;
 }

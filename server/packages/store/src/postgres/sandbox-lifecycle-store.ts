@@ -25,8 +25,8 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
   }
   async begin(activity: SandboxActivity): Promise<boolean> {
     return this.locked(activity.bindingId, async client => {
-      const { rows: [environment] } = await client.query<{ reclaiming: boolean }>('SELECT reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
-      if (environment.reclaiming) return false;
+      const { rows: [binding] } = await client.query<{ reclaiming: boolean }>('SELECT reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
+      if (binding.reclaiming) return false;
       const fence = activity.fence;
       const owned = await client.query(`SELECT p.id FROM pending_events p JOIN sessions s ON s.id=p.session_id
         WHERE p.session_id=$1 AND p.id=$2 AND p.claim_owner=$3 AND p.claim_generation=$4
@@ -82,9 +82,9 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
     await this.locked(ticket.bindingId, async client => {
       // The ticket's row, as read (a Date has millisecond precision): nothing
       // moves a reclaiming row, so only this reclamation's own callback matches.
-      // Clearing it is a move to Cold, as withEnvironmentLock writes one.
+      // Clearing it is a move to Cold, as withBindingLock writes one.
       const result = await client.query(`UPDATE delegation_environments SET sandbox_id=NULL, creating_since=NULL, reclaiming=FALSE,
-          state_since=now(), last_error_code=NULL, last_error_reason=NULL, last_error_at=NULL
+          environment_id=NULL, image=NULL, state_since=now(), last_error_code=NULL, last_error_reason=NULL, last_error_at=NULL
         WHERE id=$1 AND reclaiming=TRUE AND sandbox_id IS NOT DISTINCT FROM $2
           AND date_trunc('milliseconds', creating_since) IS NOT DISTINCT FROM $3::timestamptz RETURNING id`,
       [ticket.bindingId, ticket.sandboxId, ticket.creatingSince]);
@@ -101,6 +101,13 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
    * that ended with an uncertain execution, and ADR-0023 pauses that Sandbox
    * 30 minutes after the sweeper finds it, as any idle one.
    */
+  async bindingEnvironment(bindingId: string): Promise<string | null> {
+    // A binding is its root Session's id.
+    const { rows: [row] } = await this.pool.query<{ environment_id: string | null }>(
+      `SELECT COALESCE(s.environment_id, a.environment_id) AS environment_id
+       FROM sessions s LEFT JOIN agents a ON a.id = s.agent_id WHERE s.id = $1`, [bindingId]);
+    return row?.environment_id ?? null;
+  }
   async sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts> {
     const ids = [...new Set(bindingIds)];
     // A list of parameters rather than = ANY($1): pg-mem, which runs this

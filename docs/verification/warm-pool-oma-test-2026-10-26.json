@@ -1,0 +1,2419 @@
+{
+ "issue": 301,
+ "phase": 2,
+ "date": "2026-10-26",
+ "transitionalImage": {
+  "tag": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:video-production-transitional-20261026",
+  "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+  "base": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00",
+  "initSh": {
+   "path": "sandbox/environments/video-production/init.sh",
+   "sha256": "15cd24e91aeea0b3c08519d11ad403e32d9266a866c2f860022b72a334575611",
+   "commit": "88c91f1"
+  },
+  "buildEnvKeys": [
+   "HTTP_PROXY",
+   "HTTPS_PROXY",
+   "http_proxy",
+   "https_proxy",
+   "NO_PROXY",
+   "no_proxy"
+  ],
+  "buildProxy": "vfs-dev sing-box via docker0 (http://172.17.0.1:7890); NO_PROXY = the definition's list",
+  "buildSeconds": 271,
+  "initShSeconds": 186,
+  "pushSeconds": 26,
+  "manifest": {
+   "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+   "layers": 44,
+   "compressedBytes": 1838284675,
+   "environmentLayerBytes": 855558746,
+   "unpacked": "6.53GB"
+  },
+  "configEnvEqualsAcsBase": true,
+  "historyHas": {
+   "172.17.0.1": false,
+   "sing-box": false,
+   "npmmirror": false,
+   "7890": false
+  },
+  "labels": {
+   "dev.oma.environment": "env_video_production",
+   "dev.oma.build": "transitional-301-20261026",
+   "dev.oma.base-image": "oma-media"
+  },
+  "sigterm": {
+   "exitCode": 143,
+   "elapsedMs": 124
+  },
+  "jupyterReadyS": 3,
+  "homeNotOwnedByUser": 0,
+  "smoke": {
+   "auto-story-smoke (live 0.3.3 copy, sha256 b049248011fe…)": {
+    "passed": 13,
+    "of": 15,
+    "failed": {
+     "offline_whisper": "legacy /opt/auto-story/prepare-whisper.py not carried over (as in #305's dry run)",
+     "vfs_audio_contract_and_embedded_skills": "blocked by the test vfs-cli policy (environment_policy_conflict), as on the live image with the same policy"
+    }
+   },
+   "runtime-overlay media_python": {
+    "scenedetect": "0.7.1 cut at frame 20",
+    "Pillow": "11.3.0",
+    "fonttools": "4.61.1",
+    "libGL": "loaded"
+   },
+   "imports": "cv2 4.11.0, numpy 1.26.4, PIL 11.3.0, fontTools 4.61.1, scenedetect 0.7.1, google.genai",
+   "vfs-cli policy": "/etc/vfs-cli/policy.json root 0644 {\"environment\":\"test\"}; user write denied; RUNTIME_ENV=PRO -> exit 2 environment_policy_conflict",
+   "oma-media smoke": "6/6 (OpenH264, x264, libass CJK subtitles, fonts)",
+   "pi tools": "0.83.0, 7 tools",
+   "tools": {
+    "vfs-cli": "v0.3.21",
+    "mediakit-cli": "0.2.1",
+    "ossutil": "2.2.0",
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2",
+    "models": [
+     "base.en",
+     "small"
+    ]
+   }
+  },
+  "inventoryDiffVsLive033": {
+   "dpkg": {
+    "live": 320,
+    "new": 321,
+    "onlyNew": [
+     "tini"
+    ],
+    "onlyLive": [],
+    "changed": {
+     "ca-certificates": [
+      "20250419~deb12u1",
+      "20250419~deb12u2"
+     ]
+    }
+   },
+   "python": "5 interpreters, identical package sets",
+   "npm": "identical",
+   "fonts": "identical",
+   "loginEnv": "identical",
+   "users": "identical",
+   "homeUser": {
+    "live": {
+     "entries": 754,
+     "notOwnedByUser": 742,
+     "notOwnedByUserByPrefix": {
+      ".cache": 1,
+      ".cache/npm": 740,
+      ".local": 1
+     }
+    },
+    "new": {
+     "entries": 3,
+     "notOwnedByUser": 0,
+     "notOwnedByUserByPrefix": {}
+    }
+   },
+   "binaries": "same set; tini added; python3/pip3 resolve differently only on the image ENV PATH (/opt/venv/bin first), identical on the login PATH",
+   "files": "the /opt/auto-story records, smoke copies and proxy.env the definition does not carry (#305 explains each)"
+  }
+ },
+ "imageCache": {
+  "id": "imc-uf67ai761p6lax4fl3mn",
+  "name": "oma-test-video-production-transitional-20261026",
+  "createdAt": "2026-10-25T18:16:48Z",
+  "readyAt": "2026-10-25T18:20:39Z",
+  "size": 5,
+  "network": "same SG and 3 vSwitches as imc-uf6c2ys46pzt3c3grd74",
+  "tags": [
+   "oma.dev/test-only=true",
+   "oma.dev/issue=301"
+  ]
+ },
+ "pool": {
+  "sandboxSet": "sandbox-system/oma-test-sandbox",
+  "appliedAt": "2026-10-25T18:21:54Z",
+  "firstAvailableAt": "2026-10-25T18:22:32Z",
+  "firstPod": {
+   "created": "18:21:54",
+   "ImageCacheHit": "18:22:03",
+   "sandboxStarted": "18:22:33"
+  },
+  "podEnv": [
+   "ENVD_DIR",
+   "GODEBUG",
+   "POD_UID"
+  ],
+  "refillPerPodS": "about 38-39 (ImageCacheHit every time)"
+ },
+ "migration": {
+  "file": "deploy/migrations/0026_environments.sql",
+  "rendered": "node deploy/scripts/migration-for-env.mjs test, BEGIN;/COMMIT; stripped",
+  "via": "Supabase MCP execute_sql on ra-lvyt8wkxiid4a76 (one atomic call)",
+  "schema": "oma_test",
+  "verified": {
+   "tables": [
+    "oma_test.environments",
+    "oma_test.environment_builds"
+   ],
+   "indexes": 6,
+   "oma_test_app": "SELECT/INSERT/UPDATE, sequence USAGE, no DELETE",
+   "oma.environments": "absent (production untouched)"
+  }
+ },
+ "deploy": {
+  "namespace": "oma-test",
+  "previous": {
+   "api": "oma-server:afcea76b87ed",
+   "runner": "oma-server:afcea76b87ed",
+   "web": "oma-web@sha256:b479ad63dd99faa1bd1f5fa01d009107be4b836cd241a14b573eba1ab170409c",
+   "runnerConfig": {
+    "SANDBOX_TEMPLATE": "auto-story-v2",
+    "SANDBOX_IMAGE": null
+   }
+  },
+  "first": {
+   "commit": "88c91f1",
+   "server": "oma-server@sha256:4cf7efaeac980ccfd66d744bed3f86d254868c3a657fddd7d587a3633837ceae",
+   "at": "2026-10-25T18:22:50Z"
+  },
+  "current": {
+   "commit": "6c79c1e",
+   "server": "oma-server:6c79c1ed44a4 = sha256:fc7eebd05e6b076c9664cf337b638cc24bdf1946c43509af3c8ee7bad01360bb",
+   "web": "oma-web:6c79c1ed44a4 = sha256:e82737306923f4bae21b6a9dbc2ca357f8a280a5f89b4055db22284ffe07fea9 (unchanged from 88c91f1)",
+   "runnerConfig": {
+    "SANDBOX_TEMPLATE": "oma-test-sandbox",
+    "SANDBOX_IMAGE": "…@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4"
+   }
+  },
+  "kubectlDiff": "only the three images and the two Runner ConfigMap keys"
+ },
+ "claimsBeforeFix": [
+  {
+   "label": "same-image",
+   "i": 1,
+   "runner": "oma-runner-5879955549-9fg64",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 0.5,
+    "youngestReadyS": 142.1
+   },
+   "e2b": {
+    "label": "same-image",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:24:55.110Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-89gg6",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 215,
+     "swapped": false
+    },
+    "createWallMs": 256,
+    "firstCmdMs": 16,
+    "probe": {
+     "uptimeS": 143.37,
+     "pid1AgeS": 143.37,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:21:54Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:22:32Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:21:54.582697Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:21:54.583523Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:21:54Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:22:03Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:22:12Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:22:16Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.473s (3.473s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:22:16Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:22:16Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:22:16Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:22:20Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.624s (3.624s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:22:20Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:22:20Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:22:20Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:22:29Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 8.567s (8.567s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:22:29Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:22:29Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:22:32Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:22:33Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:22:33Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:22:33Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-89gg6",
+    "ok": true,
+    "ms": 117
+   }
+  },
+  {
+   "label": "same-image",
+   "i": 2,
+   "runner": "oma-runner-5879955549-9fg64",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 66.5,
+    "youngestReadyS": 32.4
+   },
+   "e2b": {
+    "label": "same-image",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:26:06.403Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-w57nw",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 164,
+     "swapped": false
+    },
+    "createWallMs": 204,
+    "firstCmdMs": 15,
+    "probe": {
+     "uptimeS": 33.32,
+     "pid1AgeS": 33.32,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:24:55Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:25:33Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:24:55.336778Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:24:55.337549Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:24:55Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:25:03Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:25:14Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:25:17Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.48s (3.48s including waiting). Image size: 104735631 bytes."
+     },
+     {
+      "t": "2026-10-25T18:25:17Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:25:17Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:25:17Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:25:21Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.419s (3.419s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:25:21Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:25:21Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:25:21Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:25:30Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 7.959s (7.959s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:25:30Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:25:30Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:25:33Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:25:35Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:25:35Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:25:35Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-w57nw",
+    "ok": true,
+    "ms": 111
+   }
+  },
+  {
+   "label": "same-image",
+   "i": 3,
+   "runner": "oma-runner-5879955549-9fg64",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 53.7,
+    "youngestReadyS": 31.1
+   },
+   "e2b": {
+    "label": "same-image",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:27:05.099Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-lmmdk",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 168,
+     "swapped": false
+    },
+    "createWallMs": 206,
+    "firstCmdMs": 15,
+    "probe": {
+     "uptimeS": 31.5,
+     "pid1AgeS": 31.5,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:26:06Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:26:33Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:26:06.565415Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:26:06.565868Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:26:06Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:26:11Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:26:15Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:26:18Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.041s (3.041s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:26:18Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:26:18Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:26:18Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:26:23Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.613s (3.613s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:26:23Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:26:23Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:26:23Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:26:32Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 8.532s (8.532s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:26:32Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:26:32Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:26:34Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:26:35Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:26:35Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:26:35Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-lmmdk",
+    "ok": true,
+    "ms": 113
+   }
+  },
+  {
+   "label": "swap-oma-base",
+   "i": 1,
+   "runner": "oma-runner-5879955549-9fg64",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 40.8,
+    "youngestReadyS": 32.1
+   },
+   "e2b": {
+    "label": "swap-oma-base",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "startedAt": "2026-10-25T18:28:03.133Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-hvt2z",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+     "claimMs": 3984,
+     "swapped": false
+    },
+    "createWallMs": 4179,
+    "firstCmdMs": 18,
+    "probe": {
+     "uptimeS": 1.43,
+     "pid1AgeS": 1.43,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json ",
+     "policy": "absent",
+     "vfs": "absent",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:27:05Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "restartCount": 1,
+    "runningSince": "2026-10-25T18:28:05Z",
+    "lastTerminated": {
+     "exitCode": 143,
+     "reason": "Error",
+     "startedAt": "2026-10-25T18:27:30Z",
+     "finishedAt": "2026-10-25T18:28:04Z"
+    },
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:27:05.266315Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:27:05.266888Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:27:05Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:27:10Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:27:13Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:27:16Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.036s (3.036s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:27:16Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:27:16Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:27:16Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:27:20Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.208s (3.208s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:27:20Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:27:20Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:27:20Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:27:27Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 6.615s (6.615s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:27:27Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:27:27Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:27:30Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:27:32Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:28:04Z",
+      "reason": "Killing",
+      "msg": "Container sandbox definition changed, will be restarted"
+     },
+     {
+      "t": "2026-10-25T18:28:07Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:28:07Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     },
+     {
+      "t": "2026-10-25T18:28:07Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390\""
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-hvt2z",
+    "ok": true,
+    "ms": 113
+   }
+  },
+  {
+   "label": "swap-oma-base-keep",
+   "i": 1,
+   "runner": "oma-runner-5879955549-9fg64",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 0.4,
+    "youngestReadyS": 29.7
+   },
+   "e2b": {
+    "label": "swap-oma-base-keep",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "startedAt": "2026-10-25T18:29:00.774Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-6ks94",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+     "claimMs": 3640,
+     "swapped": false
+    },
+    "createWallMs": 3726,
+    "firstCmdMs": 32,
+    "probe": {
+     "uptimeS": 1.28,
+     "pid1AgeS": 1.28,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json ",
+     "policy": "absent",
+     "vfs": "absent",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:28:03Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "restartCount": 1,
+    "runningSince": "2026-10-25T18:29:03Z",
+    "lastTerminated": {
+     "exitCode": 143,
+     "reason": "Error",
+     "startedAt": "2026-10-25T18:28:30Z",
+     "finishedAt": "2026-10-25T18:29:02Z"
+    },
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:28:03.301292Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:28:03.301754Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:28:03Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:28:08Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:28:11Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:28:14Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.008s (3.008s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:28:14Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:28:14Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:28:14Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:28:18Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.485s (3.485s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:28:18Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:28:18Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:28:18Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:28:27Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 8.207s (8.207s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:28:27Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:28:27Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:28:31Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:28:32Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:29:02Z",
+      "reason": "Killing",
+      "msg": "Container sandbox definition changed, will be restarted"
+     },
+     {
+      "t": "2026-10-25T18:29:04Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:29:04Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     },
+     {
+      "t": "2026-10-25T18:29:04Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390\""
+     }
+    ]
+   }
+  }
+ ],
+ "claimsAfterFix": [
+  {
+   "label": "same-image",
+   "i": 1,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 0.4,
+    "youngestReadyS": 286.1
+   },
+   "e2b": {
+    "label": "same-image",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:34:15.193Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-qrx64",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 222,
+     "swapped": false
+    },
+    "createWallMs": 268,
+    "firstCmdMs": 15,
+    "probe": {
+     "uptimeS": 287.54,
+     "pid1AgeS": 287.54,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:29:00Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:29:28Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:29:00.937637Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:29:00.938068Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:29:00Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:29:05Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:29:09Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:29:13Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.971s (3.971s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:29:13Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:29:13Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:29:13Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:29:16Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 2.228s (2.228s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:29:16Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:29:16Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:29:16Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:29:26Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 9.254s (9.254s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:29:26Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:29:26Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:29:28Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:29:29Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:29:29Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:29:29Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-qrx64",
+    "ok": true,
+    "ms": 120
+   }
+  },
+  {
+   "label": "same-image",
+   "i": 2,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 53.3,
+    "youngestReadyS": 32.3
+   },
+   "e2b": {
+    "label": "same-image",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:35:13.384Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-6rjlg",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 161,
+     "swapped": false
+    },
+    "createWallMs": 207,
+    "firstCmdMs": 16,
+    "probe": {
+     "uptimeS": 32.83,
+     "pid1AgeS": 32.83,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:34:15Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:34:40Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:34:15.422074Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:34:15.422716Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:34:15Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:34:20Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:34:24Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:34:27Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.041s (3.041s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:34:27Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:34:27Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:34:27Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:34:30Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 1.756s (1.756s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:34:30Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:34:30Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:34:30Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:34:37Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 7.122s (7.122s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:34:37Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:34:37Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:34:41Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:34:42Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:34:42Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:34:42Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-6rjlg",
+    "ok": true,
+    "ms": 121
+   }
+  },
+  {
+   "label": "same-image",
+   "i": 3,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 53.5,
+    "youngestReadyS": 31.7
+   },
+   "e2b": {
+    "label": "same-image",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:36:11.799Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-qb4n6",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 166,
+     "swapped": false
+    },
+    "createWallMs": 213,
+    "firstCmdMs": 16,
+    "probe": {
+     "uptimeS": 32.54,
+     "pid1AgeS": 32.54,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:35:13Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:35:39Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:35:13.549909Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:35:13.550415Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:35:13Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:35:18Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:35:21Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:35:24Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.044s (3.044s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:35:24Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:35:24Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:35:24Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:35:28Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.072s (3.072s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:35:28Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:35:28Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:35:28Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:35:36Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 7.221s (7.221s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:35:36Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:35:36Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:35:40Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:35:41Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:35:41Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:35:41Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-qb4n6",
+    "ok": true,
+    "ms": 119
+   }
+  },
+  {
+   "label": "swap-oma-base",
+   "i": 1,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 43.9,
+    "youngestReadyS": 30.1
+   },
+   "e2b": {
+    "label": "swap-oma-base",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "startedAt": "2026-10-25T18:37:09.165Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-n6zdm",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+     "claimMs": 4605,
+     "swapped": true
+    },
+    "createWallMs": 4689,
+    "firstCmdMs": 17,
+    "probe": {
+     "uptimeS": 1.28,
+     "pid1AgeS": 1.28,
+     "recheckSwapped": true
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json ",
+     "policy": "absent",
+     "vfs": "absent",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:36:11Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "restartCount": 1,
+    "runningSince": "2026-10-25T18:37:12Z",
+    "lastTerminated": {
+     "exitCode": 143,
+     "reason": "Error",
+     "startedAt": "2026-10-25T18:36:38Z",
+     "finishedAt": "2026-10-25T18:37:11Z"
+    },
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:36:11.976371Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:36:11.976914Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:36:11Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:36:17Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:36:20Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:36:23Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 2.928s (2.928s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:36:23Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:36:23Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:36:23Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:36:27Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3s (3s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:36:27Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:36:27Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:36:27Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:36:35Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 7.036s (7.036s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:36:35Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:36:35Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:36:39Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:36:40Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:37:11Z",
+      "reason": "Killing",
+      "msg": "Container sandbox definition changed, will be restarted"
+     },
+     {
+      "t": "2026-10-25T18:37:13Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:37:13Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     },
+     {
+      "t": "2026-10-25T18:37:13Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390\""
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-n6zdm",
+    "ok": true,
+    "ms": 119
+   }
+  },
+  {
+   "label": "swap-oma-base",
+   "i": 2,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 50.6,
+    "youngestReadyS": 31.2
+   },
+   "e2b": {
+    "label": "swap-oma-base",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "startedAt": "2026-10-25T18:38:09.210Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-6qwv9",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+     "claimMs": 4339,
+     "swapped": true
+    },
+    "createWallMs": 4393,
+    "firstCmdMs": 45,
+    "probe": {
+     "uptimeS": 1.29,
+     "pid1AgeS": 1.29,
+     "recheckSwapped": true
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json ",
+     "policy": "absent",
+     "vfs": "absent",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:37:09Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "restartCount": 1,
+    "runningSince": "2026-10-25T18:38:12Z",
+    "lastTerminated": {
+     "exitCode": 143,
+     "reason": "Error",
+     "startedAt": "2026-10-25T18:37:37Z",
+     "finishedAt": "2026-10-25T18:38:11Z"
+    },
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:37:09.324694Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:37:09.325099Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:37:09Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:37:14Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:37:18Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:37:20Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 2.959s (2.959s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:37:20Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:37:20Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:37:20Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:37:24Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.565s (3.565s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:37:24Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:37:24Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:37:24Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:37:33Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 7.879s (7.879s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:37:33Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:37:33Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:37:37Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:37:38Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:38:11Z",
+      "reason": "Killing",
+      "msg": "Container sandbox definition changed, will be restarted"
+     },
+     {
+      "t": "2026-10-25T18:38:13Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:38:13Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     },
+     {
+      "t": "2026-10-25T18:38:13Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390\""
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-6qwv9",
+    "ok": true,
+    "ms": 117
+   }
+  },
+  {
+   "label": "swap-oma-base",
+   "i": 3,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 50.3,
+    "youngestReadyS": 31.7
+   },
+   "e2b": {
+    "label": "swap-oma-base",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "startedAt": "2026-10-25T18:39:08.711Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-pqp4q",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+     "claimMs": 4091,
+     "swapped": true
+    },
+    "createWallMs": 4292,
+    "firstCmdMs": 21,
+    "probe": {
+     "uptimeS": 1.51,
+     "pid1AgeS": 1.51,
+     "recheckSwapped": true
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json ",
+     "policy": "absent",
+     "vfs": "absent",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:38:09Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+    "restartCount": 1,
+    "runningSince": "2026-10-25T18:39:11Z",
+    "lastTerminated": {
+     "exitCode": 143,
+     "reason": "Error",
+     "startedAt": "2026-10-25T18:38:36Z",
+     "finishedAt": "2026-10-25T18:39:10Z"
+    },
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:38:09.369625Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:38:09.370551Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:38:09Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:38:14Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:38:17Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:38:20Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.119s (3.119s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:38:20Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:38:20Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:38:20Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:38:25Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.749s (3.749s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:38:25Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:38:25Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:38:25Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:38:33Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 8.372s (8.372s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:38:33Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:38:33Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:38:37Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:38:38Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:39:10Z",
+      "reason": "Killing",
+      "msg": "Container sandbox definition changed, will be restarted"
+     },
+     {
+      "t": "2026-10-25T18:39:12Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:39:12Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     },
+     {
+      "t": "2026-10-25T18:39:12Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390\""
+     }
+    ]
+   },
+   "kill": {
+    "kill": "sandbox-system--oma-test-sandbox-pqp4q",
+    "ok": true,
+    "ms": 117
+   }
+  },
+  {
+   "label": "no-stock",
+   "i": 1,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 27.3,
+    "youngestReadyS": 20.3
+   },
+   "e2b": {
+    "label": "no-stock",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:39:57.343Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-h7jgn",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 163,
+     "swapped": false
+    },
+    "createWallMs": 207,
+    "firstCmdMs": 16,
+    "probe": {
+     "uptimeS": 21.6,
+     "pid1AgeS": 21.6,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:39:08Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:39:36Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:39:08.885425Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:39:08.886023Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:39:08Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:39:13Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:39:17Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:39:20Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 3.094s (3.094s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:39:20Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:39:20Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:39:20Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:39:24Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 3.563s (3.563s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:39:24Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:39:24Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:39:24Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:39:34Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 8.783s (8.783s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:39:34Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:39:34Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:39:36Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:39:37Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:39:37Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:39:37Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   }
+  },
+  {
+   "label": "no-stock",
+   "i": 2,
+   "runner": "oma-runner-987bc566-8plws",
+   "poolBefore": {
+    "available": 1,
+    "waitedS": 46.3,
+    "youngestReadyS": 21.3
+   },
+   "e2b": {
+    "label": "no-stock",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "startedAt": "2026-10-25T18:40:47.304Z",
+    "ok": true,
+    "id": "sandbox-system--oma-test-sandbox-wnsn4",
+    "claim": {
+     "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+     "claimMs": 195,
+     "swapped": false
+    },
+    "createWallMs": 240,
+    "firstCmdMs": 16,
+    "probe": {
+     "uptimeS": 22.09,
+     "pid1AgeS": 22.09,
+     "recheckSwapped": false
+    },
+    "facts": {
+     "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+     "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+     "images": "oma-base.json oma-media.json ",
+     "policy": "{\"environment\":\"test\"}",
+     "vfs": "vfs-cli version v0.3.21",
+     "whoami": "user home=/home/user"
+    }
+   },
+   "pod": {
+    "podCreated": "2026-10-25T18:39:57Z",
+    "specImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "imageID": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "restartCount": 0,
+    "runningSince": "2026-10-25T18:40:25Z",
+    "lastTerminated": null,
+    "matchedImageCaches": "[{\"imageCacheId\":\"imc-uf67ai761p6lax4fl3mn\",\"size\":5}]",
+    "events": [
+     {
+      "t": "2026-10-25T18:39:57.523212Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:39:57.524810Z",
+      "reason": "Scheduled",
+      "msg": "waiting serverless pod provisioning"
+     },
+     {
+      "t": "2026-10-25T18:39:57Z",
+      "reason": "SandboxPending",
+      "msg": "Start sandbox"
+     },
+     {
+      "t": "2026-10-25T18:40:02Z",
+      "reason": "ImageCacheHit",
+      "msg": "[imagecache]Startup accelerated by image caches: containers[sandbox] matched"
+     },
+     {
+      "t": "2026-10-25T18:40:06Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\""
+     },
+     {
+      "t": "2026-10-25T18:40:10Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/agent-runtime:v0.2.0\" in 4.651s (4.651s including waiting). Image size: 104735631 bytes"
+     },
+     {
+      "t": "2026-10-25T18:40:10Z",
+      "reason": "Created",
+      "msg": "Created container: agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:40:10Z",
+      "reason": "Started",
+      "msg": "Started container agent-runtime"
+     },
+     {
+      "t": "2026-10-25T18:40:10Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\""
+     },
+     {
+      "t": "2026-10-25T18:40:14Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-plugin:v1.37.2.1\" in 2.891s (2.891s including waiting). Image size: 36416666 bytes."
+     },
+     {
+      "t": "2026-10-25T18:40:14Z",
+      "reason": "Created",
+      "msg": "Created container: csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:40:14Z",
+      "reason": "Started",
+      "msg": "Started container csi-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:40:14Z",
+      "reason": "Pulling",
+      "msg": "Pulling image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\""
+     },
+     {
+      "t": "2026-10-25T18:40:23Z",
+      "reason": "Pulled",
+      "msg": "Successfully pulled image \"registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/csi-agent:v1.37.2.3\" in 8.3s (8.3s including waiting). Image size: 307007338 bytes."
+     },
+     {
+      "t": "2026-10-25T18:40:23Z",
+      "reason": "Created",
+      "msg": "Created container: csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:40:23Z",
+      "reason": "Started",
+      "msg": "Started container csi-agent-sidecar"
+     },
+     {
+      "t": "2026-10-25T18:40:26Z",
+      "reason": "SandboxRunning",
+      "msg": "Sandbox started"
+     },
+     {
+      "t": "2026-10-25T18:40:27Z",
+      "reason": "Pulled",
+      "msg": "Container image \"registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4\" already pres"
+     },
+     {
+      "t": "2026-10-25T18:40:27Z",
+      "reason": "Created",
+      "msg": "Created container: sandbox"
+     },
+     {
+      "t": "2026-10-25T18:40:27Z",
+      "reason": "Started",
+      "msg": "Started container sandbox"
+     }
+    ]
+   }
+  }
+ ],
+ "noStockParallel": [
+  {
+   "label": "parallel-b",
+   "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+   "startedAt": "2026-10-25T18:41:47.385Z",
+   "ok": true,
+   "id": "sandbox-system--oma-test-sandbox-7bckd",
+   "claim": {
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "claimMs": 229,
+    "swapped": false
+   },
+   "createWallMs": 277,
+   "firstCmdMs": 13,
+   "probe": {
+    "uptimeS": 23.82,
+    "pid1AgeS": 23.82,
+    "recheckSwapped": false
+   },
+   "facts": {
+    "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+    "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+    "images": "oma-base.json oma-media.json ",
+    "policy": "{\"environment\":\"test\"}",
+    "vfs": "vfs-cli version v0.3.21",
+    "whoami": "user home=/home/user"
+   }
+  },
+  {
+   "label": "parallel-a",
+   "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+   "startedAt": "2026-10-25T18:41:47.542Z",
+   "ok": true,
+   "id": "sandbox-system--oma-test-sandbox-j5v6g",
+   "claim": {
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "claimMs": 38946,
+    "swapped": false
+   },
+   "createWallMs": 39033,
+   "firstCmdMs": 16,
+   "probe": {
+    "uptimeS": 0.52,
+    "pid1AgeS": 0.52,
+    "recheckSwapped": false
+   },
+   "facts": {
+    "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh ",
+    "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+    "images": "oma-base.json oma-media.json ",
+    "policy": "{\"environment\":\"test\"}",
+    "vfs": "vfs-cli version v0.3.21",
+    "whoami": "user home=/home/user"
+   }
+  }
+ ],
+ "probeInsideSwappedSandbox": {
+  "uptimeS": 15.79,
+  "btimeEqualsContainerStart": true,
+  "pid1StartTicks": 0,
+  "kernel": "5.10.134-18.0.12.lifsea8.x86_64",
+  "podLifetimeFiles": {
+   "/etc/hostname": "ctime 1792952889 (Pod start)",
+   "/mnt/envd/*": "ctime 1792952893"
+  },
+  "podAgeVsContainerAge": "145.4 s vs 91.1 s on the same swapped Sandbox"
+ },
+ "session": {
+  "runId": "oma-env-301-1792953835130",
+  "agent": "agent_BFiVWNIyNJ6Re508UocGW",
+  "session": "sess_ug8bTW8JTGCvmcVREY6U0",
+  "turnMs": 14100,
+  "types": [
+   "user.message",
+   "session.status_running",
+   "agent.context_usage",
+   "agent.context_start",
+   "agent.context_entry",
+   "agent.context_entry",
+   "agent.context_entry",
+   "agent.context_usage",
+   "agent.thinking",
+   "agent.tool_use",
+   "agent.context_entry",
+   "span.sandbox_prepare_start",
+   "span.sandbox_prepare_end",
+   "span.skills_install_start",
+   "span.skills_install_end",
+   "agent.tool_result",
+   "agent.context_entry",
+   "agent.context_usage",
+   "agent.message",
+   "agent.context_entry",
+   "agent.context_usage",
+   "session.turn_completed",
+   "session.status_idle"
+  ],
+  "spans": [
+   {
+    "type": "span.sandbox_prepare_start",
+    "turnId": "turn_1_a1",
+    "prepareId": "1.1"
+   },
+   {
+    "type": "span.sandbox_prepare_end",
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:2dd85aa3e0317bd06735e2ebc6ed6ef5db075b7b0c2b3c7f83060704a960f2e4",
+    "turnId": "turn_1_a1",
+    "claimMs": 559,
+    "outcome": "ready",
+    "swapped": false,
+    "prepareId": "1.1",
+    "sandboxId": "sandbox-system--oma-test-sandbox-5dpnh",
+    "durationMs": 960
+   }
+  ],
+  "toolOutputFound": true,
+  "toolOutputEvent": "agent.tool_result",
+  "versions": {
+   "ffmpeg": "9.0.1",
+   "vfs": "v0.3.21\\nmediakit-help-ok\\npython-ok",
+   "mediakit": true,
+   "python": [
+    "4.11.0",
+    "0.7.1\\n{\\\"environment\\\":\\\"test\\\"}\\nGEMINI_VIDEO_MODEL=set"
+   ],
+   "policy": "test"
+  },
+  "names": {
+   "GEMINI_VIDEO_MODEL": "missing",
+   "GOOGLE_API_KEY": "set",
+   "HTTPS_PROXY": "set",
+   "HTTP_PROXY": "set",
+   "IS_TEST": "set",
+   "MEDIAKIT_API_KEY": "set",
+   "MEDIAKIT_RUNTIME": "set",
+   "MEDIAKIT_SURFACE": "set",
+   "NO_PROXY": "set",
+   "OPENGROVE_WW_ACCESS_TOKEN": "set",
+   "OPENGROVE_WW_BASE_URL": "set",
+   "OSSUTIL_BIN": "set",
+   "OSS_READ_ACCESS_KEY_ID": "set",
+   "OSS_READ_ACCESS_KEY_SECRET": "set",
+   "OSS_READ_BUCKET": "set",
+   "OSS_READ_ENDPOINT": "set",
+   "OSS_READ_REGION": "set",
+   "OSS_READ_TABLE_ID": "set",
+   "RUNTIME_ENV": "set",
+   "VFS_OSS_AK": "set",
+   "VFS_OSS_SK": "set",
+   "VFS_TOKEN": "set",
+   "http_proxy": "set",
+   "https_proxy": "set",
+   "no_proxy": "set",
+   "HOME": "set",
+   "WORKSPACE_DIR": "set",
+   "STORY_SEED_WORKSPACE": "set",
+   "MEDIAKIT_OUTPUT_PATH": "set",
+   "XDG_CACHE_HOME": "set",
+   "NPM_CONFIG_CACHE": "set",
+   "NPM_CONFIG_PREFIX": "set",
+   "NODE_PATH": "set",
+   "PIP_CACHE_DIR": "set",
+   "PYTHONPATH": "set",
+   "TMPDIR": "set"
+  },
+  "reply": [
+   "[{\"type\":\"text\",\"text\":\"RESULT:oma-env-301-1792953835130-done\"}]"
+  ],
+  "session_after": {
+   "state": "ready",
+   "since": "2026-10-25T18:44:01.145Z",
+   "last_error": null
+  }
+ }
+}

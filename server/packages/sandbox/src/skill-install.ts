@@ -334,7 +334,7 @@ export class SkillInstaller {
     let outcome: SkillSetRecordOutcome;
     try { outcome = await ledger.record({ sandboxId: target.sandboxId, setHash: skills.setHash, generation: report.generation }); }
     catch (error) { throw new SkillInstallError("record", `cannot record the install: ${messageOf(error)}`); }
-    if (outcome === "detached") throw new SkillInstallError("record", "the environment binding no longer holds the Sandbox that was installed");
+    if (outcome === "detached") throw new SkillInstallError("record", "the Sandbox binding no longer holds the Sandbox that was installed");
     signal?.throwIfAborted();
     // Superseded: another install switched /skills after this one and is
     // recorded. The Turn goes on and may see that version (ADR-0022).

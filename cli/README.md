@@ -1,7 +1,7 @@
 # oma-cli
 
 Non-interactive TypeScript/npm client for OMA Agents, Sessions, Complete Events,
-Workspaces and Skills. Requires Node.js >=22; no runtime npm dependencies.
+Workspaces, Skills and Environments. Requires Node.js >=22; no runtime npm dependencies.
 
 ```sh
 npm ci
@@ -21,6 +21,22 @@ Configure `OMA_BASE_URL=https://oma.example.test/api` and a private `OMA_API_KEY
 Corresponding flags override environment values. No production URL is built in.
 Use `schema <command path>` for the complete contract and `doctor` for read-only
 diagnostics. [Bundled guide](guides/oma-cli.md) documents all workflows and recovery.
+
+`oma-cli environment create|get|list|update|delete|rebuild|logs` defines what Sandboxes run:
+a Base Image (`oma-base`, or `oma-media` with FFmpeg), an init script
+(`--init-script @init.sh`) and variables (`--env NAME=VALUE`, `--env-file`,
+`--secret NAME=VALUE`, `--secret-file`; secrets are never shown again);
+`--from <id>` copies one, including a read-only built-in. The script runs once
+per build as root in /home/user and may use apt-get, pip and npm. Sandbox
+commands start as login shells, so export a variable every command should
+inherit from `/etc/profile.d/<name>.sh` as `export FOO="${FOO:-value}"`.
+`oma-cli agent create|update --environment <id>` binds the Environment an
+Agent's new Sessions run in, one that has built (a new Agent defaults to
+`env_video_production`);
+`session create --environment <id>` overrides it for one Session.
+`environment logs --follow` prints the build log every 2 s until the build
+ends; `environment rebuild` builds the current definition again. See the
+guide's Environments section.
 
 To upgrade an installation, install the newly verified tarball or the corresponding npm version.
 Before any manual registry release: confirm package ownership, update version and

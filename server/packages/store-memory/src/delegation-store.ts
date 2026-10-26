@@ -1,4 +1,4 @@
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type EnvironmentBinding, type EnvironmentLockResult, type EnvironmentRecord, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type SandboxBindingRow, type BindingLockResult, type SandboxBindingRecord, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { InMemorySessionStore } from "./session-store.js";
 import type { InMemoryPendingEventStore } from "./pending-event-store.js";
 import type { InMemoryEventLogStore } from "./event-log-store.js";
@@ -6,10 +6,10 @@ import type { InMemoryEventLogStore } from "./event-log-store.js";
 export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private records = new Map<DelegationTable, Map<string, DelegationRecord>>();
   private queue: Promise<void> = Promise.resolve();
-  /** Environment binding rows; an absent one is Cold. */
-  private environments = new Map<string, EnvironmentRecord>();
+  /** Sandbox Binding rows; an absent one is Cold. */
+  private bindings = new Map<string, SandboxBindingRecord & Pick<SandboxBindingRow, "environmentId" | "image">>();
   private installedSkills = new Map<string, InstalledSkillSet>();
-  private environmentQueues = new Map<string, Promise<void>>();
+  private bindingQueues = new Map<string, Promise<void>>();
   constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">,
     /** Stands in for PostgreSQL's now(): the clock binding intents are written and judged with. */
     private readonly databaseClock: () => Date = () => new Date()) { super(); }
@@ -70,28 +70,33 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
    * writer per row the compare-and-set always applies. Bindings do not wait
    * for each other, so a Runner a test loses inside one stalls no other.
    */
-  withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+  withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
     const perform = async () => {
-      let row = this.environments.get(bindingId) ?? { sandboxId: null, creatingSince: null, stateSince: null, lastError: null };
-      const { value, next, observed } = await work({ sandboxId: row.sandboxId, creatingSince: row.creatingSince, now: this.databaseClock() });
+      let row = this.bindings.get(bindingId) ?? { sandboxId: null, environmentId: null, image: null, creatingSince: null, stateSince: null, lastError: null };
+      const { value, next, observed } = await work({ sandboxId: row.sandboxId, environmentId: row.environmentId, image: row.image,
+        creatingSince: row.creatingSince, now: this.databaseClock() });
       const now = this.databaseClock();
       // As PgDelegationStore writes them: a move begins a new state, a first
       // failure begins unavailability, a ready observation ends it.
-      if (next) row = { sandboxId: typeof next === "object" ? next.ready : null, creatingSince: next === "creating" ? now : null, stateSince: now, lastError: null };
+      if (next) {
+        const ready = typeof next === "object" ? next : undefined;
+        row = { sandboxId: ready?.ready ?? null, environmentId: ready?.environmentId ?? null, image: ready?.image ?? null,
+          creatingSince: next === "creating" ? now : null, stateSince: now, lastError: null };
+      }
       if (observed === "ready") { if (row.lastError) row = { ...row, stateSince: now, lastError: null }; }
       else if (observed) row = { ...row, stateSince: row.lastError ? row.stateSince : now, lastError: { ...observed.failure, at: now } };
-      if (next || observed) this.environments.set(bindingId, row);
+      if (next || observed) this.bindings.set(bindingId, row);
       return value;
     };
-    const previous = this.environmentQueues.get(bindingId) ?? Promise.resolve();
+    const previous = this.bindingQueues.get(bindingId) ?? Promise.resolve();
     const result = previous.then(perform, perform);
     const settled = result.then(() => {}, () => {});
-    this.environmentQueues.set(bindingId, settled);
-    void settled.then(() => { if (this.environmentQueues.get(bindingId) === settled) this.environmentQueues.delete(bindingId); });
+    this.bindingQueues.set(bindingId, settled);
+    void settled.then(() => { if (this.bindingQueues.get(bindingId) === settled) this.bindingQueues.delete(bindingId); });
     return result;
   }
-  protected async environmentRecord(bindingId: string): Promise<EnvironmentRecord | undefined> {
-    const row = this.environments.get(bindingId);
+  protected async bindingRecord(bindingId: string): Promise<SandboxBindingRecord | undefined> {
+    const row = this.bindings.get(bindingId);
     return row && structuredClone(row);
   }
   async installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null> {
@@ -99,7 +104,7 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
     return installed ? { ...installed } : null;
   }
   async recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome> {
-    if ((this.environments.get(bindingId)?.sandboxId ?? null) !== installed.sandboxId) return "detached";
+    if ((this.bindings.get(bindingId)?.sandboxId ?? null) !== installed.sandboxId) return "detached";
     const recorded = this.installedSkills.get(bindingId);
     if (recorded?.sandboxId === installed.sandboxId && recorded.generation >= installed.generation) return "superseded";
     this.installedSkills.set(bindingId, { sandboxId: installed.sandboxId, setHash: installed.setHash, generation: installed.generation });

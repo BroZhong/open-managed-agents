@@ -67,10 +67,10 @@ export const ManagedMcpCatalogSchema = z
 export const AgentSandboxConfigSchema = z
   .object({
     enabled: z.boolean(),
-    image: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
   })
-  .openapi("AgentSandboxConfig");
+  .openapi("AgentSandboxConfig", {
+    description: "Whether the Agent's Turns run in a Sandbox. What the Sandbox runs is the Agent's Environment (environmentId): sandbox.image and sandbox.env were removed and are refused with 400 sandbox_image_removed / sandbox_env_removed.",
+  });
 
 export const AgentSchema = z
   .object({
@@ -86,6 +86,10 @@ export const AgentSchema = z
     mcpServers: z.array(ManagedMcpServerRefSchema).optional(),
     skills: z.array(z.string()).optional(),
     sandbox: AgentSandboxConfigSchema.optional(),
+    environmentId: z.string().optional().openapi({
+      example: "env_video_production",
+      description: "The Environment the Agent's new Sessions run in unless a Session names another. Every Sandboxed Agent has one; absent only for an Agent without a Sandbox.",
+    }),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
@@ -124,6 +128,14 @@ export const CreateAgentInputSchema = z
       .array(z.string(), { error: "skills must be an array" })
       .optional(),
     sandbox: AgentSandboxConfigSchema.optional(),
+    environmentId: z
+      .string({ error: "environmentId must be an Environment id or null" })
+      .min(1, { error: "environmentId must be an Environment id or null" })
+      .nullable()
+      .optional()
+      .openapi({
+        description: "Bind an Environment that serves an image, whatever a rebuild in progress or a failed one (404 environment_not_found when the Tenant cannot see it, 409 environment_not_ready when it has never built successfully). A Sandboxed Agent that names none, at creation or when it has none, is bound to the built-in env_video_production under the same rule; null unbinds an Agent without a Sandbox and is refused for a Sandboxed one (400 environment_required). Existing Sessions keep the Environment they were created in.",
+      }),
   })
   .openapi("CreateAgentInput");
 
@@ -317,6 +329,15 @@ export const LoopListSchema = z
   .object({ data: z.array(LoopSchema) })
   .openapi("LoopList");
 
+export const SessionEnvironmentSchema = z
+  .object({
+    id: z.string().openapi({ example: "env_video_production" }),
+    name: z.string().openapi({ example: "video-production", description: "The Environment's current name, also once it is deleted." }),
+  })
+  .openapi("SessionEnvironment", {
+    description: "The Environment the Session's Sandboxes are created from, frozen at its creation (ADR-0024): the one it was created with, otherwise its Agent's then; a Child Session's parent's; a Loop Session's Agent's at trigger time.",
+  });
+
 export const SessionSchema = z
   .object({
     thinking: AgentSchema.shape.thinking,
@@ -327,6 +348,7 @@ export const SessionSchema = z
     title: z.string().optional(),
     agent: AgentSchema,
     workspaceId: z.string(),
+    environment: SessionEnvironmentSchema.nullable().openapi({ description: "Null only for a Session created while its Agent ran without a Sandbox; a Sandbox it needs later runs in its Agent's Environment." }),
     loopId: z.string().optional(),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
@@ -334,15 +356,15 @@ export const SessionSchema = z
   })
   .openapi("Session");
 
-export const SessionEnvironmentSchema = z
+export const SessionSandboxSchema = z
   .object({
     state: z.enum(["cold", "creating", "ready", "unavailable"]).openapi({
       description:
-        "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records an environment failure (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call.",
+        "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records a Sandbox unavailability (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call.",
     }),
     since: DateTimeSchema.nullable().openapi({
       description:
-        "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first environment failure since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
+        "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first Sandbox unavailability since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
     }),
     last_error: z
       .object({
@@ -353,18 +375,18 @@ export const SessionEnvironmentSchema = z
       .nullable()
       .openapi({
         description:
-          "The last environment failure observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves.",
+          "The last Sandbox unavailability observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves.",
       }),
   })
-  .openapi("SessionEnvironment", {
+  .openapi("SessionSandbox", {
     description:
-      "The state of the Session's Sandbox environment (ADR-0023). Read without waiting: a Turn's tool call may change it at any time.",
+      "The state of the Session's Sandbox (ADR-0023). Read without waiting: a Turn's tool call may change it at any time.",
   });
 
 export const SessionDetailSchema = SessionSchema.extend({
-  environment: SessionEnvironmentSchema.optional(),
+  sandbox: SessionSandboxSchema.optional(),
 }).openapi("SessionDetail", {
-  description: "A Session with its Sandbox environment, which every Host that keeps Sandbox bindings reports, as deployed Hosts do.",
+  description: "A Session with the state of its Sandbox, which every Host that keeps Sandbox bindings reports, as deployed Hosts do.",
 });
 
 export const SharedSessionSchema = z.object({

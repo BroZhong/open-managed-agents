@@ -66,14 +66,23 @@ export class SkillVersionConflictError extends Error {
 }
 
 /**
- * An environment binding's compare-and-set lost a race: another Runner or a
- * reclamation moved the row on after `withEnvironmentLock` read it, so
+ * A Sandbox Binding's compare-and-set lost a race: another Runner or a
+ * reclamation moved the row on after `withBindingLock` read it, so
  * nothing was written. The caller acts on the row as it is now.
  */
-export class EnvironmentBindingChanged extends Error {
-  readonly code = "environment_binding_changed";
+export class SandboxBindingChanged extends Error {
+  readonly code = "sandbox_binding_changed";
   constructor(readonly bindingId: string) {
     super("Sandbox binding changed concurrently; retry input");
-    this.name = "EnvironmentBindingChanged";
+    this.name = "SandboxBindingChanged";
+  }
+}
+
+/** The owner already has an Environment of this name that is not deleted; the API maps this to 409. */
+export class EnvironmentNameConflictError extends Error {
+  readonly code = "environment_name_conflict";
+  constructor(readonly environmentName: string) {
+    super(`An Environment named "${environmentName}" already exists.`);
+    this.name = "EnvironmentNameConflictError";
   }
 }

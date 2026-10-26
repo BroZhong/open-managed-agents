@@ -273,7 +273,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
 
   it.each(["sync", "async"])("delivers %s Child Session results between separate Runner processes", async mode => {
     await stop(runner);
-    const agent = await stores.agentStore.create({ tenantId: "test", name: "Delegate", runtime: "pi-agent", model: "pinned-model", system: "Test", sandbox: { enabled: true } });
+    const agent = await stores.agentStore.create({ tenantId: "test", name: "Delegate", runtime: "pi-agent", model: "pinned-model", system: "Test", sandbox: { enabled: true }, environmentId: "env_test" });
     const session = await request(api2, "sessions", { agent: agent.id });
     await input(api1, session.id);
     const parent = await fixture({ PARENT_SESSION_ID: session.id, DELEGATION_MODE: mode });
@@ -307,11 +307,11 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
     try {
       const agent = await stores.agentStore.create({ tenantId: "test", name: "Cleanup", runtime: "mock", model: "mock", system: "test", sandbox: { enabled: true } });
       const session = await request(api2, "sessions", { agent: agent.id });
-      await stores.delegationStore.withEnvironmentLock(session.id, async () => ({ next: { ready: "retry-sandbox" }, value: undefined }));
+      await stores.delegationStore.withBindingLock(session.id, async () => ({ next: { ready: "retry-sandbox" }, value: undefined }));
       await request(api1, `sessions/${session.id}`, undefined, "DELETE");
       workers.push(await fixture(override), await fixture(override));
       await until(async () => {
-        try { return await stores.delegationStore.withEnvironmentLock(session.id, async ({ sandboxId }) => ({ value: sandboxId })); }
+        try { return await stores.delegationStore.withBindingLock(session.id, async ({ sandboxId }) => ({ value: sandboxId })); }
         catch { return "cleanup-pending"; }
       }, id => id === null);
       expect(deletes.get("retry-sandbox")).toBe(2);
@@ -330,7 +330,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
       const childActivity = { bindingId: retained.id, sessionId: child.childId,
         fence: { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation } };
       await activities.begin(childActivity);
-      await stores.delegationStore.withEnvironmentLock(retained.id, async () => ({ next: { ready: "unknown-sandbox" }, value: undefined }));
+      await stores.delegationStore.withBindingLock(retained.id, async () => ({ next: { ready: "unknown-sandbox" }, value: undefined }));
       await request(api1, `sessions/${retained.id}`, undefined, "DELETE");
       await delay(600);
       expect(deletes.has("unknown-sandbox")).toBe(false);

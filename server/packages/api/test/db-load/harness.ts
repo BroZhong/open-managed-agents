@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { sessionSignalScope, type SessionSignal, type SessionSignalScope, type SessionSignals } from "@oma-server/redis";
 import type { Agent, SandboxLifecycleStore, Session } from "@oma-server/store";
@@ -352,7 +352,7 @@ export class Fleet {
 
   async start(): Promise<void> {
     this.agent = await this.raw.agentStore.create({ tenantId: "tenant", name: "Load", model: "test/model", system: "load",
-      runtime: "pi-agent", sandbox: { enabled: true } });
+      runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
     this.workspaceId = (await this.raw.workspaceStore.create({ tenantId: "tenant" })).id;
     const adapter = scriptedAdapter(this.shape);
     for (let index = 0; index < this.count; index++) {
@@ -361,7 +361,7 @@ export class Fleet {
       const router = new SessionRouter({
         ...stores,
         eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-        sandboxes: new DefaultTurnSandboxes({
+        sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(),
           manager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, lifecycle: this.meter.lifecycle(name), environment: "test" }),
           bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount: WORKSPACE_MOUNT,
           onError: ({ error }) => this.errors.push(error),

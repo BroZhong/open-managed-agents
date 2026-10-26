@@ -28,6 +28,7 @@ export class InMemorySessionStore implements SessionStore {
       status: "idle",
       agent: structuredClone(input.agent),
       workspaceId: input.workspaceId,
+      environmentId: input.environmentId,
       loopId: input.loopId,
       delegation: input.delegation,
       createdAt: new Date(),

@@ -74,7 +74,7 @@ export type {
   FileListEntry,
 } from "./tool-executor.js";
 
-export { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ToolEnvironmentError } from "./tool-executor.js";
+export { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ExecutorUnavailableError } from "./tool-executor.js";
 
 export {
   generateEventId,

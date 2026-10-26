@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!versions.json
+!smoke.py
+!sources/
+!sources/ffmpeg-9.0.1.tar.xz

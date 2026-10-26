@@ -10,8 +10,10 @@ export type Flag = {
   min?: number;
   max?: number;
   field?: string;
-  source?: "text-file";
+  /** text-file: the value is a path or - (stdin); text: literal text, @path or - (stdin), like --body. */
+  source?: "text-file" | "text";
   requires?: string[];
+  /** May be given more than once; the value is the list in order. */
   repeat?: boolean;
 };
 export type Result = {

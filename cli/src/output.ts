@@ -62,7 +62,9 @@ export function render(
             ? ["name", "title", "description"]
             : command.path === "doctor"
               ? ["name", "status", "message", "hint"]
-              : ["id", "name", "status", "path", "size", "updatedAt", "updated_at"];
+              : command.path === "environment list"
+                ? ["id", "name", "ownerType", "baseImage", "status", "updatedAt"]
+                : ["id", "name", "status", "path", "size", "updatedAt", "updated_at"];
     rows = data;
   } else if (data && typeof data === "object" && !Array.isArray(data)) {
     columns = ["key", "value"];

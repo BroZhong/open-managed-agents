@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
@@ -36,6 +36,7 @@ it("loads a new Agent's model capabilities, adapts its preference on model chang
   vi.stubGlobal("fetch", request);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(["model-providers"], [{ id: "gateway", name: "Gateway", models: [{ id: "unknown", name: "Unknown" }] }]);
+  client.setQueryData(["environments"], []);
   render(<QueryClientProvider client={client}><AgentFormDialog open onOpenChange={() => {}} /></QueryClientProvider>);
   const slider = await screen.findByRole("slider", { name: "思考强度" });
   expect(slider.getAttribute("max")).toBe("2");
@@ -64,6 +65,7 @@ it("retries capability failure without inventing choices, then disables unsuppor
   vi.stubGlobal("fetch", request);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(["model-providers"], []);
+  client.setQueryData(["environments"], []);
   render(<QueryClientProvider client={client}><AgentFormDialog open onOpenChange={() => {}} /></QueryClientProvider>);
   fireEvent.click(await screen.findByRole("button", { name: "档位读取失败，重试" }));
   expect(screen.queryByRole("slider")).toBeNull();
@@ -71,64 +73,27 @@ it("retries capability failure without inventing choices, then disables unsuppor
   expect(screen.getByText("不支持思考")).toBeTruthy();
 });
 
-it.each([
-  ["oma-sandbox-v2", "oma-sandbox-v2"],
-  ["auto-story", undefined],
-])("preserves sandbox environment and resolves %s to the supported template when editing", async (image, expectedImage) => {
+it("sends sandbox.enabled only when editing: an Agent's image and variables are its Environment's (ADR-0024)", async () => {
   const agent: Agent = {
-    id: "agent_storyboard",
-    tenantId: "tenant_1",
-    name: "Storyboard Agent",
-    model: "openai-codex/gpt-5.5",
-    system: "Create storyboards",
-    runtime: "pi-agent",
-    sandbox: {
-      enabled: true,
-      image,
-      env: {
-        VFS_TOKEN: "vfs-token",
-        RDS_MCP_APIKEY: "vfs-token",
-      },
-    },
-    createdAt: "2026-07-12T00:00:00.000Z",
-    updatedAt: "2026-07-12T00:00:00.000Z",
+    id: "agent_storyboard", tenantId: "tenant_1", name: "Storyboard Agent", model: "openai-codex/gpt-5.5", system: "Create storyboards",
+    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_video_production",
+    createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-12T00:00:00.000Z",
   };
-  const fetchMock = vi.fn(async () =>
-    ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify(agent),
-    }) as Response,
-  );
+  const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify(agent) }) as Response);
   vi.stubGlobal("fetch", fetchMock);
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
-  });
-
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   for (const model of [...PI_MODELS.map(choice => choice.value), "openai-codex/gpt-5.5", "custom-one/vendor/model"]) {
     queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
   }
   queryClient.setQueryData(["model-providers"], []);
-  render(
-    <QueryClientProvider client={queryClient}>
-      <AgentFormDialog open onOpenChange={() => {}} agent={agent} />
-    </QueryClientProvider>,
-  );
-
+  queryClient.setQueryData(["environments"], []);
+  render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} agent={agent} /></QueryClientProvider>);
   expect(screen.queryByLabelText("Sandbox")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
-
   await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
   const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-  expect(JSON.parse(String(init.body)).model).toBe("openai-codex/gpt-5.5");
-  expect(JSON.parse(String(init.body)).sandbox).toEqual({
-    enabled: true,
-    ...(expectedImage ? { image: expectedImage } : {}),
-    env: {
-      VFS_TOKEN: "vfs-token",
-      RDS_MCP_APIKEY: "vfs-token",
-    },
-  });
+  expect(JSON.parse(String(init.body))).toMatchObject({ model: "openai-codex/gpt-5.5", sandbox: { enabled: true }, environmentId: "env_video_production" });
+  expect(JSON.parse(String(init.body)).sandbox).toEqual({ enabled: true });
 });
 
 it.each(PI_MODELS.map((choice) => choice.value))("creates an Agent with %s and the default sandbox", async (model) => {
@@ -145,6 +110,7 @@ it.each(PI_MODELS.map((choice) => choice.value))("creates an Agent with %s and t
     queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
   }
   queryClient.setQueryData(["model-providers"], []);
+  queryClient.setQueryData(["environments"], []);
   render(
     <QueryClientProvider client={queryClient}>
       <AgentFormDialog open onOpenChange={() => {}} />
@@ -176,6 +142,7 @@ it("selects a tested custom model when creating an Agent", async () => {
     queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
   }
   queryClient.setQueryData(["model-providers"], [{ id: "custom-one", name: "Gateway", models: [{ id: "vendor/model", name: "Custom Model" }] }]);
+  queryClient.setQueryData(["environments"], []);
   render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} /></QueryClientProvider>);
   fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Custom Agent" } });
   fireEvent.click(screen.getByLabelText("Model"));
@@ -194,6 +161,7 @@ it.each([false, true])("persists slider preference and supports resetting it (re
     queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
   }
   queryClient.setQueryData(["model-providers"], []);
+  queryClient.setQueryData(["environments"], []);
   const agent: Agent = { id: "a", tenantId: "t", name: "Test", model: "bigmodel/glm-5.3", thinking: "low", system: "test", runtime: "pi-agent", createdAt: "", updatedAt: "" };
   render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} agent={agent} /></QueryClientProvider>);
   const slider = screen.getByRole("slider", { name: "思考强度" }) as HTMLInputElement;
@@ -205,4 +173,95 @@ it.each([false, true])("persists slider preference and supports resetting it (re
   await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
   const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
   expect(JSON.parse(String(init.body)).thinking).toBe(reset ? null : "medium");
+});
+
+describe("the Agent's Environment (ADR-0024)", () => {
+  const IMAGE = "registry.example/welltop/oma-environments@sha256:" + "a".repeat(64);
+  const environment = (id: string, name: string, status: "pending" | "building" | "failed" | "ready", ownerType: "platform" | "tenant" = "tenant",
+    image: string | null = status === "pending" ? null : IMAGE) =>
+    ({ id, name, status, ownerType, description: "", baseImage: "oma-base" as const, image, lastBuild: null, createdAt: "", updatedAt: "" });
+  // As GET /v1/environments lists them: built-ins first.
+  const listed = [
+    environment("env_video_production", "video-production", "ready", "platform"),
+    environment("env_old_platform", "old-platform", "building", "platform"),
+    environment("env_tools", "tools", "ready"),
+    environment("env_unbuilt", "unbuilt", "pending"),
+    environment("env_broken", "broken", "failed"),
+    environment("env_never", "never", "failed", "tenant", null),
+  ];
+  function renderDialog(agent?: Agent, environments = listed) {
+    const fetchMock = vi.fn(async () => Response.json({ id: agent?.id ?? "created" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
+    for (const model of [...PI_MODELS.map(choice => choice.value), "openai-codex/gpt-5.5"]) {
+      queryClient.setQueryData(["model-thinking-options", model], { ...basicOptions, model });
+    }
+    queryClient.setQueryData(["model-providers"], []);
+    queryClient.setQueryData(["environments"], environments);
+    render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} agent={agent} /></QueryClientProvider>);
+    const saved = async () => {
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      return JSON.parse(String(init.body));
+    };
+    return { saved };
+  }
+  /** Open the Environment picker: the labels it offers, in order. */
+  const options = () => {
+    const trigger = screen.getByLabelText("Environment");
+    fireEvent.click(trigger);
+    return [...trigger.nextElementSibling!.querySelectorAll("button")].map((button) => button.textContent);
+  };
+  const agent: Agent = { id: "agent_bound", tenantId: "t", name: "Bound", model: "openai-codex/gpt-5.5", system: "s", runtime: "pi-agent",
+    sandbox: { enabled: true }, environmentId: "env_tools", createdAt: "", updatedAt: "" };
+
+  it("offers the Environments that serve an image, built-ins first, a build status as a hint, video-production by default", async () => {
+    const { saved } = renderDialog();
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · Built-in");
+    expect(options()).toEqual(["video-production · Built-in", "old-platform · Built-in (Building)", "tools", "broken (Build failed)"]);
+    fireEvent.click(screen.getByRole("button", { name: "broken (Build failed)" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Tools" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    expect(await saved()).toMatchObject({ name: "Tools", environmentId: "env_broken" });
+  });
+
+  it("creates an Agent in the default by sending none, which the Host binds while it still builds", async () => {
+    const { saved } = renderDialog(undefined, [
+      environment("env_video_production", "video-production", "building", "platform"), environment("env_tools", "tools", "ready"),
+    ]);
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production · Built-in (Building)");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Video" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    expect(await saved()).not.toHaveProperty("environmentId");
+  });
+
+  it("says video-production has not built yet when it serves no image, and leaves the refusal to the Host", async () => {
+    const { saved } = renderDialog(undefined, [environment("env_video_production", "video-production", "pending", "platform"), environment("env_tools", "tools", "ready")]);
+    expect(screen.getByLabelText("Environment").textContent).toBe("video-production (not built yet)");
+    expect(options()).toEqual(["tools"]);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Video" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    expect(await saved()).not.toHaveProperty("environmentId");
+  });
+
+  it("keeps an edited Agent's Environment, and rebinds it to another", async () => {
+    const kept = renderDialog(agent);
+    expect(screen.getByLabelText("Environment").textContent).toBe("tools");
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(await kept.saved()).toMatchObject({ environmentId: "env_tools" });
+    cleanup();
+    const rebound = renderDialog(agent);
+    options();
+    fireEvent.click(screen.getByRole("button", { name: "video-production · Built-in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect((await rebound.saved()).environmentId).toBe("env_video_production");
+  });
+
+  it("keeps showing an Agent's Environment the list does not offer", async () => {
+    const { saved } = renderDialog({ ...agent, environmentId: "env_never" });
+    expect(screen.getByLabelText("Environment").textContent).toBe("never (current)");
+    expect(options()).not.toContain("unbuilt");
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(await saved()).toMatchObject({ environmentId: "env_never" });
+  });
 });

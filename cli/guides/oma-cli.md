@@ -149,6 +149,80 @@ nothing; a concurrent edit returns a version conflict to retry. Skill file delet
 files in an existing Skill. Skill export is not an atomic snapshot and
 preserves unrelated local files.
 
+## Environments
+
+An Environment is what a Sandbox runs: a Base Image (`oma-base`, or `oma-media`
+with FFmpeg and CJK fonts), an init script and variables, built once into an
+image. Built-in Environments (ownerType platform, such as
+`env_video_production`) are listed first, are read-only and can be copied.
+
+```sh
+oma-cli environment list
+oma-cli environment create --name data --base-image oma-base --init-script @init.sh \
+  --env PIP_NO_CACHE_DIR=1 --env-file ./vars.env --secret-file ./secrets.env
+oma-cli environment create --from env_video_production --name video
+oma-cli environment get --environment-id env-example
+oma-cli environment update --environment-id env-example --env FOO=bar --unset OLD
+oma-cli environment update --environment-id env-example --init-script @init.sh
+oma-cli environment logs --environment-id env-example --follow --raw
+oma-cli environment rebuild --environment-id env-example
+oma-cli environment delete --environment-id env-example --yes
+oma-cli agent update --agent-id agent-example --environment env-example
+oma-cli session create --agent-id agent-example --environment env_video_production
+```
+
+An Agent runs its new Sessions in its Environment: `--environment` binds one,
+and a new Agent that names none runs in the built-in `env_video_production`.
+An Agent's Sandbox image and variables are its Environment's; there is no
+Agent-level image or variable. Only an Environment that serves an image
+(whatever a rebuild in progress or a failed one) can be bound or passed to
+`session create --environment`, which overrides the Agent's for that Session
+(exit 5, `environment_not_ready`, when it never built successfully). A
+Session keeps the Environment it was created with for its lifetime, as its
+Child Sessions do; `session get` and `session list` show it as
+`environment: {id, name}`. After a rebuild, new Sandboxes run the new image
+while running ones keep theirs. An Environment an Agent is bound to cannot be
+deleted (exit 5, `environment_in_use`); a deleted one keeps serving the
+Sessions created in it.
+
+A new Environment, or one whose init script or Base Image changed, is pending
+until its build; changing variables, name or description never builds and
+applies to the next command. `--init-script` takes text, `@file` or `-`.
+`--env NAME=VALUE` and `--secret NAME=VALUE` repeat; `--env-file` and
+`--secret-file` read dotenv lines (`NAME=VALUE`, optional `export`, `#`
+comments, one pair of outer quotes removed, no expansion). Values must not be
+empty; all values together are at most 32 KiB, the script at most 256 KiB.
+Secrets are stored encrypted and never shown again: output lists their names
+with a secretRef only, and dry-run plans redact them. Prefer `--secret-file`
+over `--secret` to keep values out of shell history. Update merges the flags
+into the current variables (stored secrets are kept); `--body env` replaces
+the whole list instead. `--from` copies any visible Environment, including its
+secrets and the platform secrets of a built-in, which no other way provides.
+The platform reserves names it injects or a command's shell needs (HOME, PATH,
+USER, SHELL, PWD, the Workspace variables, OMA_*, E2B_*, ENVD_*, BASH_*) and
+provides PIP_INDEX_URL and NPM_CONFIG_REGISTRY defaults, which you may override.
+
+The image builder builds each pending Environment (status building), checks
+the image in a Sandbox and only then makes it ready; a failed build leaves
+status failed and keeps the previous image serving. `environment logs` reads
+the latest build's log (`--build-id` another): `data.build` has its status and
+`errorMessage`, `text` the log from `offset`, `nextOffset` where to continue.
+`--follow` polls every 2 s until the build has ended, streaming NDJSON
+`{"kind":"log",…,"text"}` lines and a final `{"kind":"result","data":{"build"}}`,
+or only the text with `--raw`; a script failure's line is in the log and in
+`errorMessage`. A build keeps its last 1 MiB of log (`truncated` when earlier
+output was dropped). `environment rebuild` builds the current definition again
+(built-ins are rebuilt by the platform), superseding an unfinished build, as a
+new init script or Base Image does. A build times out after 60 minutes; a
+script failure is final, an infrastructure failure is retried twice.
+
+The init script runs once per build as root in /home/user with bash -euo
+pipefail; it can use apt-get, pip and npm (pointed at Aliyun mirrors) and sees
+the plain variables, not the secrets. Sandbox commands run as `bash -l -c`, so
+a variable every command should inherit from the image belongs in
+`/etc/profile.d/*.sh` as `export FOO="${FOO:-value}"`, which keeps an
+Environment variable of the same name in charge.
+
 ## Inputs, output and errors
 
 Flags can precede or follow command paths. IDs must be explicit. Missing input

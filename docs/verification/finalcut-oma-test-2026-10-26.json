@@ -1,0 +1,596 @@
+{
+ "issue": 312,
+ "date": "2026-10-26",
+ "source_commit": "d4953e205c2ec89a46a87ce44060ea6d1152b040",
+ "release": {
+  "base_images": {
+   "oma-base": "sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+   "oma-media": "sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00",
+   "changed": false
+  },
+  "migration_0030": {
+   "schema": "oma_test",
+   "applied_at": "2026-10-26T03:05Z",
+   "via": "Supabase MCP execute_sql, BEGIN/COMMIT stripped",
+   "column": {
+    "name": "retries",
+    "type": "integer",
+    "nullable": false,
+    "default": "0"
+   },
+   "oma_test_app": {
+    "select": true,
+    "update": true
+   },
+   "existing_builds": 25,
+   "nonzero_after": 0,
+   "production_schema_has_column": false
+  },
+  "image_build": {
+   "host": "vfs-dev",
+   "dir": "~/workspace/yuzhong/oma-env-d4953e20",
+   "command": "bash build.sh --push server web",
+   "start": "2026-10-26T03:04:19Z",
+   "end": "2026-10-26T03:04:34Z",
+   "seconds": 15.6,
+   "tag": "d4953e205c2e",
+   "server": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566",
+   "web": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:46c363546a121bb75b612ba2a0a33249a03964d9f929838215df29c0b3119f8d",
+   "web_unchanged": true
+  },
+  "before": {
+   "oma-api": "oma-server@sha256:298ec946812be754666b2c264f49a90d713c255225fdb1dbd1d5db617b5db3f0",
+   "oma-runner": "oma-server@sha256:298ec946812be754666b2c264f49a90d713c255225fdb1dbd1d5db617b5db3f0",
+   "oma-image-builder": "oma-server@sha256:61e257409a100d8fcf1b479fc0bb5ef2cbf9fcaad7bec3f4b0c1ded614270a02",
+   "oma-web": "oma-web@sha256:46c363546a121bb75b612ba2a0a33249a03964d9f929838215df29c0b3119f8d"
+  },
+  "after": {
+   "oma-api": "oma-server@sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566",
+   "oma-runner": "oma-server@sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566",
+   "oma-image-builder": "oma-server@sha256:3fbff8c3fa6a2e668a1f78b71d1f472f1486cf0f205bd0c7f720316fb9316566",
+   "oma-web": "oma-web@sha256:46c363546a121bb75b612ba2a0a33249a03964d9f929838215df29c0b3119f8d"
+  },
+  "diff": {
+   "builder_only": [
+    "Deployment/oma-image-builder image"
+   ],
+   "full": [
+    "Deployment/oma-api image",
+    "Deployment/oma-runner image"
+   ]
+  },
+  "builder": {
+   "apply": "2026-10-26T03:18:16Z",
+   "pod_created": "2026-10-26T03:18:35Z",
+   "container_started": "2026-10-26T03:19:17Z",
+   "listening": "2026-10-26T03:19:25Z",
+   "ready": "2026-10-26T03:19:31Z",
+   "apply_to_ready_s": 75,
+   "queued_builds": 0,
+   "base_image_rebuild_lines": 0,
+   "builds_before": 25,
+   "builds_after": 25,
+   "max_seq_after": 25,
+   "open_builds_after": 0,
+   "video_production_updated_at_unchanged": "2026-10-26T04:08:25.185+08:00",
+   "warm_pool_generation": 2,
+   "warm_pool_image": "oma-environments@sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3",
+   "waited_for_foreign_builds": [
+    {
+     "seq": 24,
+     "environment": "video-production-copy",
+     "finished": "2026-10-26T11:12:49+08:00"
+    },
+    {
+     "seq": 25,
+     "environment": "video-production-copy-2",
+     "finished": "2026-10-26T11:15:44+08:00"
+    }
+   ]
+  },
+  "app": {
+   "apply": "2026-10-26T03:21:22Z",
+   "rolled_out": "2026-10-26T03:23:06Z",
+   "health": {
+    "status": "ok"
+   },
+   "runner_replicas": 2
+  }
+ },
+ "finalcut": {
+  "tenant": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+  "api_key": {
+   "id": "apikey_cb9HjQBBUiKt5inNL_xX2",
+   "created": "2026-10-26T03:23:55.881Z",
+   "revoked": "2026-10-26T03:53:16.615Z",
+   "revoke_status": 200,
+   "after_revoke_status": 401
+  },
+  "agent": {
+   "id": "agent_BE4F7mWvPvtAPIaVtjKPK",
+   "model": "deepseek/deepseek-flash",
+   "thinking": "high",
+   "skills": 19,
+   "environmentId": "env_video_production",
+   "systemLen": 795,
+   "sourceSystemLen": 403,
+   "sourceModel": "deepseek/deepseek-flash",
+   "sourceThinking": "low",
+   "sourceSkills": 19,
+   "sourceEnvironmentId": "env_agent_M794Gt4iPwX-ZblaA_lW2"
+  },
+  "inputs": {
+   "source_workspace": "tw_b4293796abd0b973691d17e75d285bb8",
+   "production_tenant": "c8d17631-fee7-4b2a-9775-6efc201a3574",
+   "control_workspace": "ws_srjiyo7gc2Js_xutZ3TWq",
+   "control_workspace_ep23_objects": 18,
+   "control_workspace_same_etags": true,
+   "source_objects_total": 12468,
+   "source_ep23_objects": 464,
+   "count": 18,
+   "bytes": 42582669,
+   "files": [
+    {
+     "path": "inputs/EP23/episode-script.md",
+     "size": 2750,
+     "etag": "DEB499400DC2DA36B623B824C33330B9"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g1.mp4",
+     "size": 2166957,
+     "etag": "3B250B0D8C9A00CFC1F5C5962024E149"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g10.mp4",
+     "size": 1981781,
+     "etag": "2FAB33DD0D920807B3DC081A82B38B0F"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g11.mp4",
+     "size": 4252245,
+     "etag": "C02E9E40C55079136E55A8CD9908FDC2"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g12.mp4",
+     "size": 2420992,
+     "etag": "F7E689301CE72D7E643082B4DC817169"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g13.mp4",
+     "size": 3375981,
+     "etag": "E6FF73921942F8DC7E26A361E00E5438"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g14.mp4",
+     "size": 3946175,
+     "etag": "36D2DC3A5630198473B5BAAAD3871A3A"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g2.mp4",
+     "size": 2733306,
+     "etag": "9D6C6D1E3A7D46230C96AF14020C6676"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g3.mp4",
+     "size": 5804283,
+     "etag": "101C79D5ED6BB4AC059D569776FD7C08"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g4.mp4",
+     "size": 3568582,
+     "etag": "B5390977151740FD3AAA52B6C1D69CC8"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g5.mp4",
+     "size": 2887959,
+     "etag": "1F40BF2A1CA83D7662110B458BD2A580"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g6.mp4",
+     "size": 2165499,
+     "etag": "A1C506BFBC2ED4263C10DB54F9844809"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g7.mp4",
+     "size": 2570097,
+     "etag": "7D070F9FDDC88C55B01F2EB17736208A"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g8.mp4",
+     "size": 2394171,
+     "etag": "8E2DEFB3DFF1A5141B3EDCB643DF15C7"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/g9.mp4",
+     "size": 2224411,
+     "etag": "D14324002A4001966274A33D8327FA55"
+    },
+    {
+     "path": "outputs/EP23/_work/finalcut/src/urls.txt",
+     "size": 1685,
+     "etag": "E00DCB83BF4A1D193B98087CAF9A7BDC"
+    },
+    {
+     "path": "outputs/EP23/storyboard-dp.csv",
+     "size": 24700,
+     "etag": "36A0046E32E1B1FFC866D3A4AD642901"
+    },
+    {
+     "path": "outputs/EP23/video_generation.md",
+     "size": 61095,
+     "etag": "267E95AD11C747D8E952766E001B113B"
+    }
+   ]
+  },
+  "workspaces": {
+   "A": {
+    "id": "ws_dQ96XGT-4f04oSRiGW5b-",
+    "copied": 18,
+    "bytes": 42582669,
+    "etagsMatch": true,
+    "verified": true,
+    "copiedAt": "2026-10-26T03:24:37.693Z"
+   },
+   "B": {
+    "id": "ws_Wjiiy3JMl_dhQ9a4J9NSe",
+    "copied": 18,
+    "bytes": 42582669,
+    "etagsMatch": true,
+    "verified": true,
+    "copiedAt": "2026-10-26T03:24:39.112Z"
+   }
+  },
+  "group_b_environment": {
+   "id": "env_VnioXyHxyuHUwS2FCCeYx",
+   "name": "finalcut-group-b-20261026",
+   "from": "env_video_production",
+   "script_chars": 12048,
+   "video_production_script_chars": 11873,
+   "variables": 25,
+   "build": {
+    "id": "envb_L5R2ZrcBCwcZgpvaIfWAJ",
+    "seq": 26,
+    "created": "2026-10-26T03:24:32.754Z",
+    "claimed": "2026-10-26T03:24:35.587Z",
+    "pull_start": "2026-10-26T03:25:03Z",
+    "build_start": "2026-10-26T03:25:51Z",
+    "push_start": "2026-10-26T03:35:41Z",
+    "verify_start": "2026-10-26T03:36:24.456Z",
+    "finished": "2026-10-26T03:36:45.853Z",
+    "seconds": {
+     "claim": 2.8,
+     "pod_start": 27.4,
+     "pull": 48,
+     "build": 590,
+     "push": 40,
+     "verify": 21.3,
+     "total": 733.1
+    },
+    "verify_claim_ms": 21040,
+    "verify_swapped": true,
+    "attempts": 1,
+    "retries": 0,
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments@sha256:9d65087fd3f3998ef55e42c2bbba4a3898e5a892b45ba19423821cf106c5bbae",
+    "manifest": {
+     "dpkg": 321,
+     "python_packages": 387,
+     "python_envs": 4,
+     "binaries": 15
+    }
+   },
+   "image_check": {
+    "file": "/etc/profile.d/oma-finalcut-group.sh",
+    "mode": "root 0644",
+    "bytes": 53,
+    "login_shell_value": "B",
+    "injected_override": "X"
+   }
+  },
+  "prompt": "first user.message of production sess_aXqzfulooKU5gjvszDfX1, verbatim",
+  "groups": {
+   "A": {
+    "turn_completed": 1,
+    "session_error": 0,
+    "turn_resumed": 0,
+    "user_messages": 1,
+    "children": 0,
+    "pip_apt_npm_installs": 0,
+    "vfs_cli_write_commands": 0,
+    "resource_or_asset_create": 0,
+    "uploads_or_publishes": 0,
+    "curl_wget_http_ossutil_calls": 0,
+    "session": "sess_S890CalbNp52PGul4ZKTx",
+    "workspace": "ws_dQ96XGT-4f04oSRiGW5b-",
+    "environment": {
+     "id": "env_video_production",
+     "name": "video-production"
+    },
+    "submitted": "2026-10-26T03:24:52.842Z",
+    "turn_completed_at": "2026-10-26T03:33:00.257Z",
+    "wall_seconds": 487.4,
+    "tool_calls": 64,
+    "tool_results": 64,
+    "tools": {
+     "bash": 49,
+     "read": 11,
+     "write": 4
+    },
+    "error_results": [
+     {
+      "seq": 222,
+      "what": "agent's own JSON parse KeyError: 'result', fixed next call"
+     }
+    ],
+    "vfs_cli_calls": 0,
+    "mediakit": [
+     {
+      "cmd": "video asr-subtitles",
+      "success": true,
+      "task_id": "amk-tool-asr-subtitles-1617020952834"
+     },
+     {
+      "cmd": "shared query-task --poll-complete",
+      "completed": true
+     }
+    ],
+    "span": {
+     "sandbox_prepare_start": {
+      "at": "2026-10-26T03:24:58.271Z",
+      "environmentId": "env_video_production",
+      "image": "oma-environments@sha256:54d89827f163bc38d8f33026475148b136d128f92c1413aa7d36185f1eab8dd3"
+     },
+     "sandbox_prepare_end": {
+      "at": "2026-10-26T03:24:59.156Z",
+      "outcome": "ready",
+      "swapped": false,
+      "claimMs": 606,
+      "durationMs": 1011,
+      "sandboxId": "sandbox-system--oma-test-sandbox-47xkd"
+     },
+     "skills_install_end": {
+      "skills": 19,
+      "bytes": 1978398,
+      "durationMs": 989
+     }
+    },
+    "sandbox": {
+     "pod": "oma-test-sandbox-47xkd",
+     "restartCount": 0
+    },
+    "final_mp4": {
+     "width": 480,
+     "height": 854,
+     "fps": "24/1",
+     "frames": 2108,
+     "duration": 87.833333,
+     "bytes": 15407243,
+     "sha256": "506de2522172b57bb6b8b339f412e8c5bbd12abcf687a5dfbf1c3a33b3d66bc9",
+     "full_decode": {
+      "tool": "ffmpeg 7.1.1 (local)",
+      "exit": 0,
+      "stderr_bytes": 0
+     }
+    },
+    "subtitle_report": {
+     "geometry_pass": true,
+     "status": "rendered_needs_visual_review",
+     "cue_count": 28,
+     "style": {
+      "font_size": 34,
+      "baseline_step": 35,
+      "bottom_margin": 122,
+      "side_margin": 26,
+      "max_width": 428,
+      "stroke_width": 2,
+      "fill": "#FFFFFF",
+      "stroke": "#000000",
+      "max_lines": 2
+     },
+     "ass_font_size": 37.984375,
+     "backend": "ffmpeg-libass",
+     "ffmpeg": "ffmpeg version 9.0.1",
+     "stages_seconds": {
+      "preflight": 0.572,
+      "measure_and_generate_ass": 26.026,
+      "verify_libass_reference": 5.523,
+      "encode_and_probe": 41.016
+     }
+    },
+    "concat": "concat filter, audio trimmed to each segment video length"
+   },
+   "B": {
+    "turn_completed": 1,
+    "session_error": 0,
+    "turn_resumed": 0,
+    "user_messages": 1,
+    "children": 0,
+    "pip_apt_npm_installs": 0,
+    "vfs_cli_write_commands": 0,
+    "resource_or_asset_create": 0,
+    "uploads_or_publishes": 0,
+    "curl_wget_http_ossutil_calls": 0,
+    "session": "sess_XdBHpB3HiAc3rTto3VXW2",
+    "workspace": "ws_Wjiiy3JMl_dhQ9a4J9NSe",
+    "environment": {
+     "id": "env_VnioXyHxyuHUwS2FCCeYx",
+     "name": "finalcut-group-b-20261026"
+    },
+    "environment_via": "POST /v1/sessions environmentId",
+    "submitted": "2026-10-26T03:40:16.905Z",
+    "turn_completed_at": "2026-10-26T03:50:00.319Z",
+    "wall_seconds": 583.4,
+    "tool_calls": 63,
+    "tool_results": 63,
+    "tools": {
+     "bash": 56,
+     "read": 4,
+     "write": 2,
+     "edit": 1
+    },
+    "error_results": [
+     {
+      "seq": 401,
+      "what": "agent's own heredoc Python SyntaxError, fixed next call"
+     }
+    ],
+    "vfs_cli_calls": 0,
+    "vfs_cli_mentions": [
+     "which mediakit-cli vfs-cli"
+    ],
+    "mediakit": [
+     {
+      "cmd": "video asr-subtitles",
+      "success": true,
+      "task_id": "amk-tool-asr-subtitles-1534660888322"
+     },
+     {
+      "cmd": "shared query-task --poll-complete",
+      "completed": true
+     },
+     {
+      "cmd": "video asr-subtitles",
+      "success": true,
+      "task_id": "amk-tool-asr-subtitles-1572391084290"
+     },
+     {
+      "cmd": "shared query-task --poll-complete",
+      "completed": true,
+      "duration": 87.38,
+      "cues": 27
+     }
+    ],
+    "mediakit_notice": "skills not synced with CLI 0.2.1 (update --force suggested, not run)",
+    "span": {
+     "sandbox_prepare_start": {
+      "at": "2026-10-26T03:40:22.312Z",
+      "environmentId": "env_VnioXyHxyuHUwS2FCCeYx",
+      "image": "oma-environments@sha256:9d65087fd3f3998ef55e42c2bbba4a3898e5a892b45ba19423821cf106c5bbae"
+     },
+     "sandbox_prepare_end": {
+      "at": "2026-10-26T03:40:45.954Z",
+      "outcome": "ready",
+      "swapped": true,
+      "claimMs": 23250,
+      "durationMs": 23650,
+      "sandboxId": "sandbox-system--oma-test-sandbox-b27dl"
+     },
+     "skills_install_end": {
+      "skills": 19,
+      "bytes": 1978398,
+      "durationMs": 1154
+     }
+    },
+    "sandbox": {
+     "pod": "oma-test-sandbox-b27dl",
+     "restartCount": 1,
+     "pool_pod_ready_before_claim_s": 223
+    },
+    "final_mp4": {
+     "width": 480,
+     "height": 854,
+     "fps": "24/1",
+     "frames": 2117,
+     "duration": 88.208333,
+     "bytes": 15610050,
+     "sha256": "b60f1ec8a971936f1febc25a0cb0d795c25e456e2bb73b234ca8455f6eb75976",
+     "full_decode": {
+      "tool": "ffmpeg 7.1.1 (local)",
+      "exit": 0,
+      "stderr_bytes": 0
+     }
+    },
+    "subtitle_report": {
+     "geometry_pass": true,
+     "status": "rendered_needs_visual_review",
+     "cue_count": 28,
+     "style": {
+      "font_size": 34,
+      "baseline_step": 35,
+      "bottom_margin": 122,
+      "side_margin": 26,
+      "max_width": 428,
+      "stroke_width": 2,
+      "fill": "#FFFFFF",
+      "stroke": "#000000",
+      "max_lines": 2
+     },
+     "ass_font_size": 37.984375,
+     "backend": "ffmpeg-libass",
+     "ffmpeg": "ffmpeg version 9.0.1",
+     "stages_seconds": {
+      "preflight": 0.499,
+      "measure_and_generate_ass": 26.515,
+      "verify_libass_reference": 6.002,
+      "encode_and_probe": 40.999
+     }
+    },
+    "concat": "concat demuxer, single re-encode, source audio lengths kept"
+   }
+  },
+  "control": {
+   "session": "sess_aXqzfulooKU5gjvszDfX1",
+   "agent": "agent_XsS1yQXmJS212Ag7SsmTk",
+   "workspace": "ws_srjiyo7gc2Js_xutZ3TWq",
+   "rerun": false,
+   "session_wall_seconds": 544.7,
+   "session_turn_resumed": 1,
+   "final_mp4": {
+    "width": 480,
+    "height": 854,
+    "frames": 2117,
+    "duration": 88.208344
+   },
+   "geometry_pass": true,
+   "cues": 28,
+   "concurrent_run": {
+    "finalcut_cases": 123,
+    "completed": 119,
+    "runtime_seconds": {
+     "min": 469.942,
+     "median": 1130.046,
+     "p95": 1736.193,
+     "max": 1913.164
+    },
+    "concurrent_root_sessions": 231
+   }
+  },
+  "comparison": {
+   "A_minus_control_median_s": -642.6,
+   "B_minus_control_median_s": -546.6,
+   "limit_s": 1800,
+   "note": "control median measured with 231 concurrent root Sessions; A and B ran alone"
+  }
+ },
+ "cleanup": {
+  "sessions_terminated": [
+   "sess_S890CalbNp52PGul4ZKTx",
+   "sess_XdBHpB3HiAc3rTto3VXW2"
+  ],
+  "sandboxes_deleted": [
+   "oma-test-sandbox-47xkd",
+   "oma-test-sandbox-b27dl",
+   "oma-test-sandbox-w4w6j (builder verification)"
+  ],
+  "remaining_test_sandboxes": [
+   "warm pool replica only"
+  ],
+  "max_concurrent_test_sandboxes": 3,
+  "build_pods_left": 0,
+  "api_key_revoked": true,
+  "after_revoke_status": 401,
+  "kept": [
+   "agent_BE4F7mWvPvtAPIaVtjKPK",
+   "env_VnioXyHxyuHUwS2FCCeYx",
+   "ws_dQ96XGT-4f04oSRiGW5b-",
+   "ws_Wjiiy3JMl_dhQ9a4J9NSe"
+  ],
+  "production": "SELECT only on oma; OSS listV2/GET and copy-source reads only under production prefixes; no writes",
+  "untouched": [
+   "oma-infra",
+   "auto-story-v2",
+   "base-secret",
+   "oma schema"
+  ]
+ },
+ "code_changes": null
+}

@@ -1,4 +1,6 @@
 import { useModelProviders } from "@/lib/hooks/use-model-providers";
+import { useEnvironments, type EnvironmentSummary } from "@/lib/hooks/use-environments";
+import { environmentStatusLabel } from "@/lib/environment-status";
 import { useModelThinkingOptions, type ThinkingLevel } from "@/lib/hooks/use-thinking-options";
 import { AgentThinkingPicker } from "@/components/agent-thinking-picker";
 import { useState } from "react";
@@ -18,6 +20,31 @@ import {
   DEFAULT_MODEL,
   PI_MODELS,
 } from "@/lib/agent-runtime";
+
+/** The built-in a Sandboxed Agent runs in unless it names another (ADR-0024). */
+export const DEFAULT_ENVIRONMENT_ID = "env_video_production";
+
+/**
+ * The Environments an Agent can be bound to (ADR-0024): those that serve an
+ * image, whatever a rebuild in progress or a failed one, built-ins first,
+ * with a build status that is not Ready as a hint; and the Agent's own
+ * binding should the list not show it.
+ */
+function environmentChoices(environments: EnvironmentSummary[], current?: string) {
+  const rank = (environment: EnvironmentSummary) => (environment.ownerType === "platform" ? 0 : 1);
+  const label = (environment: EnvironmentSummary) => [
+    environment.ownerType === "platform" ? `${environment.name} · Built-in` : environment.name,
+    environment.status === "ready" ? "" : ` (${environmentStatusLabel(environment.status)})`,
+  ].join("");
+  const choices = environments.filter((environment) => environment.image !== null)
+    .sort((a, b) => rank(a) - rank(b))
+    .map((environment) => ({ value: environment.id, label: label(environment) }));
+  if (current && !choices.some((choice) => choice.value === current)) {
+    const listed = environments.find((environment) => environment.id === current);
+    choices.push({ value: current, label: `${listed?.name ?? current} (current)` });
+  }
+  return choices;
+}
 
 interface AgentFormDialogProps {
   open: boolean;
@@ -40,6 +67,9 @@ export function AgentFormDialog({
   const [system, setSystem] = useState(agent?.system ?? "");
   const [model, setModel] = useState<string>(agent?.model ?? DEFAULT_MODEL);
   const [thinking, setThinking] = useState<ThinkingLevel | undefined>(agent?.thinking ?? undefined);
+  const [environmentId, setEnvironmentId] = useState(agent?.environmentId ?? DEFAULT_ENVIRONMENT_ID);
+  const environments = useEnvironments(open);
+  const environmentOptions = environmentChoices(environments.data ?? [], agent?.environmentId);
   const [lastInput, setLastInput] = useState({ open, agent });
   const thinkingOptions = useModelThinkingOptions(model, open);
   const runtime = LOCKED_RUNTIME;
@@ -56,12 +86,14 @@ export function AgentFormDialog({
         setSystem(agent.system);
         setModel(agent.model);
         setThinking(agent.thinking ?? undefined);
+        setEnvironmentId(agent.environmentId ?? DEFAULT_ENVIRONMENT_ID);
       } else {
         setName("");
         setDescription("");
         setSystem("");
         setModel(DEFAULT_MODEL);
         setThinking(undefined);
+        setEnvironmentId(DEFAULT_ENVIRONMENT_ID);
       }
     }
   }
@@ -84,15 +116,12 @@ export function AgentFormDialog({
       thinking: thinking ?? null,
       system: system.trim() || defaultSystem,
       runtime,
-      // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
-      // New Agents inherit the Host's default Sandbox template.
-      sandbox: {
-        // Preserve deployment-specific settings that this form does not expose.
-        ...agent?.sandbox,
-        enabled: true,
-        // The retired auto-story choice follows the Host default when saved.
-        image: agent?.sandbox?.image === "auto-story" ? undefined : agent?.sandbox?.image,
-      },
+      // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox,
+      // whose image and variables its Environment provides (ADR-0024).
+      sandbox: { enabled: true },
+      // An Agent without an Environment sends none for the default, which
+      // the Host binds whatever it is building.
+      ...(environmentId === DEFAULT_ENVIRONMENT_ID && !agent?.environmentId ? {} : { environmentId }),
     };
 
     if (isEdit) {
@@ -195,8 +224,20 @@ export function AgentFormDialog({
             value={system}
             onChange={(e) => setSystem(e.target.value)}
           />
+          <Select
+            id="agent-environment"
+            label="Environment"
+            placeholder="video-production (not built yet)"
+            value={environmentId}
+            onChange={(e) => setEnvironmentId(e.target.value)}
+          >
+            {environmentOptions.map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+          </Select>
           <p className="text-xs text-neutral-500">
-            Every agent runs inside an isolated sandbox.
+            Every agent runs inside an isolated sandbox. New Sessions run in the chosen Environment; existing Sessions keep theirs.
+            {environments.error ? " Environments could not be loaded." : ""}
           </p>
         </div>
         <DialogFooter>

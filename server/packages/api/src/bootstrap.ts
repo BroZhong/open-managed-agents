@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, OSSSkillBundleStore, OSSEventPayloadStore, EventPayloadCodec, type ArtifactStore, type SkillBundleStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, OSSSkillBundleStore, OSSEventPayloadStore, OSSEnvironmentBuildLogStore, EventPayloadCodec, type ArtifactStore, type EnvironmentBuildLogStore, type SkillBundleStore } from "@oma-server/store";
 import { createRedisClient, redisConfigFromEnv, RedisTurnStreamStore, BestEffortTurnStreamStore, RedisSessionSignals } from "@oma-server/redis";
 import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createApp } from "./app.js";
@@ -8,6 +8,7 @@ import { skillBundleStorageConfigFromEnv, workspaceStorageConfigFromEnv } from "
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { runnerThinkingOptions } from "./lib/thinking-options.js";
 import { ModelProviderService } from "./lib/model-providers.js";
+import { EnvironmentService } from "./lib/environments.js";
 
 export type HostRole = "api" | "runner" | "combined";
 
@@ -40,14 +41,17 @@ export async function startHost(role: HostRole): Promise<void> {
   const turnStreamStore = new BestEffortTurnStreamStore(new RedisTurnStreamStore(redis), () => redis.status === "ready");
   let artifactStore: ArtifactStore;
   let skillBundleStore: SkillBundleStore;
+  let environmentBuildLogs: EnvironmentBuildLogStore;
   if (local) {
     // Explicit local mock profile only; PG + Redis and entrypoints are real.
-    const { InMemoryArtifactStore, InMemorySkillBundleStore } = await import("@oma-server/store-memory");
+    const { InMemoryArtifactStore, InMemorySkillBundleStore, InMemoryEnvironmentBuildLogStore } = await import("@oma-server/store-memory");
     artifactStore = new InMemoryArtifactStore();
     skillBundleStore = new InMemorySkillBundleStore();
+    environmentBuildLogs = new InMemoryEnvironmentBuildLogStore();
   } else {
     artifactStore = new OSSArtifactStore(oss!);
     skillBundleStore = new OSSSkillBundleStore(skillBundleStorageConfigFromEnv(process.env));
+    environmentBuildLogs = new OSSEnvironmentBuildLogStore(oss!);
     await artifactStore.list("oma_startup", "storage_check");
   }
   const deps = { ...stores, artifactStore, skillBundleStore, eventStreamHub, turnStreamStore };
@@ -66,6 +70,10 @@ export async function startHost(role: HostRole): Promise<void> {
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
     modelProviderService: modelProviders,
+    environmentService: new EnvironmentService(stores.environmentStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY, {
+      inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+      logs: environmentBuildLogs,
+    }),
     thinkingOptions: (tenant, model) => modelProviders.thinkingOptions(tenant, model, managedOptions),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => signals.publish({ sessionId, kind: "check" }),

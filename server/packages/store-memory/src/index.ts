@@ -1,5 +1,8 @@
 import { InMemoryModelProviderStore } from "./model-provider-store.js";
 export { InMemoryModelProviderStore } from "./model-provider-store.js";
+import { InMemoryEnvironmentStore } from "./environment-store.js";
+export { InMemoryEnvironmentStore } from "./environment-store.js";
+export { InMemoryEnvironmentBuildLogStore } from "./environment-build-log-store.js";
 import { InMemorySessionShareStore } from "./session-share-store.js";
 export { InMemorySessionShareStore } from "./session-share-store.js";
 import { InMemoryDelegationStore } from "./delegation-store.js";
@@ -46,12 +49,13 @@ export interface MemoryStores {
   workspaceStore: InMemoryWorkspaceMetadataStore;
   loopStore: InMemoryLoopStore;
   delegationStore: InMemoryDelegationStore;
+  environmentStore: InMemoryEnvironmentStore;
 }
 
 export interface MemoryStoresOptions {
   /**
    * Stands in for PostgreSQL's now() where a store writes and judges it: the
-   * environment bindings' creation intents (ADR-0023). Default: system time.
+   * Sandbox Bindings' creation intents (ADR-0023). Default: system time.
    */
   databaseClock?: () => Date;
 }
@@ -110,5 +114,6 @@ export function createMemoryStores(options: MemoryStoresOptions = {}): MemorySto
     workspaceStore,
     loopStore,
     delegationStore: new InMemoryDelegationStore(sessionStore, pendingEventStore, eventLogStore, workspaceStore, options.databaseClock),
+    environmentStore: new InMemoryEnvironmentStore(),
   };
 }

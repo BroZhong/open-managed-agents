@@ -14,6 +14,9 @@ const { Sandbox, SandboxNotFoundError } = require('e2b');
 const [phase, file] = process.argv.slice(2);
 assert(file && ['init', 'resume', 'rebuild', 'cleanup'].includes(phase));
 const pgUrl = new URL(process.env.PG_TEST_URL!);
+// The image every create claims with, by digest: the Environment's (ADR-0024), e.g. video-production's.
+const claimImage = process.env.VERIFY_IMAGE;
+assert(claimImage, 'Pass VERIFY_IMAGE, the image to claim Sandboxes with, by digest');
 assert(['127.0.0.1', 'localhost'].includes(pgUrl.hostname) && pgUrl.pathname === '/oma_local_native', 'Use the dedicated local test database');
 const marker = 'oma.dev/native-integration';
 const evidence = phase === 'init' ? {
@@ -90,9 +93,11 @@ try {
     const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle });
     const spec: EnvSpec = { tenantId: evidence.tenant, workspaceId: evidence.workspace,
       workspaceMount: { ...config.mount, prefix: `${evidence.tenant}/${evidence.workspace}/` },
-      ...(phase === 'rebuild' ? { image: evidence.snapshotId } : {}) };
+      // Every create claims from the Runner's Warm Pool with an Environment's image
+      // (ADR-0024); a rebuild claims anew rather than from the snapshot, which no create can name.
+      image: claimImage };
     const open = (sessionId: string) => manager.open(spec, { id: evidence.root,
-      withLock: work => stores.delegationStore.withEnvironmentLock(evidence.root, work),
+      withLock: work => stores.delegationStore.withBindingLock(evidence.root, work),
       canExecute: async () => (await stores.sessionStore.getById(sessionId))?.status !== 'terminated',
     });
     const begin = async (sessionId: string): Promise<SandboxActivity> => {
@@ -102,7 +107,7 @@ try {
       await manager.beginActivity(activity); return activity;
     };
     const finish = async (activity: SandboxActivity) => { await stores.pendingEventStore.ack(activity.sessionId, activity.fence.eventId, activity.fence); await manager.finishActivity(activity); };
-    const currentId = () => stores.delegationStore.withEnvironmentLock(evidence.root, async id => ({ sandboxId: id, value: id! }));
+    const currentId = () => stores.delegationStore.withBindingLock(evidence.root, async id => ({ sandboxId: id, value: id! }));
     const assertDeadline = async (seconds: number) => {
       const info = await Sandbox.getInfo(await currentId(), sdk);
       const remainingSeconds = (info.endAt.getTime() - Date.now()) / 1000;

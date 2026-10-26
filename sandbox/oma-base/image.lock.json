@@ -1,0 +1,10 @@
+{
+  "tag": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-base-0.1.2",
+  "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+  "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+  "compressedBytes": 952244068,
+  "unpackedSize": "4.11GB",
+  "layers": 37,
+  "revision": "a28bb52e5e912cf6c01476f46873f8ddd12a822f",
+  "verifiedAt": "2026-10-26"
+}

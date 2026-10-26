@@ -16,13 +16,14 @@ import {
   type SkillInstallLedger,
   type SkillSetMember,
 } from "../src/skill-install.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
 /** A TrueType header followed by every byte value: survives only a byte-exact path. */
 const FONT = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x0c, ...Array.from({ length: 256 }, (_, index) => index)]);
 
 async function setUp() {
   const client = new FakeSandboxClient();
-  const { id } = await client.create();
+  const { id } = await client.create({ image: FAKE_ENVIRONMENT_IMAGE });
   const bundles = new Bundles();
   const exec = vi.spyOn(client, "exec");
   const installs = () => exec.mock.calls.filter(([, command]) => isSkillInstallCommand(command));
@@ -32,7 +33,7 @@ async function setUp() {
 /** One binding of the in-memory delegation store, optionally recording `initial` as installed into its Sandbox. */
 async function ledger(initial: Omit<InstalledSkillSet, "generation"> | null = null) {
   const store = createMemoryStores().delegationStore;
-  const bind = (sandboxId: string | null) => store.withEnvironmentLock("binding", async () => ({ next: sandboxId ? { ready: sandboxId } : "cold" as const, value: undefined }));
+  const bind = (sandboxId: string | null) => store.withBindingLock("binding", async () => ({ next: sandboxId ? { ready: sandboxId } : "cold" as const, value: undefined }));
   if (initial) {
     await bind(initial.sandboxId);
     await store.recordSkillSetInstall("binding", { ...initial, generation: 1 });

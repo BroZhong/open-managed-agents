@@ -2,7 +2,7 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AgentStore, LoopStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
-import { publicSession } from "../lib/public-projection.js";
+import { publicSessions, type EnvironmentService } from "../lib/environments.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -17,6 +17,8 @@ export interface LoopRouteDeps {
   sessionRouter?: SessionRouter;
   wakeSession?: (sessionId: string) => void;
   now?: () => Date;
+  /** Shows a Loop Session's Environment (ADR-0024). */
+  environments?: Pick<EnvironmentService, "ofSessions">;
 }
 
 function validateLoopBody(body: Record<string, unknown>, partial = false): string | undefined {
@@ -124,7 +126,8 @@ export function loopRoutes(deps: LoopRouteDeps): OpenAPIHono<Env> {
       .catch((error) => {
         console.error(`SessionRouter failed after Loop ${dispatched.loop.id} dispatch:`, error);
       });
-    return c.json(publicSession(dispatched.session), 201);
+    const [session] = await publicSessions(tenant.tenantId, [dispatched.session], deps.environments);
+    return c.json(session, 201);
   });
 
   return router;

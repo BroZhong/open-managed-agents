@@ -5,6 +5,7 @@ import {
   normalizeManagedMcpRefs,
 } from "@oma-server/mcp-catalog";
 import { publicAgent } from "../lib/public-projection.js";
+import { EnvironmentError, type EnvironmentService } from "../lib/environments.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -19,22 +20,55 @@ type Env = {
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-function validateSandbox(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return "sandbox must be an object";
+/**
+ * `sandbox` holds whether the Agent runs in a Sandbox, nothing else: what it
+ * runs is the Agent's Environment (ADR-0024), which replaced `sandbox.image`
+ * and `sandbox.env`.
+ */
+function validateSandbox(value: unknown): { error: string; code: string } | undefined {
+  const invalid = (error: string) => ({ error, code: "validation_error" });
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalid("sandbox must be an object");
   const sandbox = value as Record<string, unknown>;
-  if (sandbox.enabled !== undefined && typeof sandbox.enabled !== "boolean") return "sandbox.enabled must be a boolean";
-  if (sandbox.image !== undefined && (typeof sandbox.image !== "string" || !sandbox.image.trim())) return "sandbox.image must be a non-empty string";
-  if (sandbox.env !== undefined) {
-    if (!sandbox.env || typeof sandbox.env !== "object" || Array.isArray(sandbox.env)) return "sandbox.env must be an object";
-    if (Object.entries(sandbox.env).some(([name, value]) =>
-      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || typeof value !== "string" || value.includes("\0"))) {
-      return "sandbox.env must contain valid environment names and string values";
-    }
+  if (sandbox.image !== undefined) {
+    return { error: "sandbox.image was removed: bind an Environment with environmentId instead", code: "sandbox_image_removed" };
   }
+  if (sandbox.env !== undefined) {
+    return { error: "sandbox.env was removed: set the variables on an Environment and bind it with environmentId instead", code: "sandbox_env_removed" };
+  }
+  if (sandbox.enabled !== undefined && typeof sandbox.enabled !== "boolean") return invalid("sandbox.enabled must be a boolean");
 }
 
-export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
+const sandboxed = (sandbox: unknown) => (sandbox as { enabled?: unknown } | undefined)?.enabled !== false;
+
+/**
+ * Agents, each bound to the Environment its new Sessions run in (ADR-0024).
+ * A Sandboxed Agent always has one: naming none binds the default,
+ * video-production. Without `environments` none can be bound.
+ */
+export function agentRoutes(agentStore: AgentStore, environments?: Pick<EnvironmentService, "bindable" | "defaultFor">): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+  /**
+   * The Environment an Agent is bound to by a write that sends `requested`
+   * (undefined when it sends none). Every binding, a resent one too, must
+   * serve an image (`EnvironmentService.bindable`). A Sandboxed Agent that
+   * has none gets the default; null (an Agent without a Sandbox only)
+   * unbinds. Undefined: no change.
+   */
+  const binding = async (tenantId: string, requested: unknown, inSandbox: boolean, current?: string): Promise<string | null | undefined> => {
+    if (requested === undefined) {
+      if (!inSandbox || current || !environments) return undefined;
+      return environments.defaultFor(tenantId);
+    }
+    if (requested === null) {
+      if (inSandbox) throw new EnvironmentError(400, "environment_required", "A Sandboxed Agent runs in an Environment: name one, or send none for video-production");
+      return null;
+    }
+    if (typeof requested !== "string" || !requested) {
+      throw new EnvironmentError(400, "validation_error", "environmentId must be an Environment id or null");
+    }
+    if (!environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
+    return (await environments.bindable(tenantId, requested)).id;
+  };
 
   // POST /v1/agents — Create agent
   registerContractRoute(router, getOpenApiRoute("createAgent"), async (c) => {
@@ -43,7 +77,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    const { name, description, model, thinking, system, runtime, tools, mcpServers, skills, sandbox } = body;
+    const { name, description, model, thinking, system, runtime, tools, mcpServers, skills, sandbox, environmentId } = body;
     const tenant = c.get("tenant");
     let normalizedMcpServers = mcpServers;
 
@@ -85,9 +119,10 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       return c.json({ error: "skills must be an array" }, 400);
     }
     if (sandbox !== undefined) {
-      const error = validateSandbox(sandbox);
-      if (error) return c.json({ error }, 400);
+      const invalid = validateSandbox(sandbox);
+      if (invalid) return c.json(invalid, 400);
     }
+    const bound = await binding(tenant.tenantId, environmentId, sandboxed(sandbox));
 
     const agent = await agentStore.create({
       tenantId: tenant.tenantId,
@@ -101,6 +136,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       mcpServers: normalizedMcpServers,
       skills,
       sandbox,
+      ...(bound ? { environmentId: bound } : {}),
     });
 
     return c.json(publicAgent(agent), 201);
@@ -198,8 +234,8 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
 
     const updateInput: Record<string, unknown> = {};
     if (body.sandbox !== undefined) {
-      const error = validateSandbox(body.sandbox);
-      if (error) return c.json({ error }, 400);
+      const invalid = validateSandbox(body.sandbox);
+      if (invalid) return c.json(invalid, 400);
     }
     if (body.name !== undefined) updateInput.name = body.name;
     if (body.description !== undefined) updateInput.description = body.description;
@@ -216,6 +252,8 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     if (body.mcpServers !== undefined) updateInput.mcpServers = body.mcpServers;
     if (body.skills !== undefined) updateInput.skills = body.skills;
     if (body.sandbox !== undefined) updateInput.sandbox = body.sandbox;
+    const bound = await binding(tenant.tenantId, body.environmentId, sandboxed(body.sandbox ?? existing.sandbox), existing.environmentId);
+    if (bound !== undefined) updateInput.environmentId = bound;
 
     const updated = await agentStore.update(id, updateInput);
     if (!updated) {

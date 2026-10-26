@@ -1,5 +1,6 @@
 import { ThinkingOptionsSchema } from "../lib/thinking-options.js";
 import { modelProviderRoutes } from "./model-providers.js";
+import { environmentOpenApiRoutes } from "./environments.js";
 import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
 import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import {
@@ -155,6 +156,7 @@ export type RegisteredOpenApiRoute = RouteConfig & {
 
 export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   ...modelProviderRoutes,
+  ...environmentOpenApiRoutes,
   protectedRoute({
     method: "get", path: "/v1/shares/{id}", operationId: "resolveSessionShare",
     summary: "Resolve a live Session share", tags: ["Sessions"],
@@ -268,7 +270,9 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     request: { body: jsonBody(CreateAgentInputSchema) },
     responses: {
       201: jsonResponse(AgentSchema, "Agent created"),
-      400: errorResponse("Invalid Agent configuration"),
+      400: errorResponse("Invalid Agent configuration, a removed sandbox field (sandbox_image_removed, sandbox_env_removed), or no Environment for a Sandboxed Agent (environment_required)"),
+      404: errorResponse("Environment not found (environment_not_found)"),
+      409: errorResponse("The Environment, or the default video-production, has never built successfully (environment_not_ready)"),
     },
   }),
   protectedRoute({
@@ -316,8 +320,9 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     request: { params: idParams, body: jsonBody(UpdateAgentInputSchema) },
     responses: {
       200: jsonResponse(AgentSchema, "Agent updated"),
-      400: errorResponse("Invalid Agent configuration"),
-      404: errorResponse("Agent not found"),
+      400: errorResponse("Invalid Agent configuration, a removed sandbox field (sandbox_image_removed, sandbox_env_removed), or no Environment for a Sandboxed Agent (environment_required)"),
+      404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
+      409: errorResponse("The Environment, or the default video-production, has never built successfully (environment_not_ready)"),
     },
   }),
   protectedRoute({
@@ -958,7 +963,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/sessions",
     operationId: "createSession",
     summary: "Create a Session",
-    description: "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace.",
+    description: "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace. The Session runs in its Agent's Environment as of now unless environmentId names another.",
     tags: ["Sessions"],
     request: {
       body: jsonBody(
@@ -983,14 +988,24 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
             .string({ error: "workspace_name must be a string" })
             .optional()
             .openapi({ deprecated: true }),
+          environmentId: z
+            .string({ error: "environmentId must be an Environment id" })
+            .min(1, { error: "environmentId must be an Environment id" })
+            .optional()
+            .openapi({ description: "An Environment that serves an image to run the Session in instead of its Agent's. The Session keeps its Environment for its lifetime; its Child Sessions use it too." }),
+          environment_id: z
+            .string({ error: "environmentId must be an Environment id" })
+            .min(1, { error: "environmentId must be an Environment id" })
+            .optional()
+            .openapi({ description: "Alias of environmentId." }),
         }),
       ),
     },
     responses: {
       201: jsonResponse(SessionSchema, "Session created"),
       400: errorResponse("Invalid Session input"),
-      409: errorResponse("Workspace has been deleted"),
-      404: errorResponse("Agent not found"),
+      409: errorResponse("Workspace has been deleted, or the Environment has never built successfully (environment_not_ready)"),
+      404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
     },
   }),
   protectedRoute({
@@ -1063,7 +1078,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Sessions"],
     request: { params: idParams },
     responses: {
-      200: jsonResponse(z.union([SessionDetailSchema, SharedSessionSchema]), "Session found, with its Sandbox environment; share credentials receive display fields only"),
+      200: jsonResponse(z.union([SessionDetailSchema, SharedSessionSchema]), "Session found, with the state of its Sandbox; share credentials receive display fields only"),
       404: errorResponse("Session not found"),
     },
   }),

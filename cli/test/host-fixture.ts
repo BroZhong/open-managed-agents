@@ -2,9 +2,10 @@
 // Never shipped in the npm package; no production configuration is loaded.
 import { serve } from "../../server/packages/api/node_modules/@hono/node-server/dist/index.mjs";
 import { createApp } from "../../server/packages/api/src/app.js";
-import { createMemoryStores } from "../../server/packages/store-memory/src/index.js";
+import { createMemoryStores, InMemoryEnvironmentBuildLogStore } from "../../server/packages/store-memory/src/index.js";
 import { InProcessEventStreamHub } from "../../server/packages/event-log/src/index.js";
 import { SessionRouter } from "../../server/packages/session-router/src/index.js";
+import { EnvironmentService } from "../../server/packages/api/src/lib/environments.js";
 process.env.AUTH_DISABLED = "true";
 process.env.API_BASE_PATH = "";
 const stores = createMemoryStores();
@@ -56,10 +57,49 @@ stores.eventLogStore.append = async (sessionId, event) => {
   }
   return stored;
 };
+await stores.environmentStore.create({
+  id: "env_video_production",
+  owner: { ownerType: "platform" },
+  name: "video-production",
+  description: "Built-in",
+  baseImage: "oma-media",
+  initScript: "true\n",
+  env: [{ name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }],
+  encryptedSecrets: {},
+});
+// A built Environment of the Tenant, which Agents and Sessions can use.
+await stores.environmentStore.create({
+  id: "env_cli_tools",
+  owner: { ownerType: "tenant", tenantId: "dev" },
+  name: "cli-tools",
+  description: "",
+  baseImage: "oma-base",
+  initScript: "true\n",
+  env: [],
+  encryptedSecrets: {},
+});
+await stores.environmentStore.buildNow("env_cli_tools", "registry.example/welltop/oma-environments@sha256:" + "d".repeat(64));
+// The default new Sandboxed Agents run in: built, as the image builder leaves it.
+await stores.environmentStore.buildNow("env_video_production", "registry.example/welltop/oma-environments@sha256:" + "e".repeat(64));
+// One that never built: it can be bound to nothing.
+await stores.environmentStore.create({
+  id: "env_cli_unbuilt",
+  owner: { ownerType: "tenant", tenantId: "dev" },
+  name: "cli-unbuilt",
+  description: "",
+  baseImage: "oma-base",
+  initScript: "false\n",
+  env: [],
+  encryptedSecrets: {},
+});
 const app = createApp({
   ...stores,
   eventStreamHub: hub,
   sessionRouter: router,
+  environmentService: new EnvironmentService(stores.environmentStore, "ab".repeat(32), {
+    inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+    logs: new InMemoryEnvironmentBuildLogStore(),
+  }),
 });
 const server = serve(
   { fetch: app.fetch, port: 0, hostname: "127.0.0.1" },

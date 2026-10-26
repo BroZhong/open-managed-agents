@@ -1,0 +1,33 @@
+{
+  "id": "env_video_production",
+  "name": "video-production",
+  "description": "内置 vfs-cli、MediaKit cli、FFmpeg 等，用于视频生产类任务。",
+  "baseImage": "oma-media",
+  "env": [
+    { "name": "HTTP_PROXY", "value": "http://sing-box.oma-infra.svc.cluster.local:7890" },
+    { "name": "HTTPS_PROXY", "value": "http://sing-box.oma-infra.svc.cluster.local:7890" },
+    { "name": "http_proxy", "value": "http://sing-box.oma-infra.svc.cluster.local:7890" },
+    { "name": "https_proxy", "value": "http://sing-box.oma-infra.svc.cluster.local:7890" },
+    { "name": "NO_PROXY", "value": "localhost,127.0.0.1,::1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com" },
+    { "name": "no_proxy", "value": "localhost,127.0.0.1,::1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com" },
+    { "name": "GEMINI_VIDEO_MODEL", "secretRef": { "source": "platform", "key": "GEMINI_VIDEO_MODEL" } },
+    { "name": "GOOGLE_API_KEY", "secretRef": { "source": "platform", "key": "GOOGLE_API_KEY" } },
+    { "name": "IS_TEST", "secretRef": { "source": "platform", "key": "IS_TEST" } },
+    { "name": "MEDIAKIT_API_KEY", "secretRef": { "source": "platform", "key": "MEDIAKIT_API_KEY" } },
+    { "name": "MEDIAKIT_RUNTIME", "secretRef": { "source": "platform", "key": "MEDIAKIT_RUNTIME" } },
+    { "name": "MEDIAKIT_SURFACE", "secretRef": { "source": "platform", "key": "MEDIAKIT_SURFACE" } },
+    { "name": "OPENGROVE_WW_ACCESS_TOKEN", "secretRef": { "source": "platform", "key": "OPENGROVE_WW_ACCESS_TOKEN" } },
+    { "name": "OPENGROVE_WW_BASE_URL", "secretRef": { "source": "platform", "key": "OPENGROVE_WW_BASE_URL" } },
+    { "name": "OSSUTIL_BIN", "secretRef": { "source": "platform", "key": "OSSUTIL_BIN" } },
+    { "name": "OSS_READ_ACCESS_KEY_ID", "secretRef": { "source": "platform", "key": "OSS_READ_ACCESS_KEY_ID" } },
+    { "name": "OSS_READ_ACCESS_KEY_SECRET", "secretRef": { "source": "platform", "key": "OSS_READ_ACCESS_KEY_SECRET" } },
+    { "name": "OSS_READ_BUCKET", "secretRef": { "source": "platform", "key": "OSS_READ_BUCKET" } },
+    { "name": "OSS_READ_ENDPOINT", "secretRef": { "source": "platform", "key": "OSS_READ_ENDPOINT" } },
+    { "name": "OSS_READ_REGION", "secretRef": { "source": "platform", "key": "OSS_READ_REGION" } },
+    { "name": "OSS_READ_TABLE_ID", "secretRef": { "source": "platform", "key": "OSS_READ_TABLE_ID" } },
+    { "name": "RUNTIME_ENV", "secretRef": { "source": "platform", "key": "RUNTIME_ENV" } },
+    { "name": "VFS_OSS_AK", "secretRef": { "source": "platform", "key": "VFS_OSS_AK" } },
+    { "name": "VFS_OSS_SK", "secretRef": { "source": "platform", "key": "VFS_OSS_SK" } },
+    { "name": "VFS_TOKEN", "secretRef": { "source": "platform", "key": "VFS_TOKEN" } }
+  ]
+}

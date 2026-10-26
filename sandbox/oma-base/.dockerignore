@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!versions.json
+!pip.conf
+!npmrc
+!write-manifest
+!smoke.py
+!stage/
+!stage/rg
+!stage/fd
+!pi-tools/
+!pi-tools/package.json
+!pi-tools/package-lock.json
+!pi-tools/smoke.mjs

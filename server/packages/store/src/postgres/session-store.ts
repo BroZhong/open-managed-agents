@@ -16,6 +16,7 @@ interface SessionRow {
   title: string | null;
   agent: Agent;
   workspace_id: string;
+  environment_id: string | null;
   loop_id: string | null;
   delegation: Session["delegation"] | null;
   created_at: Date;
@@ -42,6 +43,7 @@ function rowToSession(row: SessionRow): Session {
     title: row.title ?? undefined,
     agent: reviveAgent(row.agent),
     workspaceId: row.workspace_id,
+    environmentId: row.environment_id ?? undefined,
     loopId: row.loop_id ?? undefined,
     delegation: row.delegation ?? undefined,
     createdAt: new Date(row.created_at),
@@ -57,10 +59,10 @@ export class PgSessionStore implements SessionStore {
     const now = new Date();
     const id = `sess_${nanoid()}`;
     const { rows } = await this.pool.query<SessionRow>(
-      `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, loop_id, created_at, updated_at, delegation)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, environment_id, loop_id, created_at, updated_at, delegation)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [id, input.tenantId, input.agentId, "idle", JSON.stringify(input.agent), input.workspaceId, input.loopId ?? null, now, now, JSON.stringify(input.delegation ?? null)],
+      [id, input.tenantId, input.agentId, "idle", JSON.stringify(input.agent), input.workspaceId, input.environmentId ?? null, input.loopId ?? null, now, now, JSON.stringify(input.delegation ?? null)],
     );
     return rowToSession(rows[0]);
   }

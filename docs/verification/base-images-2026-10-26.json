@@ -1,0 +1,625 @@
+{
+  "issue": 301,
+  "phase": 1,
+  "date": "2026-10-26",
+  "builder": "vfs-dev:~/workspace/yuzhong/oma-env-301-d7cd070 (git bundle of wt/301-warm-pool-base-images)",
+  "images": {
+    "oma-base": {
+      "lock": {
+        "tag": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-base-0.1.2",
+        "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "compressedBytes": 952244068,
+        "unpackedSize": "4.11GB",
+        "layers": 37,
+        "revision": "a28bb52e5e912cf6c01476f46873f8ddd12a822f",
+        "verifiedAt": "2026-10-26"
+      },
+      "build": {
+        "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-base-0.1.2",
+        "imageId": "sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+        "unpackedSize": "4.11GB",
+        "layers": 37,
+        "labels": {
+          "dev.oma.base-image": "oma-base",
+          "org.opencontainers.image.description": "OMA Base Image: ACS code-interpreter, Aliyun mirrors, Node 22, Pi tool runtime, rg/fd, tini",
+          "org.opencontainers.image.revision": "a28bb52e5e912cf6c01476f46873f8ddd12a822f",
+          "org.opencontainers.image.title": "oma-base",
+          "org.opencontainers.image.version": "0.1.2"
+        },
+        "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "compressedBytes": 952244068
+      }
+    },
+    "oma-media": {
+      "lock": {
+        "tag": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-media-0.1.2",
+        "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00",
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "compressedBytes": 982716715,
+        "unpackedSize": "4.21GB",
+        "layers": 42,
+        "revision": "ca5fe3ecaba9ca65f4fb108e1cd86a5ee541d111",
+        "verifiedAt": "2026-10-26"
+      },
+      "build": {
+        "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-media-0.1.2",
+        "imageId": "sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00",
+        "unpackedSize": "4.21GB",
+        "layers": 42,
+        "layersAboveBase": 5,
+        "labels": {
+          "dev.oma.base-image": "oma-media",
+          "org.opencontainers.image.base.name": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+          "org.opencontainers.image.description": "OMA Base Image: oma-base with FFmpeg 9.0.1 (OpenH264, libass), runtime libraries and CJK fonts",
+          "org.opencontainers.image.revision": "ca5fe3ecaba9ca65f4fb108e1cd86a5ee541d111",
+          "org.opencontainers.image.title": "oma-media",
+          "org.opencontainers.image.version": "0.1.2"
+        },
+        "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00",
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "compressedBytes": 982716715
+      }
+    }
+  },
+  "superseded": [
+    {
+      "tag": "oma-base-0.1.0",
+      "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:007d0b4c13559f976ceb1dced5b1687fbbd0d88c6a0fb4563eae4692e07d6ac8",
+      "why": "no libglib2.0-0 (video-production relies on it); npm mirror in /usr/local/etc/npmrc, ignored under the Host's NPM_CONFIG_PREFIX"
+    },
+    {
+      "tag": "oma-media-0.1.0",
+      "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:5a33456bbe238f85ac33559068dd569e4d800d78c001b5072339a90766019439",
+      "why": "built on oma-base-0.1.0"
+    },
+    {
+      "tag": "oma-base-0.1.1",
+      "ref": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:7cb1e7a416f62e87fada57b0e92dff5756d07151716afab93efc1dbf1fc2271b",
+      "why": "npm mirror ignored under the Host's NPM_CONFIG_PREFIX (found by running the image under the command environment)"
+    }
+  ],
+  "verification": {
+    "oma-base-0.1.2": {
+      "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-base-0.1.2",
+      "config": {
+        "entrypoint": [
+          "/usr/bin/tini",
+          "-g",
+          "--"
+        ],
+        "cmd": [
+          "bash",
+          "/root/.jupyter/start-up.sh"
+        ],
+        "user": "root",
+        "workingDir": "/root",
+        "envEqualsAcsBase": true,
+        "proxyEnv": [],
+        "labels": {
+          "dev.oma.base-image": "oma-base",
+          "org.opencontainers.image.description": "OMA Base Image: ACS code-interpreter, Aliyun mirrors, Node 22, Pi tool runtime, rg/fd, tini",
+          "org.opencontainers.image.revision": "a28bb52e5e912cf6c01476f46873f8ddd12a822f",
+          "org.opencontainers.image.title": "oma-base",
+          "org.opencontainers.image.version": "0.1.2"
+        }
+      },
+      "smoke": {
+        "oma-base": {
+          "image": {
+            "name": "oma-base",
+            "version": "0.1.2",
+            "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
+            "node": "22.23.2",
+            "pi": "0.83.0",
+            "debian": {
+              "tini": "0.19.0-1+b3",
+              "procps": "2:4.0.2-3",
+              "unzip": "6.0-28+deb12u1",
+              "libglib2.0-0": "2.74.6-2+deb12u9"
+            }
+          },
+          "ok": true,
+          "checks": [
+            {
+              "name": "versions",
+              "ok": true,
+              "details": {
+                "node": "v22.23.2",
+                "pi": "0.83.0",
+                "rg": "15.1.0",
+                "fd": "10.4.2",
+                "tini": "0.19.0",
+                "debian": {
+                  "libglib2.0-0": "2.74.6-2+deb12u9",
+                  "procps": "2:4.0.2-3",
+                  "tini": "0.19.0-1+b3",
+                  "unzip": "6.0-28+deb12u1"
+                }
+              }
+            },
+            {
+              "name": "pi_native_tools",
+              "ok": true,
+              "details": {
+                "version": "0.83.0",
+                "tools": [
+                  "read",
+                  "write",
+                  "edit",
+                  "ls",
+                  "find",
+                  "grep",
+                  "bash"
+                ],
+                "ok": true
+              }
+            },
+            {
+              "name": "native_search",
+              "ok": true,
+              "details": {
+                "rg": "unicode, brace glob, .gitignore",
+                "fd": "basename glob, .gitignore"
+              }
+            },
+            {
+              "name": "python_and_mirrors",
+              "ok": true,
+              "details": {
+                "python3": "/opt/venv",
+                "pip": "https://mirrors.aliyun.com/pypi/simple/",
+                "npm": "https://registry.npmmirror.com/",
+                "apt": [
+                  "https://mirrors.aliyun.com/debian",
+                  "https://mirrors.aliyun.com/debian-security"
+                ]
+              }
+            },
+            {
+              "name": "utilities",
+              "ok": true,
+              "details": {
+                "ps": "own process listed",
+                "unzip": "archive extracted"
+              }
+            },
+            {
+              "name": "home_layout",
+              "ok": true,
+              "details": {
+                "owner": "user:user",
+                "entries": [
+                  ".bash_logout",
+                  ".bashrc",
+                  ".profile"
+                ],
+                "writable": true
+              }
+            },
+            {
+              "name": "write_manifest",
+              "ok": true,
+              "details": {
+                "dpkg": 275,
+                "pip": {
+                  "/opt/venv": 173,
+                  "/usr": 3
+                },
+                "npmProjects": [
+                  "/opt/oma-pi-tools"
+                ],
+                "binaries": [
+                  "curl",
+                  "fd",
+                  "git",
+                  "jq",
+                  "node",
+                  "npm",
+                  "pip3",
+                  "python3",
+                  "rg",
+                  "tini"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "startup": {
+        "jupyter": "healthy",
+        "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh"
+      },
+      "sigterm": {
+        "exitCode": 143,
+        "elapsedMs": 134
+      }
+    },
+    "oma-media-0.1.2": {
+      "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:oma-media-0.1.2",
+      "config": {
+        "entrypoint": [
+          "/usr/bin/tini",
+          "-g",
+          "--"
+        ],
+        "cmd": [
+          "bash",
+          "/root/.jupyter/start-up.sh"
+        ],
+        "user": "root",
+        "workingDir": "/root",
+        "envEqualsAcsBase": true,
+        "proxyEnv": [],
+        "labels": {
+          "dev.oma.base-image": "oma-media",
+          "org.opencontainers.image.base.name": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+          "org.opencontainers.image.description": "OMA Base Image: oma-base with FFmpeg 9.0.1 (OpenH264, libass), runtime libraries and CJK fonts",
+          "org.opencontainers.image.revision": "ca5fe3ecaba9ca65f4fb108e1cd86a5ee541d111",
+          "org.opencontainers.image.title": "oma-media",
+          "org.opencontainers.image.version": "0.1.2"
+        }
+      },
+      "smoke": {
+        "oma-base": {
+          "image": {
+            "name": "oma-base",
+            "version": "0.1.2",
+            "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
+            "node": "22.23.2",
+            "pi": "0.83.0",
+            "debian": {
+              "tini": "0.19.0-1+b3",
+              "procps": "2:4.0.2-3",
+              "unzip": "6.0-28+deb12u1",
+              "libglib2.0-0": "2.74.6-2+deb12u9"
+            }
+          },
+          "ok": true,
+          "checks": [
+            {
+              "name": "versions",
+              "ok": true,
+              "details": {
+                "node": "v22.23.2",
+                "pi": "0.83.0",
+                "rg": "15.1.0",
+                "fd": "10.4.2",
+                "tini": "0.19.0",
+                "debian": {
+                  "libglib2.0-0": "2.74.6-2+deb12u9",
+                  "procps": "2:4.0.2-3",
+                  "tini": "0.19.0-1+b3",
+                  "unzip": "6.0-28+deb12u1"
+                }
+              }
+            },
+            {
+              "name": "pi_native_tools",
+              "ok": true,
+              "details": {
+                "version": "0.83.0",
+                "tools": [
+                  "read",
+                  "write",
+                  "edit",
+                  "ls",
+                  "find",
+                  "grep",
+                  "bash"
+                ],
+                "ok": true
+              }
+            },
+            {
+              "name": "native_search",
+              "ok": true,
+              "details": {
+                "rg": "unicode, brace glob, .gitignore",
+                "fd": "basename glob, .gitignore"
+              }
+            },
+            {
+              "name": "python_and_mirrors",
+              "ok": true,
+              "details": {
+                "python3": "/opt/venv",
+                "pip": "https://mirrors.aliyun.com/pypi/simple/",
+                "npm": "https://registry.npmmirror.com/",
+                "apt": [
+                  "https://mirrors.aliyun.com/debian",
+                  "https://mirrors.aliyun.com/debian-security"
+                ]
+              }
+            },
+            {
+              "name": "utilities",
+              "ok": true,
+              "details": {
+                "ps": "own process listed",
+                "unzip": "archive extracted"
+              }
+            },
+            {
+              "name": "home_layout",
+              "ok": true,
+              "details": {
+                "owner": "user:user",
+                "entries": [
+                  ".bash_logout",
+                  ".bashrc",
+                  ".profile"
+                ],
+                "writable": true
+              }
+            },
+            {
+              "name": "write_manifest",
+              "ok": true,
+              "details": {
+                "dpkg": 289,
+                "pip": {
+                  "/opt/venv": 173,
+                  "/usr": 3
+                },
+                "npmProjects": [
+                  "/opt/oma-pi-tools"
+                ],
+                "binaries": [
+                  "curl",
+                  "fd",
+                  "ffmpeg",
+                  "ffprobe",
+                  "git",
+                  "jq",
+                  "node",
+                  "npm",
+                  "pip3",
+                  "python3",
+                  "rg",
+                  "tini"
+                ]
+              }
+            }
+          ]
+        },
+        "oma-media": {
+          "image": {
+            "name": "oma-media",
+            "version": "0.1.2",
+            "baseImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390",
+            "ffmpeg": "9.0.1"
+          },
+          "ok": true,
+          "checks": [
+            {
+              "name": "ffmpeg_build",
+              "ok": true,
+              "details": {
+                "ffmpeg": "9.0.1",
+                "ffprobe": "9.0.1",
+                "encoders": [
+                  "libopenh264",
+                  "libx264",
+                  "libx265",
+                  "libvpx-vp9",
+                  "libaom-av1",
+                  "libmp3lame",
+                  "libopus",
+                  "libvorbis",
+                  "libwebp",
+                  "aac"
+                ],
+                "filters": [
+                  "subtitles",
+                  "ass",
+                  "drawtext"
+                ],
+                "packages": [
+                  "fontconfig",
+                  "fonts-noto-cjk",
+                  "fonts-dejavu-core",
+                  "libass9",
+                  "libopenh264-7",
+                  "libx264-164",
+                  "libx265-199",
+                  "libharfbuzz0b",
+                  "libfreetype6"
+                ]
+              }
+            },
+            {
+              "name": "encode_libopenh264",
+              "ok": true,
+              "details": {
+                "video": "h264",
+                "audio": "aac",
+                "size": [
+                  320,
+                  240
+                ],
+                "duration": 2.0
+              }
+            },
+            {
+              "name": "encode_libx264",
+              "ok": true,
+              "details": {
+                "video": "h264",
+                "audio": "aac",
+                "size": [
+                  320,
+                  240
+                ],
+                "duration": 2.0
+              }
+            },
+            {
+              "name": "subtitles_libass_cjk",
+              "ok": true,
+              "details": {
+                "srt": {
+                  "litPixels": 169,
+                  "video": "h264",
+                  "audio": null,
+                  "size": [
+                    320,
+                    240
+                  ],
+                  "duration": 1.0
+                },
+                "ass": {
+                  "litPixels": 423,
+                  "video": "h264",
+                  "audio": null,
+                  "size": [
+                    320,
+                    240
+                  ],
+                  "duration": 1.0
+                }
+              }
+            },
+            {
+              "name": "fonts",
+              "ok": true,
+              "details": {
+                "cjk": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "zhFamilies": 15,
+                "dejavu": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+              }
+            },
+            {
+              "name": "home_untouched",
+              "ok": true,
+              "details": []
+            }
+          ]
+        }
+      },
+      "startup": {
+        "jupyter": "healthy",
+        "pid1": "/usr/bin/tini -g -- bash /root/.jupyter/start-up.sh"
+      },
+      "sigterm": {
+        "exitCode": 143,
+        "elapsedMs": 120
+      }
+    }
+  },
+  "sigtermReference": {
+    "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d",
+    "pid1": "bash /root/.jupyter/start-up.sh",
+    "result": "still running 15049 ms after docker kill --signal TERM (docker run --network none on vfs-dev, after Jupyter was healthy)"
+  },
+  "writeManifest": {
+    "oma-base-0.1.2": {
+      "ms": 1779,
+      "bytes": 32671,
+      "dpkg": 275,
+      "pip": {
+        "/opt/venv": 173,
+        "/usr": 3
+      },
+      "npmProjects": {
+        "/opt/oma-pi-tools": 140
+      },
+      "binaries": [
+        "node v22.23.2",
+        "npm 10.8.2",
+        "python3 3.11.2 (/opt/venv)",
+        "pip 23.0.1",
+        "tini 0.19.0",
+        "rg 15.1.0",
+        "fd 10.4.2",
+        "git 2.39.5",
+        "curl 7.88.1",
+        "jq 1.6"
+      ]
+    },
+    "oma-media-0.1.2": {
+      "ms": 1897,
+      "bytes": 34394,
+      "dpkg": 289,
+      "pip": {
+        "/opt/venv": 173,
+        "/usr": 3
+      },
+      "npmProjects": {
+        "/opt/oma-pi-tools": 140
+      },
+      "binaries": [
+        "... as oma-base",
+        "ffmpeg 9.0.1",
+        "ffprobe 9.0.1"
+      ]
+    }
+  },
+  "baseSecret": {
+    "liveTemplate": "sandbox-system/auto-story-v2 generation 20, read 2026-10-26",
+    "podEnvSecretKeyRefs": [
+      "GEMINI_API_KEY",
+      "GEMINI_AUDIO_MODEL",
+      "GEMINI_VIDEO_MODEL",
+      "GOOGLE_API_KEY",
+      "MEDIAKIT_API_KEY",
+      "MEDIAKIT_RUNTIME",
+      "MEDIAKIT_SURFACE",
+      "OPENGROVE_WW_ACCESS_TOKEN",
+      "OPENGROVE_WW_BASE_URL",
+      "OSSUTIL_BIN",
+      "OSS_READ_ACCESS_KEY_ID",
+      "OSS_READ_ACCESS_KEY_SECRET",
+      "OSS_READ_BUCKET",
+      "OSS_READ_ENDPOINT",
+      "OSS_READ_REGION",
+      "OSS_READ_TABLE_ID",
+      "RUNTIME_ENV",
+      "VFS_TOKEN"
+    ],
+    "podEnvRefsMissingFromSecret": [
+      "GEMINI_API_KEY",
+      "GEMINI_AUDIO_MODEL"
+    ],
+    "secretEnvKeys": [
+      "GEMINI_VIDEO_MODEL",
+      "GOOGLE_API_KEY",
+      "HTTPS_PROXY",
+      "HTTP_PROXY",
+      "IS_TEST",
+      "MEDIAKIT_API_KEY",
+      "MEDIAKIT_RUNTIME",
+      "MEDIAKIT_SURFACE",
+      "NO_PROXY",
+      "OPENGROVE_WW_ACCESS_TOKEN",
+      "OPENGROVE_WW_BASE_URL",
+      "OSSUTIL_BIN",
+      "OSS_READ_ACCESS_KEY_ID",
+      "OSS_READ_ACCESS_KEY_SECRET",
+      "OSS_READ_BUCKET",
+      "OSS_READ_ENDPOINT",
+      "OSS_READ_REGION",
+      "OSS_READ_TABLE_ID",
+      "RUNTIME_ENV",
+      "VFS_OSS_AK",
+      "VFS_OSS_SK",
+      "VFS_TOKEN",
+      "http_proxy",
+      "https_proxy",
+      "no_proxy"
+    ],
+    "secretFileKeys": [],
+    "createEnvCheck": "agents.kruise.io/init-runtime-request of the 2 claimed auto-story-v2 Sandboxes (key names only): 36 create env names, all 25 base-secret keys present, plus the 11 WORKSPACE_ENV names",
+    "sourceEnv": "no source.env volume in the live template and no source.env key in base-secret; grep -rIl auto-story-source over /etc /opt /root /usr/local/bin /home of the live image: no match"
+  },
+  "agentTemplateOverrides": {
+    "oma_test": {
+      "<none>": 38,
+      "oma-scale-test-20261021": 8,
+      "auto-story-v2": 1,
+      "oma-scale-test-20261022": 1
+    },
+    "oma": "not readable by the test role (ADR-0024: none set)"
+  }
+}

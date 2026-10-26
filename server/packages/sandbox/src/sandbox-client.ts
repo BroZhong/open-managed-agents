@@ -90,10 +90,38 @@ export interface SandboxFileEntry {
   mtimeMs: number;
 }
 
+/**
+ * The create metadata key the gateway claims a Warm Pool Sandbox with,
+ * naming the image it runs (ADR-0024).
+ */
+export const CLAIM_IMAGE_METADATA = "e2b.agents.kruise.io/image";
+
+/**
+ * Whether `image` names one image by digest: `<repository>@sha256:<64 hex>`,
+ * with no tag. The Warm Pool compares the claim's image with its own as
+ * strings, so a Sandbox claimed with the pool's exact reference keeps its
+ * container (ADR-0024).
+ */
+export function isDigestPinnedImage(image: string | undefined): image is string {
+  return image !== undefined
+    && /^(?:[A-Za-z0-9.-]+(?::\d+)?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/.test(image);
+}
+
+/** The `sha256:<64 hex>` digest of a digest-pinned image; throws for any other reference. */
+export function imageDigest(image: string): string {
+  if (!isDigestPinnedImage(image)) throw new Error(`${image} is not an image pinned by digest`);
+  return image.slice(image.lastIndexOf("@") + 1);
+}
+
 /** Options for creating a sandbox. */
 export interface SandboxCreateOptions {
-  /** Container image / e2b template the sandbox runtime should use. */
-  image?: string;
+  /**
+   * The image the Sandbox runs, pinned by digest (see
+   * {@link isDigestPinnedImage}). A backend with a Warm Pool claims a warm
+   * Sandbox and, unless the pool runs this exact image, swaps its container
+   * to it in place (ADR-0024).
+   */
+  image: string;
   /** Environment variables baked into the sandbox runtime. */
   env?: Record<string, string>;
   /** Free-form labels/metadata (e.g. sessionId, workspaceId) for tracing. */
@@ -121,6 +149,22 @@ export class SandboxCreateRejected extends Error {
  */
 export interface SandboxHandle {
   id: string;
+  /** How the create claimed the Sandbox from the Warm Pool; absent for a backend without one. */
+  claim?: SandboxClaim;
+}
+
+/** A Warm Pool claim (ADR-0024), as `span.sandbox_prepare_end` records it. */
+export interface SandboxClaim {
+  /** The image digest the Sandbox was claimed with. */
+  image: string;
+  /**
+   * Whether the claim replaced the warm Sandbox's container with `image` in
+   * place; false for a plain claim of the pool's own image and for a cold
+   * start. Absent when it could not be observed.
+   */
+  swapped?: boolean;
+  /** How long the gateway's create (the claim, including any swap) took. */
+  claimMs: number;
 }
 
 /** One Sandbox as the gateway's list (`GET /v2/sandboxes`) returns it. */

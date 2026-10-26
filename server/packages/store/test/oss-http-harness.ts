@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 /** A repeatable OSS wire fixture: the production SDK still serializes, signs,
  * sends and parses every request. No cloud credentials or live Bucket needed. */
 export async function createOSSHTTPHarness(options: { missingBucket?: boolean; customDomain?: boolean } = {}) {
-  const objects = new Map<string, { body: Buffer; contentType: string }>();
+  const objects = new Map<string, { body: Buffer; contentType: string; meta: Record<string, string> }>();
   const requests: Array<{ method: string; key: string }> = [];
   const xml = (value: string) => value.replace(/[<>&'\"]/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[char]!);
   const server = createServer(async (request, response) => {
@@ -43,7 +43,9 @@ export async function createOSSHTTPHarness(options: { missingBucket?: boolean; c
     if (request.method === "PUT") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      objects.set(key, { body: Buffer.concat(chunks), contentType: request.headers["content-type"] ?? "application/octet-stream" });
+      const meta = Object.fromEntries(Object.entries(request.headers)
+        .filter(([name, value]) => name.startsWith("x-oss-meta-") && typeof value === "string") as [string, string][]);
+      objects.set(key, { body: Buffer.concat(chunks), contentType: request.headers["content-type"] ?? "application/octet-stream", meta });
       response.writeHead(200, { etag: '"fixture-etag"' });
       response.end();
       return;
@@ -63,7 +65,7 @@ export async function createOSSHTTPHarness(options: { missingBucket?: boolean; c
     const headers: Record<string, string | number> = {
       "content-type": url.searchParams.get("response-content-type") ?? object.contentType,
       "content-length": object.body.length,
-      etag: '"fixture-etag"', "accept-ranges": "bytes",
+      etag: '"fixture-etag"', "accept-ranges": "bytes", ...object.meta,
     };
     const disposition = url.searchParams.get("response-content-disposition");
     if (disposition) headers["content-disposition"] = disposition;

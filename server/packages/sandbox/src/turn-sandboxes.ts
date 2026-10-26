@@ -1,7 +1,8 @@
 import type { Agent, DelegationStore, PendingEventFence, SandboxActivity, Session, SessionStore } from "@oma-server/store";
-import { environmentBindingId, workspaceObjectPrefix } from "@oma-server/store";
+import { sandboxBindingId, workspaceObjectPrefix } from "@oma-server/store";
 import type { ToolExecutor } from "@open-managed-agents/adapter-core";
-import type { EnvSpec, SandboxEnvironmentBinding, SandboxManager, SandboxPrepareObserver, SkillInstallObserver } from "./sandbox-manager.js";
+import type { CommandVariables, EnvSpec, SandboxBinding, SandboxManager, SandboxPrepareObserver, SkillInstallObserver } from "./sandbox-manager.js";
+import { PLATFORM_DEFAULT_ENV } from "./environment-variables.js";
 import type { SkillSet } from "./skill-install.js";
 import { turnExecutor, type TurnExecutorGuard } from "./turn-executor.js";
 import { WORKSPACE_ENV } from "./workspace-environment.js";
@@ -22,7 +23,7 @@ export function isSandboxedAgent(agent: Pick<Agent, "sandbox">): boolean {
 export interface SandboxLeaseRequest extends TurnExecutorGuard {
   /** The Turn's Session, as read under its claim. */
   session: Session;
-  /** The Agent configuration the Turn runs with: whether it is sandboxed, its image and env. */
+  /** The Agent configuration the Turn runs with: whether it is sandboxed, and its env. */
   agent: Agent;
   /** The attempt's claim: the Turn's use of the binding is recorded under it. */
   fence: PendingEventFence;
@@ -36,7 +37,7 @@ export interface SandboxLeaseRequest extends TurnExecutorGuard {
   skills: SkillSet;
   /** Told of every Skill Install the Sandbox runs for the Turn, a cold Sandbox's included. */
   skillInstalls?: SkillInstallObserver;
-  /** Told of every preparation of the Turn's environment: the Turn-start connect and each operation's ensure. */
+  /** Told of every preparation of the Turn's Sandbox: the Turn-start connect and each operation's ensure. */
   sandboxPrepares?: SandboxPrepareObserver;
 }
 
@@ -65,8 +66,8 @@ export interface SandboxLease {
   /**
    * The Turn's executor (ADR-0005 §1), fenced by ownership of the Turn: a
    * fresh capability per Turn, so stale owners cannot start new Sandbox work.
-   * Every operation waits for the Turn's preparation and Skill Install. An
-   * environment failure fails the operations that met it with a
+   * Every operation waits for the Turn's preparation and Skill Install. A
+   * Sandbox unavailability fails the operations that met it with a
    * SandboxUnavailable, a tool error the model can retry; it never ends the
    * Turn (ADR-0023).
    */
@@ -109,27 +110,38 @@ export interface TurnSandboxes {
   retrySettlements(sessionId?: string): Promise<void>;
 }
 
+/**
+ * The Environments Sessions run in, as the Host resolves them for their
+ * Sandboxes (ADR-0024). Each call reads the Environment as it is now,
+ * deleted or not.
+ */
+export interface SandboxEnvironments {
+  /** The image it serves; null when it serves none or the Tenant cannot see it. */
+  image(tenantId: string, environmentId: string): Promise<string | null>;
+  /**
+   * Its variables as a command receives them: plain values, Tenant secrets
+   * opened, platform secret references resolved. Empty when the Tenant
+   * cannot see it.
+   */
+  variables(tenantId: string, environmentId: string): Promise<Record<string, string>>;
+}
+
 export interface TurnSandboxesDeps {
   /** The single owner of sandbox lifecycle (ADR-0005 §1, design doc §2/§6). */
   manager: SandboxManager;
-  /** Durable environment bindings, the resource uses that protect them, and their Skill Install records. */
-  bindings: Pick<DelegationStore, "withEnvironmentLock" | "installedSkillSet" | "recordSkillSetInstall"
+  /** Durable Sandbox Bindings, the resource uses that protect them, and their Skill Install records. */
+  bindings: Pick<DelegationStore, "withBindingLock" | "installedSkillSet" | "recordSkillSetInstall"
     | "acquireResourceUse" | "releaseResourceUse" | "hasResourceUsers">;
   /** A terminated Session's Turn prepares no Sandbox. */
   sessions: Pick<SessionStore, "getById">;
   /** Deployment-owned mount identity; the prefix derives from Session ownership. */
   workspaceMount: Omit<WorkspaceMountSpec, "prefix">;
   /**
-   * Deployment-wide default sandbox environment variables, merged into every
-   * sandboxed Agent's `EnvSpec.env` (the Agent's own `sandbox.env` wins per key).
-   * Used to inject a shared secret a bundled CLI needs — e.g. `VFS_TOKEN` for the
-   * `vfs-cli` baked into the custom sandbox image — without requiring every Agent
-   * to carry the token in its own config. Sourced from server config (a K8s
-   * Secret → env), so the token never lives in code or in the Agent record.
+   * The Environments Sessions run in (ADR-0024): a Session claims its
+   * Sandboxes with the image its Environment serves, and runs every command
+   * with its variables.
    */
-  defaultSandboxEnv?: Record<string, string>;
-  /** Deployment-managed sandbox variables, explicitly scoped per Agent id. */
-  managedSandboxEnvByAgentId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  environments: SandboxEnvironments;
   /** Observe failures to record settlement off a Turn's path (a watched runtime's, a retry's) without unhandled rejections. */
   onError?: (failure: { sessionId: string; error: unknown }) => void;
 }
@@ -148,10 +160,15 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     const { session, agent, fence, signal } = request;
     if (!isSandboxedAgent(agent)) return null;
     const { manager, bindings } = this.deps;
+    const environmentId = environmentOf(session, agent);
+    const image = environmentId ? await this.imageFor(session.tenantId, environmentId) : undefined;
     // `open` is cheap: it starts no Sandbox, the first filesystem or code
     // primitive does, so a pure-chat Turn spins nothing up.
-    const sandbox = manager.open(this.specFor(session, agent, request.skills), this.bindingFor(session));
-    const activity: SandboxActivity = { bindingId: environmentBindingId(session), sessionId: session.id, fence };
+    const spec = this.specFor(session, request.skills, environmentId, image);
+    const sandbox = environmentId
+      ? manager.open(spec, this.bindingFor(session), this.variablesFor(session.tenantId, environmentId))
+      : manager.open(spec, this.bindingFor(session));
+    const activity: SandboxActivity = { bindingId: sandboxBindingId(session), sessionId: session.id, fence };
     // The use protects the binding from reclamation while this claim owns
     // the Turn; an admitted activity keeps it until observed settlement.
     await bindings.acquireResourceUse(session.id, activity.bindingId, fence);
@@ -173,7 +190,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     const settledInSandbox = () => sandbox.executionSettled?.() !== false;
     return {
       executor: turnExecutor(sandbox, { assertOwner: request.assertOwner, skillInstallFailed: request.skillInstallFailed,
-        environmentFailed: request.environmentFailed }),
+        sandboxUnavailable: request.sandboxUnavailable }),
       prepared: () => prepared,
       checkWorkspace: () => sandbox.checkWorkspace(),
       release: async (evidence) => {
@@ -220,16 +237,16 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
   }
 
   /**
-   * The Session's durable environment binding, as its Sandbox session
+   * The Session's durable Sandbox Binding, as its Sandbox session
    * coordinates through it. A Child Session shares its root's, and so its
    * Skill Install record.
    */
-  private bindingFor(session: Session): SandboxEnvironmentBinding {
-    const bindingId = environmentBindingId(session);
+  private bindingFor(session: Session): SandboxBinding {
+    const bindingId = sandboxBindingId(session);
     const { bindings, sessions } = this.deps;
     return {
       id: bindingId,
-      withLock: (work) => bindings.withEnvironmentLock(bindingId, work),
+      withLock: (work) => bindings.withBindingLock(bindingId, work),
       canReclaim: async () => !await bindings.hasResourceUsers(bindingId),
       canExecute: async () => (await sessions.getById(session.id))?.status !== "terminated",
       installedSkills: () => bindings.installedSkillSet(bindingId),
@@ -238,30 +255,60 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
   }
 
   /**
+   * The image the Turn's Sandbox is created with, should it create one
+   * (ADR-0024): the one the Environment serves now, deleted or not, so
+   * Sandboxes created after a rebuild run the new image while running ones
+   * keep theirs until reclaimed. None for an Environment that cannot be read
+   * or never served one: the Sandbox Manager then fails each operation that
+   * needs a Sandbox (`environment_has_no_image`), never claims another image.
+   */
+  private async imageFor(tenantId: string, environmentId: string): Promise<string | undefined> {
+    return await this.deps.environments.image(tenantId, environmentId) ?? undefined;
+  }
+
+  /**
+   * What each command runs with (ADR-0024), lowest first: the platform
+   * defaults, the Environment's variables read for that command, so a
+   * change applies from the next one, then the Workspace variables. One
+   * primary-key read per command: an edit is made on an API pod and must
+   * reach every Runner's next command, which no process-local cache can
+   * promise without a read.
+   */
+  private variablesFor(tenantId: string, environmentId: string): CommandVariables {
+    const { environments } = this.deps;
+    return async () => ({ ...PLATFORM_DEFAULT_ENV, ...await environments.variables(tenantId, environmentId), ...WORKSPACE_ENV });
+  }
+
+  /**
    * Compute the complete recipe the SandboxManager needs for this Session
    * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
-   * Agent's image/env, and the Skill Set to install at `/skills/<skill-name>`
-   * outside the persistent Workspace.
-   *
-   * The sandbox env is the deployment-wide `defaultSandboxEnv` overlaid with
-   * the Agent's own `sandbox.env`, then any Host-managed values explicitly
-   * scoped to this Agent id. Agents may override ordinary defaults (e.g.
-   * `VFS_TOKEN`); managed values never cross an Agent boundary.
+   * Environment and its image, and the Skill Set to install at
+   * `/skills/<skill-name>` outside the persistent Workspace. The Sandbox is
+   * created with the Workspace variables only: paths, no secret, so its
+   * creation (and its Sandbox CR) carries none of the Environment's
+   * variables, and Host-internal commands see the same paths as every
+   * command. Commands receive the rest (see variablesFor).
    */
-  private specFor(session: Session, agent: Agent, skills: SkillSet): EnvSpec {
-    const mergedEnv = {
-      ...this.deps.defaultSandboxEnv,
-      ...agent.sandbox?.env,
-      ...this.deps.managedSandboxEnvByAgentId?.[agent.id],
-      ...WORKSPACE_ENV,
-    };
+  private specFor(session: Session, skills: SkillSet, environmentId: string | undefined, image: string | undefined): EnvSpec {
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
       workspaceMount: { ...this.deps.workspaceMount, prefix: workspaceObjectPrefix(session.tenantId, session.workspaceId) },
-      image: agent.sandbox?.image,
-      env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
+      ...(environmentId ? { environmentId } : {}),
+      image,
+      env: { ...WORKSPACE_ENV },
       skills,
     };
   }
+}
+
+/**
+ * The Environment a Turn's Sandbox is created from (ADR-0024): the one its
+ * Session froze at creation; for a Session created while its Agent ran
+ * without a Sandbox, which froze none, the Agent's now. Every Sandboxed
+ * Agent has one since migration 0029; without either, operations that need
+ * a Sandbox fail with `no_environment`.
+ */
+function environmentOf(session: Session, agent: Agent): string | undefined {
+  return session.environmentId ?? agent.environmentId;
 }

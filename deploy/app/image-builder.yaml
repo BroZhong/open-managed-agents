@@ -1,0 +1,209 @@
+# oma-image-builder (ADR-0024 "Building"): the server image's third role,
+# one replica per environment. It claims Environment Builds from PostgreSQL,
+# runs each in a build pod in its own namespace, verifies the pushed image in
+# a Sandbox claimed from the Warm Pool and records the outcome; logs go to the
+# Host Bucket. Only it holds the rights to run build pods (and, with #305, to
+# update the Warm Pool). Namespace, environment-specific configuration and
+# the image come from deploy/environments/<env>; do not apply this base
+# directly. Release order: Base Images, then this builder (wait for rebuilt
+# Environments to be ready), then the Runner (deploy/README.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oma-image-builder-config
+data:
+  PORT: '3002'
+  PG_HOST: pgm-uf6fh394661t62gb.pg.rds.aliyuncs.com
+  PG_PORT: '5432'
+  PG_DATABASE: supabase_db
+  PG_USER: oma_app
+  PG_SCHEMA: oma
+  PG_POOL_MAX: '5'
+  PG_SSL: 'false'
+  PG_ENSURE_SCHEMA: 'false'
+  # Build logs: __oma/environment-builds/<tenant or platform>/<build>.log
+  WORKSPACE_OSS_REGION: oss-cn-shanghai
+  WORKSPACE_OSS_BUCKET: agentry
+  WORKSPACE_OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  WORKSPACE_OSS_PUBLIC_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  # The image tag's prefix (<environment>-<envId>-<buildId>) and the label of
+  # build pods and verification Sandboxes; the test overlay sets test.
+  OMA_ENVIRONMENT: production
+  ENVIRONMENT_IMAGE_REPOSITORY: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-environments
+  # The Base Images by digest (sandbox/oma-base/image.lock.json and
+  # sandbox/oma-media/image.lock.json). A new digest is released here first.
+  BASE_IMAGE_OMA_BASE: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:618d3a4f3114b8777998c9d75407f20a531396924c827cd4f3de9595e4418390
+  BASE_IMAGE_OMA_MEDIA: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:9a57f901b5df1aa280390b0256aac93c8e724aacb1f9f2831e9ccd441d90ac00
+  # quay.io/buildah/stable:v1.43.5 (#299), mirrored by
+  # deploy/scripts/build-base-images.sh --push buildah with its digest kept.
+  BUILDAH_IMAGE: registry-vpc.cn-shanghai.aliyuncs.com/welltop/buildah@sha256:4cb71c73553ba30c0891a004636a43ee3e0aa0a04ef6cba760404b2c87949d5c
+  # The push credential mounted into build pods (a dockerconfigjson Secret
+  # that can write welltop/*; ADR-0024 accepted risk), and what pulls buildah.
+  BUILD_REGISTRY_AUTH_SECRET: ali-shanghai
+  BUILD_IMAGE_PULL_SECRET: ali-shanghai
+  # Init scripts reach GitHub only through sing-box; the Aliyun mirrors and
+  # cluster addresses stay direct. Passed in build.env, never kept in images.
+  BUILD_PROXY_URL: http://sing-box.oma-infra.svc.cluster.local:7890
+  BUILD_NO_PROXY: localhost,127.0.0.1,::1,.svc,.cluster.local,.aliyuncs.com,.aliyun.com,.npmmirror.com
+  # The Built-in Environments written at startup (sandbox/environments in the image).
+  BUILTIN_ENVIRONMENTS_DIR: /app/sandbox/environments
+  # Verification claims one Sandbox from the Warm Pool (the Runner's pool),
+  # and the builder keeps that pool on the image of WARM_POOL_ENVIRONMENT.
+  SANDBOX_TEMPLATE: auto-story-v2
+  WARM_POOL_NAMESPACE: sandbox-system
+  # Production keeps auto-story-v2 until its release: no pool updates yet.
+  # With the release: env_video_production, SANDBOX_TEMPLATE oma-sandbox,
+  # deploy/image-builder-warm-pool-rbac.yaml applied.
+  WARM_POOL_ENVIRONMENT: ''
+  # acs: create the new image's ACS ImageCache and update the pool only once
+  # it is Ready (needs the oma-image-cache Secret, deploy/README.md); none:
+  # update the pool at once, every refill pulling the whole image.
+  WARM_POOL_IMAGE_CACHE: acs
+  ALIYUN_REGION: cn-shanghai
+  # The network the ImageCache puller uses: the cluster pods' (#299 bench).
+  IMAGE_CACHE_SECURITY_GROUP_ID: sg-uf6bikdzvy9di9y8wp89
+  IMAGE_CACHE_VSWITCH_IDS: vsw-uf6kw2gmpn1psc4yqpgqa,vsw-uf6xsc4rp8k5cpjgcelmu,vsw-uf6x0tny2rxn2lffpc2ro
+  E2B_API_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:8080
+  E2B_SANDBOX_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:7788
+  NO_PROXY: localhost,127.0.0.1,sandbox-manager.sandbox-system.svc.cluster.local
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oma-image-builder
+---
+# Build pods and their context ConfigMaps in the builder's own namespace, and
+# their logs. The Role grants no Secret reads, but a pod it creates may mount
+# any Secret of this namespace: in production that is oma-infra, whose
+# oma-secrets the builder could reach through a pod (ADR-0024 "Consequences
+# and accepted risks"; the remedy is a dedicated build namespace).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oma-image-builder
+rules:
+- apiGroups: ['']
+  resources: [pods]
+  verbs: [create, delete, get, list, watch]
+- apiGroups: ['']
+  resources: [pods/log]
+  verbs: [get]
+- apiGroups: ['']
+  resources: [configmaps]
+  verbs: [create, delete, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oma-image-builder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oma-image-builder
+subjects:
+- kind: ServiceAccount
+  name: oma-image-builder
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oma-image-builder
+  labels:
+    app: oma-image-builder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oma-image-builder
+  # One builder at a time: the old one deletes its pods and releases its
+  # leases on SIGTERM; the new one resumes those builds at once.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: oma-image-builder
+        alibabacloud.com/acs: 'true'
+    spec:
+      serviceAccountName: oma-image-builder
+      imagePullSecrets:
+      - name: ali-shanghai
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: builder
+        image: OMA_BUILDER_IMAGE
+        ports:
+        - containerPort: 3002
+        envFrom:
+        - configMapRef:
+            name: oma-image-builder-config
+        env:
+        - name: BUILD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: PG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: PG_PASSWORD
+        - name: WORKSPACE_OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: WORKSPACE_OSS_ACCESS_KEY_ID
+        - name: WORKSPACE_OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: WORKSPACE_OSS_ACCESS_KEY_SECRET
+        - name: E2B_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: E2B_DOMAIN
+        - name: E2B_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: E2B_API_KEY
+        # A RAM user allowed only acc:CreateImageCache and acc:ListImageCaches
+        # (deploy/README.md); used when WARM_POOL_IMAGE_CACHE=acs.
+        - name: IMAGE_CACHE_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oma-image-cache
+              key: ACCESS_KEY_ID
+              optional: true
+        - name: IMAGE_CACHE_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-image-cache
+              key: ACCESS_KEY_SECRET
+              optional: true
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3002
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        resources:
+          limits:
+            cpu: '1'
+            memory: 2Gi
+        command:
+        - node
+        - --import
+        - tsx
+        - src/builder-server.ts
+        workingDir: /app/server/packages/api

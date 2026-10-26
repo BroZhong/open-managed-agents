@@ -1,4 +1,5 @@
 import { modelProviderRoutes } from "../src/routes/model-providers.js";
+import { environmentRoutes } from "../src/routes/environments.js";
 import { modelThinkingOptionsRoutes } from "../src/routes/model-thinking-options.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -96,6 +97,7 @@ function runtimeOperations(): string[] {
     apiKeyRoutes(adapter),
     mcpCatalogRoutes(),
     modelProviderRoutes(adapter),
+    environmentRoutes(adapter),
     modelThinkingOptionsRoutes(),
     loopRoutes({ agentStore: adapter, loopStore: adapter }),
     workspaceEntityRoutes(adapter, adapter),
@@ -178,6 +180,7 @@ describe("OpenAPI contract", () => {
       apiKeyRoutes(adapter),
       mcpCatalogRoutes(),
     modelProviderRoutes(adapter),
+    environmentRoutes(adapter),
       loopRoutes({ agentStore: adapter, loopStore: adapter }),
       workspaceEntityRoutes(adapter, adapter),
       sessionRoutes({

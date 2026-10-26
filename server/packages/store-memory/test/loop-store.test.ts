@@ -231,4 +231,18 @@ describe("InMemoryLoopStore", () => {
     );
     expect((await pending.peek(scheduled.session.id))?.apiKeyId).toBeUndefined();
   });
+
+  it("runs each Loop Session in its Agent's Environment as of the trigger (ADR-0024)", async () => {
+    const agents = new InMemoryAgentStore();
+    const sessions = new InMemorySessionStore();
+    const loops = new InMemoryLoopStore(agents, sessions, new InMemoryWorkspaceMetadataStore(), new InMemoryPendingEventStore());
+    const agent = await agents.create({ tenantId: "t", name: "A", model: "m", system: "s", runtime: "pi-agent", environmentId: "env_first" });
+    const loop = await loops.create({ tenantId: "t", agentId: agent.id, name: "Review", prompt: "Review.", intervalMinutes: 5,
+      enabled: true, now: new Date("2026-07-14T00:00:00.000Z") });
+    const [first] = await loops.dispatchDue(new Date("2026-07-14T00:05:00.000Z"), 1);
+    await agents.update(agent.id, { environmentId: "env_second" });
+    const second = await loops.dispatchNow(loop.id, "t", new Date("2026-07-14T00:06:00.000Z"));
+    expect((await sessions.getById(first.session.id))?.environmentId).toBe("env_first");
+    expect((await sessions.getById(second!.session.id))?.environmentId).toBe("env_second");
+  });
 });

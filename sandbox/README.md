@@ -1,39 +1,45 @@
-# Sandbox templates
+# Sandboxes
 
-`auto-story-v2` is the only maintained template, deployed in `sandbox-system`
-on the Shanghai (`cn-shanghai`) `agent-platform` cluster. Its SandboxSet name
-is the E2B template ID. The Host default and SDK fallback both select it.
+Every Sandbox is claimed from one **Warm Pool** per deployment environment
+and runs an image pinned by digest (ADR-0024). The Runner's `SANDBOX_TEMPLATE`
+names the pool (the SandboxSet in `sandbox-system` on the Shanghai
+`agent-platform` cluster); each claim passes the image of the Session's
+Environment as `e2b.agents.kruise.io/image`: the pool's own image, byte for
+byte, is a plain claim; any other is swapped into the claimed Sandbox in
+place.
 
-- [Image recipe and verification](auto-story-v2/README.md)
-- [SandboxSet manifest](auto-story-v2/sandboxset.yaml), including the deployed image digest
+| Directory | Contents |
+| --- | --- |
+| [oma-base](oma-base/README.md) | Base Image: ACS code-interpreter, Aliyun mirrors, Node 22 + Pi tool runtime, rg/fd, tini, `write-manifest` |
+| [oma-media](oma-media/README.md) | Base Image: oma-base + FFmpeg 9.0.1 (OpenH264, libass) and CJK fonts |
+| [warm-pool](warm-pool/oma-test-sandbox.yaml) | Warm Pool manifests: `oma-test-sandbox` (oma-test, 1 replica) |
+| [environments](environments/video-production/README.md) | Built-in Environments (`video-production`) built on a Base Image |
+| [auto-story-v2](auto-story-v2/README.md) | Production's pool and image until it moves to the `video-production` Environment |
+
 - [OSS Workspace infrastructure](../deploy/oss-workspace/README.md)
 - [Host and Web deployment](../deploy/README.md)
 
-Image recipes and template manifests belong in this directory. Application
-and shared infrastructure declarations belong in `deploy/`. Business Agent
-presets, prompts, workflows and Skill content are supplied outside this
-repository; the platform's Skill Library and Agent Skill projections remain
-supported. The image retains its existing VFS, MediaKit, FFmpeg and Gemini tools.
+Base Images are built by hand on `vfs-dev` (amd64) and pushed to
+`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox` under new tags
+(`oma-base-<version>`, `oma-media-<version>`); each recipe records its
+published digest in `image.lock.json`. Building never changes a pool.
 
-## Build and deploy
+## Warm Pools
 
-From the repository root, build the image and run its offline checks:
+| Environment | SandboxSet | Image |
+| --- | --- | --- |
+| oma-test | `oma-test-sandbox` ([manifest](warm-pool/oma-test-sandbox.yaml)) | in the manifest; the image builder sets it to `video-production`'s |
+| production | `auto-story-v2` ([manifest](auto-story-v2/sandboxset.yaml)) | the live image (0.3.3, `67a46af6…`); this repository's manifest still pins an older image, so compare with the live pool before applying it |
 
-```bash
-bash build.sh --tag <tag> sandbox
-```
-
-Use an amd64 builder with access to the Shanghai registry. Add `--push` to
-publish the verified image. Building does not update a running SandboxSet.
-To validate or deploy a published image, use the explicit cluster entrypoint:
-
-```bash
-bash deploy/scripts/deploy-sandbox.sh --image <immutable-image>
-bash deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-production
-```
-
-The first command performs a server-side dry-run. The deployment script uses
-`~/.kube/agent-platform-config` and never switches the default context.
+`oma-test-sandbox`'s template carries no secrets (auto-story-v2 still sets
+base-secret as pod env, which only PID 1 sees): every command gets its
+Session's Environment variables from the Runner, which resolves platform
+secret references from `sandbox-system/base-secret`; envd commands see those,
+the create's Workspace paths and `/etc/profile.d`. Create an ACS
+ImageCache for a new pool image before patching the pool: an uncached refill pulls
+the whole image (about 1.9 GB, 73–81 s). `sandbox-system` and the ACS vCPU
+quota are shared with production; `oma-test-sandbox` carries
+`oma.dev/test-only: "true"`.
 
 ## Runtime contract
 
@@ -49,6 +55,15 @@ blocks execution; no local Workspace fallback is created. Completed writes
 survive Sandbox disposal, errors and Interrupt. Concurrent Sessions can write
 the same Workspace; there is no Turn transaction or write lock.
 
-Existing Session sandboxes require rebuilding to use a new image. Agent
-`sandbox.image` overrides remain a platform capability, but this repository
-ships only `auto-story-v2`; retired template names cannot provision a pool.
+A Sandbox keeps the image it was claimed with; existing Session Sandboxes
+need a rebuild to pick up a new image. `span.sandbox_prepare_end` of the
+preparation that claimed a Sandbox records its `image`, whether the claim
+`swapped` it in place, and `claimMs`.
+
+## Built-in Environments
+
+`environments/<name>/` holds the repository's Built-in Environments
+([ADR-0024](../docs/adr/0024-environments.md)): `environment.json` and the
+`init.sh` that the image builder runs on its Base Image.
+[`video-production`](environments/video-production/README.md) replaces
+`auto-story-v2`.

@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { ModelProviderService } from "./lib/model-providers.js";
+import { EnvironmentService } from "./lib/environments.js";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { serve } from "@hono/node-server";
-import { createMemoryStores } from "@oma-server/store-memory";
+import { createMemoryStores, InMemoryEnvironmentBuildLogStore } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
-import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
@@ -28,7 +28,8 @@ let configuredPiAgentAdapter: Adapter = memoryPiAgentAdapter;
 
 async function main() {
   const stores = createMemoryStores();
-  const modelProviderService = new ModelProviderService(stores.modelProviderStore, randomBytes(32).toString("hex"));
+  const secretKey = randomBytes(32).toString("hex");
+  const modelProviderService = new ModelProviderService(stores.modelProviderStore, secretKey);
   configuredPiAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviderService.configureRuntime(stores.sessionStore) });
   const eventStreamHub = new InProcessEventStreamHub();
 
@@ -37,9 +38,6 @@ async function main() {
 
   // In-memory development has no real OSS mount. Use the full server with
   // Workspace OSS configuration to exercise sandbox-backed execution.
-  // Keep Host env validation identical to the full server even though the
-  // in-memory entrypoint has no Sandbox to hand the policy to.
-  sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     delegationStore: stores.delegationStore,
@@ -76,6 +74,10 @@ async function main() {
 
   const app = createApp({
     modelProviderService,
+    environmentService: new EnvironmentService(stores.environmentStore, secretKey, {
+      inUse: (tenantId, id) => stores.agentStore.usesEnvironment(tenantId, id),
+      logs: new InMemoryEnvironmentBuildLogStore(),
+    }),
     thinkingOptions: (tenant, model) => modelProviderService.thinkingOptions(tenant, model, async raw => (await import("@open-managed-agents/adapter-pi-agent")).managedThinkingOptions(raw)),
     sessionShareStore: stores.sessionShareStore,
     delegationStore: stores.delegationStore,

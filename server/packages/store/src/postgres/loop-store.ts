@@ -39,6 +39,7 @@ interface AgentRow {
   mcp_servers: Agent["mcpServers"] | null;
   skills: Agent["skills"] | null;
   sandbox: Agent["sandbox"] | null;
+  environment_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -73,6 +74,7 @@ function rowToAgent(row: AgentRow): Agent {
     mcpServers: row.mcp_servers ?? undefined,
     skills: row.skills ?? undefined,
     sandbox: row.sandbox ?? undefined,
+    environmentId: row.environment_id ?? undefined,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -289,17 +291,19 @@ export class PgLoopStore implements LoopStore {
       title: string | null;
       agent: Agent;
       workspace_id: string;
+      environment_id: string | null;
       loop_id: string | null;
       created_at: Date;
       updated_at: Date;
       terminated_at: Date | null;
     }>(
+      // The Session runs in the Agent's Environment as of this trigger (ADR-0024).
       `INSERT INTO sessions
-        (id, tenant_id, agent_id, status, title, agent, workspace_id, loop_id,
+        (id, tenant_id, agent_id, status, title, agent, workspace_id, environment_id, loop_id,
          created_at, updated_at)
-       VALUES ($1, $2, $3, 'idle', $4, $5, $6, $7, $8, $8)
+       VALUES ($1, $2, $3, 'idle', $4, $5, $6, $7, $8, $9, $9)
        RETURNING *`,
-      [sessionId, row.tenant_id, row.agent_id, row.name, JSON.stringify(agent), workspaceId, row.id, now],
+      [sessionId, row.tenant_id, row.agent_id, row.name, JSON.stringify(agent), workspaceId, agent.environmentId ?? null, row.id, now],
     );
     await client.query(
       `INSERT INTO pending_events
@@ -338,6 +342,7 @@ export class PgLoopStore implements LoopStore {
         updatedAt: new Date(sessionRow.agent.updatedAt),
       },
       workspaceId: sessionRow.workspace_id,
+      environmentId: sessionRow.environment_id ?? undefined,
       loopId: sessionRow.loop_id ?? undefined,
       createdAt: new Date(sessionRow.created_at),
       updatedAt: new Date(sessionRow.updated_at),

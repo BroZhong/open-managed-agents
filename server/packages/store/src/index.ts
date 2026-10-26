@@ -86,7 +86,7 @@ export type {
   PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
-export { PendingEventClaimLostError, EnvironmentBindingChanged } from "./errors.js";
+export { PendingEventClaimLostError, SandboxBindingChanged } from "./errors.js";
 
 export type {
   ApiKeyStore,
@@ -116,6 +116,13 @@ export type {
 
 export { OSSArtifactStore } from "./oss/artifact-store.js";
 export { OSSEventPayloadStore } from "./oss/event-payload-store.js";
+export { OSSEnvironmentBuildLogStore, type OSSBuildLogClient } from "./oss/environment-build-log-store.js";
+export {
+  ENVIRONMENT_BUILD_LOG_MAX_BYTES,
+  environmentBuildLogKey,
+  type EnvironmentBuildLog,
+  type EnvironmentBuildLogStore,
+} from "./interfaces/environment-build-log-store.js";
 export { OSSSkillBundleStore, skillBundleObjectKey } from "./oss/skill-bundle-store.js";
 export type { OSSSkillBundleStoreOptions } from "./oss/skill-bundle-store.js";
 export { EventPayloadCodec, BIG_RESULT_BYTES, lazyEventData, eventPayloadRef } from "./event-payload.js";
@@ -185,8 +192,8 @@ export type {
   SkillSetMember,
 } from "./skill-bundle.js";
 export type * from "./interfaces/delegation-store.js";
-export { TransactionalDelegationStore, delegationFenceLost, environmentBindingId } from "./delegation-store.js";
-export type { DelegationTransaction, DelegationRecord, DelegationTable, EnvironmentRecord } from "./delegation-store.js";
+export { TransactionalDelegationStore, delegationFenceLost, sandboxBindingId } from "./delegation-store.js";
+export type { DelegationTransaction, DelegationRecord, DelegationTable, SandboxBindingRecord } from "./delegation-store.js";
 export { PgDelegationStore } from "./postgres/delegation-store.js";
 
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";
@@ -196,3 +203,28 @@ export { contextPresentation, eventSequenceWidth, presentContextData, presentEve
 export type { ModelProviderStore, ModelProviderRecord } from "./interfaces/model-provider-store.js";
 export { PgModelProviderStore } from "./postgres/model-provider-store.js";
 export { migrateModelProviderCapabilities } from "./postgres/migrate-model-provider-capabilities.js";
+
+export type {
+  Environment,
+  EnvironmentBaseImage,
+  EnvironmentBuild,
+  EnvironmentBuildLease,
+  EnvironmentBuildQueue,
+  EnvironmentBuildRenewal,
+  ClaimedEnvironmentBuild,
+  EnvironmentBuildStatus,
+  EnvironmentBuildSummary,
+  EnvironmentOwner,
+  EnvironmentOwnerType,
+  EnvironmentSecretSource,
+  EnvironmentStatus,
+  EnvironmentStore,
+  EnvironmentStoreCreateInput,
+  EnvironmentStoreUpdate,
+  EnvironmentStoreUpdateInput,
+  EnvironmentVariable,
+  SandboxEnvironmentRecord,
+} from "./interfaces/environment-store.js";
+export { DEFAULT_ENVIRONMENT_ID, ENVIRONMENT_BASE_IMAGES, newEnvironmentId, newEnvironmentBuildId, environmentDefinitionSha256, validateEnvironmentBuildLeaseMs } from "./environment.js";
+export { EnvironmentNameConflictError } from "./errors.js";
+export { PgEnvironmentStore } from "./postgres/environment-store.js";

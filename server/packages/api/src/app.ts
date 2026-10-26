@@ -1,6 +1,8 @@
 import { modelProviderRoutes } from "./routes/model-providers.js";
 import { modelThinkingOptionsRoutes } from "./routes/model-thinking-options.js";
 import type { ModelProviderService } from "./lib/model-providers.js";
+import type { EnvironmentService } from "./lib/environments.js";
+import { environmentRoutes } from "./routes/environments.js";
 import { cors } from "hono/cors";
 import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, DelegationStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillBundleStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -38,6 +40,8 @@ type Env = {
 export interface AppDeps {
   thinkingOptions?: import("./lib/thinking-options.js").ThinkingOptionsReader;
   modelProviderService?: ModelProviderService;
+  /** Environments (ADR-0024); their routes mount only with it. */
+  environmentService?: EnvironmentService;
   sessionShareStore?: SessionShareStore;
   apiKeyStore: ApiKeyStore;
   fullApiKeyStore?: FullApiKeyStore;
@@ -51,8 +55,8 @@ export interface AppDeps {
   pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
   loopStore?: LoopStore;
-  /** Delegation reads, and each Session's Sandbox environment for GET /v1/sessions/{id}. */
-  delegationStore?: DelegationRouteDeps["delegationStore"] & Pick<DelegationStore, "environment">;
+  /** Delegation reads, and each Session's Sandbox state for GET /v1/sessions/{id}. */
+  delegationStore?: DelegationRouteDeps["delegationStore"] & Pick<DelegationStore, "sandbox">;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
@@ -120,10 +124,11 @@ export function createApp(deps: AppDeps) {
   app.route("/", modelThinkingOptionsRoutes(deps.thinkingOptions));
 
   if (deps.modelProviderService) app.route("/", modelProviderRoutes(deps.modelProviderService));
+  if (deps.environmentService) app.route("/", environmentRoutes(deps.environmentService));
 
   // Mount agent routes
   if (deps.agentStore) {
-    app.route("/", agentRoutes(deps.agentStore));
+    app.route("/", agentRoutes(deps.agentStore, deps.environmentService));
   }
 
   if (deps.agentStore && deps.loopStore) {
@@ -133,6 +138,7 @@ export function createApp(deps: AppDeps) {
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
       now: deps.now,
+      environments: deps.environmentService,
     }));
   }
 
@@ -174,7 +180,8 @@ export function createApp(deps: AppDeps) {
       eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
-      environments: deps.delegationStore,
+      sandboxes: deps.delegationStore,
+      environments: deps.environmentService,
     }));
   }
 

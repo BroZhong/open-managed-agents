@@ -6,26 +6,26 @@ import type { RedisClient } from "./index.js";
  *  - check: the owner of the Session's running Turn re-reads its durable state
  *    now (an accepted Interrupt, a delegation command, a child result); other
  *    Runners ignore it.
- *  - environment: the binding whose id `sessionId` carries left Creating or
+ *  - sandbox: the binding whose id `sessionId` carries left Creating or
  *    finished its reclamation; Turns waiting for it read the row again
  *    (ADR-0023). Any Runner may hold such a Turn.
  *  - durable / chunk: an API's live stream catches up / receives a Delta.
  */
 export interface SessionSignal {
   sessionId: string;
-  kind: "wake" | "check" | "environment" | "durable" | "chunk";
+  kind: "wake" | "check" | "sandbox" | "durable" | "chunk";
   chunk?: { type: string; data: unknown; turnId?: string; blockIndex?: number; attempt?: number; deltaId?: string };
 }
 
 /**
- * Runners act on control signals (wake, check, environment); APIs relay
+ * Runners act on control signals (wake, check, sandbox); APIs relay
  * output signals (durable, chunk) to their live streams. Each scope has its
  * own channel, so a Runner never receives the fleet's output.
  */
 export type SessionSignalScope = "control" | "output";
 
 export function sessionSignalScope(kind: SessionSignal["kind"]): SessionSignalScope {
-  return kind === "wake" || kind === "check" || kind === "environment" ? "control" : "output";
+  return kind === "wake" || kind === "check" || kind === "sandbox" ? "control" : "output";
 }
 
 export interface SessionSignals {

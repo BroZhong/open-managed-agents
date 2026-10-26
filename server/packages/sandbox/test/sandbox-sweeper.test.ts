@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type SandboxBindingFacts, type SandboxReclamation } from "@oma-server/store";
+import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type SandboxBindingFacts, type SandboxReclamation } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { DefaultSandboxManager } from "../src/sandbox-manager.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
 import { SWEEP_INTERVAL_MS, SWEEP_JITTER_MS, SandboxSweeper, type SweepRound } from "../src/sandbox-sweeper.js";
 import { sandboxSweeperContract, type SweeperRunnerStores, type SweeperStores } from "./sandbox-sweeper-contract.js";
 import { databaseClock } from "./bindings.js";
+import { FAKE_ENVIRONMENT_IMAGE } from "../src/fake-environments.js";
 
-interface FakeRow { sandboxId: string | null; creatingSince: Date | null; reclaiming: boolean }
+interface FakeRow { sandboxId: string | null; creatingSince: Date | null; reclaiming: boolean; environmentId?: string | null; image?: string | null }
 
 /**
  * The rows and Session facts as PostgreSQL keeps them, in memory: each
@@ -21,7 +22,7 @@ interface FakeRow { sandboxId: string | null; creatingSince: Date | null; reclai
 function fakeSweeperStores(): SweeperStores {
   const clock = databaseClock(new Date());
   const rows = new Map<string, FakeRow>();
-  const sessions = new Map<string, { bindingId: string; terminated: boolean; queued: number }>();
+  const sessions = new Map<string, { bindingId: string; terminated: boolean; queued: number; environmentId?: string }>();
   /** Resource uses by input id: the Session that began each. */
   const uses = new Map<string, string>();
   let sessionCount = 0;
@@ -61,17 +62,19 @@ function fakeSweeperStores(): SweeperStores {
     const queues = new Map<string, Promise<unknown>>();
     return {
       bindings: {
-        withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
+        withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T> {
           const perform = async () => {
             if (!rows.has(bindingId)) rows.set(bindingId, { sandboxId: null, creatingSince: null, reclaiming: false });
             const read = { ...rows.get(bindingId)! };
             if (read.reclaiming) throw reclaimingError();
-            const { value, next } = await work({ sandboxId: read.sandboxId, creatingSince: read.creatingSince, now: clock.now() });
+            const { value, next } = await work({ sandboxId: read.sandboxId, environmentId: read.environmentId ?? null, image: read.image ?? null,
+              creatingSince: read.creatingSince, now: clock.now() });
             const row = rows.get(bindingId)!;
             if (row.reclaiming) throw reclaimingError();
-            if (row.sandboxId !== read.sandboxId || row.creatingSince?.getTime() !== read.creatingSince?.getTime()) throw new EnvironmentBindingChanged(bindingId);
-            if (next) Object.assign(row, next === "creating" ? { sandboxId: null, creatingSince: clock.now() }
-              : { sandboxId: next === "cold" ? null : next.ready, creatingSince: null });
+            if (row.sandboxId !== read.sandboxId || row.creatingSince?.getTime() !== read.creatingSince?.getTime()) throw new SandboxBindingChanged(bindingId);
+            if (next) Object.assign(row, next === "creating" ? { sandboxId: null, creatingSince: clock.now(), environmentId: null, image: null }
+              : next === "cold" ? { sandboxId: null, creatingSince: null, environmentId: null, image: null }
+                : { sandboxId: next.ready, creatingSince: null, environmentId: next.environmentId ?? null, image: next.image ?? null });
             return value;
           };
           const result = (queues.get(bindingId) ?? Promise.resolve()).then(perform, perform);
@@ -84,6 +87,7 @@ function fakeSweeperStores(): SweeperStores {
           now: clock.now(),
           bindings: new Map([...new Set(bindingIds)].flatMap((id) => { const row = rows.get(id); return row ? [[id, facts(id, { ...row })] as const] : []; })),
         }),
+        bindingEnvironment: async (bindingId) => sessions.get(bindingId)?.environmentId ?? null,
         unsettled: async (deadlineSeconds, limit) => {
           const expired = (row: FakeRow) => row.sandboxId === null && row.creatingSince !== null
             && row.creatingSince.getTime() + deadlineSeconds * 1000 <= clock.now().getTime();
@@ -99,9 +103,9 @@ function fakeSweeperStores(): SweeperStores {
   const ofBinding = (bindingId: string) => [...sessions.values()].filter((s) => s.bindingId === bindingId);
   return {
     runner,
-    session: async () => {
+    session: async (environmentId) => {
       const id = `sesn_${++sessionCount}`;
-      sessions.set(id, { bindingId: id, terminated: false, queued: 0 });
+      sessions.set(id, { bindingId: id, terminated: false, queued: 0, ...(environmentId ? { environmentId } : {}) });
       return id;
     },
     queue: async (id) => { sessions.get(id)!.queued++; },
@@ -119,6 +123,10 @@ function fakeSweeperStores(): SweeperStores {
       const row = rows.get(bindingId);
       return row ? { sandboxId: row.sandboxId, creatingSince: row.creatingSince } : null;
     },
+    origin: async (bindingId) => {
+      const row = rows.get(bindingId);
+      return row ? { environmentId: row.environmentId ?? null, image: row.image ?? null } : null;
+    },
   };
 }
 
@@ -135,7 +143,7 @@ describe("the sweeper on a Runner: rounds every 10 minutes with jitter, stopped 
     const manager = new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle });
     const sweeper = new SandboxSweeper({ client: gateway, facts, bindings, manager, environment: "test", random,
       logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
-    const orphan = () => gateway.create({ metadata: { [SANDBOX_BINDING_LABEL]: `sesn_gone_${gateway.created.length}`, [SANDBOX_ENVIRONMENT_LABEL]: "test" } })
+    const orphan = () => gateway.create({ image: FAKE_ENVIRONMENT_IMAGE, metadata: { [SANDBOX_BINDING_LABEL]: `sesn_gone_${gateway.created.length}`, [SANDBOX_ENVIRONMENT_LABEL]: "test" } })
       .then(({ id }) => id);
     return { gateway, lines, sweeper, orphan };
   }

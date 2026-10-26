@@ -20,7 +20,7 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     const agent = await stores.agentStore.create({ tenantId: 'tenant', name: 'agent', model: 'model', runtime: 'pi', system: '' });
     const session = await stores.sessionStore.create({ tenantId: 'tenant', agentId: agent.id, agent, workspaceId: 'shared' });
     activity = await begin(session.id, session.id);
-    await stores.delegationStore.withEnvironmentLock(session.id, async () => ({ next: { ready: 'sandbox-original' }, value: undefined }));
+    await stores.delegationStore.withBindingLock(session.id, async () => ({ next: { ready: 'sandbox-original' }, value: undefined }));
   });
   afterAll(async () => { await harness?.close(); });
   async function begin(sessionId: string, bindingId: string, origin = 'user.message') {
@@ -30,7 +30,7 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await lifecycle.begin(use); return use;
   }
   const ack = (use = activity) => stores.pendingEventStore.ack(use.sessionId, use.fence.eventId, use.fence);
-  const id = () => stores.delegationStore.withEnvironmentLock(activity.bindingId, async ({ sandboxId }) => ({ value: sandboxId }));
+  const id = () => stores.delegationStore.withBindingLock(activity.bindingId, async ({ sandboxId }) => ({ value: sandboxId }));
 
   it('sets idle only after actual settlement and an empty queue, without a clock or scanner', async () => {
     const idle = vi.fn(async () => {});
@@ -122,13 +122,13 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await expect(id()).rejects.toThrow('reclamation');
     await restarted.completeReclamation(ticket);
     expect(await id()).toBeNull();
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: { ready: 'replacement' }, value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: { ready: 'replacement' }, value: undefined }));
     await lifecycle.completeReclamation(ticket);
     expect(await id()).toBe('replacement');
   });
   it('claims a binding with a creation intent and no Sandbox, holds it while claimed, and clears it to Cold', async () => {
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
     const { rows: [intent] } = await harness.pool.query<{ creating_since: Date }>('SELECT creating_since FROM delegation_environments WHERE id = $1', [activity.bindingId]);
     expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
     await stores.sessionStore.terminate(activity.sessionId);
@@ -138,7 +138,7 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     expect(ticket.now.getTime()).toBeGreaterThanOrEqual(intent.creating_since.getTime());
     // Claimed, the binding admits no Turn and refuses every binding write: a creator cannot record its Sandbox.
     expect(await lifecycle.begin(activity)).toBe(false);
-    await expect(stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: { ready: 'late-creator' }, value: undefined })))
+    await expect(stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: { ready: 'late-creator' }, value: undefined })))
       .rejects.toThrow('reclamation');
     await lifecycle.completeReclamation(ticket);
     const row = () => harness.pool.query<{ sandbox_id: string | null; creating_since: Date | null; reclaiming: boolean }>(
@@ -152,11 +152,11 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
   });
   it('lets no ticket of an earlier intent complete a later reclamation', async () => {
     await stores.sessionStore.terminate(activity.sessionId);
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
     await harness.pool.query("UPDATE delegation_environments SET creating_since = now() - interval '1 hour' WHERE id = $1", [activity.bindingId]);
     const earlier = (await lifecycle.claimReclamation(activity.bindingId))!;
     await lifecycle.completeReclamation(earlier);
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
     const later = (await lifecycle.claimReclamation(activity.bindingId))!;
     expect(later.creatingSince).not.toEqual(earlier.creatingSince);
     await lifecycle.completeReclamation(earlier);
@@ -164,34 +164,34 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await lifecycle.completeReclamation(later);
     expect(await id()).toBeNull();
   });
-  it('reports the environment of a binding under reclamation without its lock, and Cold once it completes', async () => {
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ value: undefined,
+  it('reports the Sandbox of a binding under reclamation without its lock, and Cold once it completes', async () => {
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ value: undefined,
       observed: { failure: { code: 'sandbox_unavailable', reason: 'unreachable' } } }));
-    const failed = await stores.delegationStore.environment(activity.bindingId);
+    const failed = await stores.delegationStore.sandbox(activity.bindingId);
     expect(failed).toMatchObject({ state: 'unavailable', lastError: { code: 'sandbox_unavailable', reason: 'unreachable' } });
     await stores.sessionStore.terminate(activity.sessionId);
     const ticket = (await lifecycle.claimReclamation(activity.bindingId))!;
-    // The binding's environment transactions are refused while it is claimed; its read is not.
+    // The binding's transactions are refused while it is claimed; its read is not.
     await expect(id()).rejects.toThrow('reclamation');
-    expect(await stores.delegationStore.environment(activity.bindingId)).toEqual(failed);
+    expect(await stores.delegationStore.sandbox(activity.bindingId)).toEqual(failed);
     // A row lock another transaction holds does not block the read either.
     const holder = await harness.pool.connect();
     try {
       await holder.query('BEGIN');
       await holder.query('SELECT id FROM delegation_environments WHERE id = $1 FOR UPDATE', [activity.bindingId]);
-      expect(await stores.delegationStore.environment(activity.bindingId)).toEqual(failed);
+      expect(await stores.delegationStore.sandbox(activity.bindingId)).toEqual(failed);
     } finally { await holder.query('ROLLBACK'); holder.release(); }
     await lifecycle.completeReclamation(ticket);
-    const reclaimed = await stores.delegationStore.environment(activity.bindingId);
+    const reclaimed = await stores.delegationStore.sandbox(activity.bindingId);
     expect(reclaimed).toMatchObject({ state: 'cold', lastError: null });
     expect(reclaimed.since!.getTime()).toBeGreaterThanOrEqual(failed.since!.getTime());
   });
   it('durably keeps a creation intent and its database-clock start across Runner restart', async () => {
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
+    await stores.delegationStore.withBindingLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
     const { rows: [row] } = await harness.pool.query<{ creating_since: Date }>('SELECT creating_since FROM delegation_environments WHERE id = $1', [activity.bindingId]);
     const restarted = await createPgStores(harness.pool, { ensureSchema: false });
-    const state = await restarted.delegationStore.withEnvironmentLock(activity.bindingId, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
+    const state = await restarted.delegationStore.withBindingLock(activity.bindingId, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
     expect(state).toEqual({ sandboxId: null, creatingSince: row.creating_since });
   });
 });

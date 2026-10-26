@@ -149,14 +149,12 @@ part of the existing image contract; they do not name an additional template.
 
 Only non-secret defaults are included: `WORKSPACE_DIR=/home/user/workspace`,
 `MEDIAKIT_OUTPUT_PATH=/home/user/workspace/media`, `MEDIAKIT_SURFACE=skill`, and
-`MEDIAKIT_RUNTIME=pi-agent`. Runtime credentials must be injected by the Host
-or the Agent's `sandbox.env`; they are not build arguments or image layers.
+`MEDIAKIT_RUNTIME=pi-agent`. Runtime credentials reach commands from the
+Session's Environment (ADR-0024); they are not build arguments or image layers.
 
-The Server is configured with `SANDBOX_TEMPLATE=auto-story-v2`, and the SDK
-fallback also selects `auto-story-v2`. The UI's **Server default** choice inherits
-this setting; an Agent's explicit `sandbox.image` keeps selecting its named
-template. Selecting a default template does not expand the Agent allowlist for
-Host-owned credentials in `oma-auto-story-env`.
+Production's Runners are configured with `SANDBOX_TEMPLATE=auto-story-v2`: its
+Warm Pool. Agents select no template or image; the Session's Environment
+names the image each claim passes.
 
 Building and pushing an image does not change the running SandboxSet. Its
 pinned digest and pool configuration are in
@@ -178,12 +176,12 @@ To test a subsequent rollout through the running Host's E2B gateway:
 
 ```bash
 kubectl --kubeconfig ~/.kube/agent-platform-config -n oma-infra exec -i deployment/oma-server -c server \
-  -- node --input-type=module < sandbox/auto-story-v2/verify-live.mjs
+  -- env VERIFY_IMAGE=<the pool's image by digest> node --input-type=module < sandbox/auto-story-v2/verify-live.mjs
 ```
 
-Run this command from the repository root. It requires the Host's configured
-default to be `auto-story-v2`, then uses its installed `E2BSandboxClient` to create
-a short-lived sandbox without an image override. It checks environment
+Run this command from the repository root. It requires the Host's Warm Pool
+to be `auto-story-v2`, then uses its installed `E2BSandboxClient` to claim
+a short-lived sandbox with the pool's own image. It checks environment
 injection and file write/read/reconnect, runs the image acceptance checks
 through E2B commands, and reclaims the sandbox.
 

@@ -34,7 +34,7 @@ export function skillBundleStorageConfigFromEnv(env: HostEnv): OSSSkillBundleSto
  * carries it as `oma.dev/environment`, and each environment's sweeper acts
  * only on its own (ADR-0023); production and test share a gateway.
  */
-function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
+export function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
   const value = env.OMA_ENVIRONMENT?.trim();
   if (value !== "production" && value !== "test") throw new Error("Sandboxes require OMA_ENVIRONMENT=production or OMA_ENVIRONMENT=test");
   return value;
@@ -56,7 +56,8 @@ export function workspaceConfigFromEnv(env: HostEnv) {
     sandbox: {
       domain: required(env, "E2B_DOMAIN"),
       apiKey: required(env, "E2B_API_KEY"),
-      defaultTemplate: env.SANDBOX_TEMPLATE || "auto-story-v2",
+      // The Warm Pool (SandboxSet) every Sandbox is claimed from (ADR-0024).
+      pool: required(env, "SANDBOX_TEMPLATE"),
     },
   };
 }

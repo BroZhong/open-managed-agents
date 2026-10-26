@@ -5,7 +5,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnDelta, type TurnStreamStore } from "@oma-server/redis";
-import { DefaultTurnSandboxes, SandboxUnavailable, type SandboxManager, type SandboxPrepareObserver, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultTurnSandboxes, SandboxUnavailable, type SandboxManager, type SandboxPrepareObserver, type SandboxSession, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent, type DelegationCommand, type DelegationExecution, type PendingEventClaim, type PendingEventClaimEnd, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, ExecOptions, ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -84,13 +84,13 @@ export interface Scenario {
   /** A Sandbox tool call's output text; it may lose its Runner while it runs. */
   tool?(call: ToolCall, run: Run): string | Promise<string>;
   /**
-   * The environment failure a Sandbox tool call meets, if any (ADR-0023): the
+   * The Sandbox unavailability a Sandbox tool call meets, if any (ADR-0023): the
    * call fails without running, a tool error carrying the failure's code.
    * With it, each Runner's Sandbox reports its preparations as the Sandbox
    * Manager does: a failed one at each failure, a ready one at a Turn's
    * first tool that runs.
    */
-  environment?(call: ToolCall, run: Run): SandboxUnavailable | undefined;
+  unavailability?(call: ToolCall, run: Run): SandboxUnavailable | undefined;
   /**
    * Whether the event log refuses to store `event`, as PostgreSQL refuses a
    * row it cannot store: the Runner's write fails with {@link RefusedWrite}.
@@ -380,8 +380,8 @@ function request(body: { model: string; thinking?: unknown; system?: unknown; me
 
 /**
  * A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool`
- * as every tool. With `reportsPreparations`, a tool that fails with an
- * environment failure is a failed preparation, and a Turn's first tool that
+ * as every tool. With `reportsPreparations`, a tool that fails with a
+ * Sandbox unavailability is a failed preparation, and a Turn's first tool that
  * runs a ready one.
  */
 function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void, reclaimed: () => void,
@@ -465,7 +465,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
   shutDownAfter: Array<number | undefined> = []): Promise<Outcome> {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${PROVIDER}/${MODELS[0]}`, system: "",
-    runtime: "pi-agent", sandbox: { enabled: true } });
+    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: "env_test" });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const enqueue = (text: string) => stores.pendingEventStore.enqueue(session.id,
@@ -577,15 +577,15 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     const turnStreamStore = scenario.redisDown?.(index) ? redisDown : turnStreams;
     const runnerStores = runner.stores({ ...stores, turnStreamStore });
     router = new SessionRouter({ ...runnerStores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-      sandboxes: new DefaultTurnSandboxes({
+      sandboxes: new DefaultTurnSandboxes({ environments: fakeEnvironments(),
         manager: sandbox(runner, async (call) => {
           const toolCall = { ...call, runner: index };
           // It does not run: no call of it is executed.
-          const failure = scenario.environment?.(toolCall, run);
+          const failure = scenario.unavailability?.(toolCall, run);
           if (failure) throw failure;
           outcome.toolCalls.push(toolCall);
           return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
-        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.reclamations.push(index), scenario.environment !== undefined),
+        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.reclamations.push(index), scenario.unavailability !== undefined),
         bindings: runnerStores.delegationStore, sessions: runnerStores.sessionStore,
         workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
         onError: ({ error }) => outcome.errors.push({ runner: index, error }),
@@ -852,8 +852,8 @@ function expectSessionResumed(scenario: Scenario, outcome: Outcome, session: Ses
   expect(new Set(unknown), `${of}calls of unknown outcome`).toEqual(new Set(left.filter((call) => !fromRecord.includes(call) && !interrupted.includes(call))));
   // A handoff leaves a call without a result only when its deadline detached the Turn.
   for (const loss of outcome.losses) if (loss.sessionId === session.id && loss.reason === "released" && !loss.detached) expect(loss.dangling).toEqual([]);
-  // A Sandbox call with a real result ran, unless it met an environment
-  // failure: its native result carries the failure's code (ADR-0023).
+  // A Sandbox call with a real result ran, unless it met a Sandbox
+  // unavailability: its native result carries the failure's code (ADR-0023).
   const executions = outcome.toolCalls.map((call) => call.id);
   const unavailable = new Set(log.flatMap((event) => {
     const message = event.type === "agent.context_entry"

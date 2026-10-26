@@ -53,6 +53,7 @@ export const sessions: Command[] = [
             "title",
             "agentId",
             "workspaceId",
+            "environment",
             "status",
             "createdAt",
             "updatedAt",
@@ -70,18 +71,22 @@ export const sessions: Command[] = [
   {
     path: "session create",
     description:
-      "Create Session; bind an existing or new Workspace. workspace-name only names newly created Workspaces.",
+      "Create Session; bind an existing or new Workspace. workspace-name only names newly created Workspaces. The Session keeps its Agent's Environment, or --environment, for its lifetime.",
     flags: {
       "agent-id": string("Agent ID", { field: "agent" }),
       "workspace-id": string("Workspace ID", { field: "workspace_id" }),
       "workspace-name": string("New Workspace name", {
         field: "workspace_name",
       }),
+      environment: string("Environment ID instead of the Agent's, one that has built", {
+        field: "environmentId",
+      }),
     },
     bodyFields: {
       agent: string("Agent ID"),
       workspace_id: string("Workspace ID"),
       workspace_name: string("Workspace name"),
+      environmentId: string("Environment ID"),
     },
     requiredBody: ["agent"],
     write: true,
@@ -89,6 +94,8 @@ export const sessions: Command[] = [
     validate: (_f, b) => {
       if (!b.agent) invalid("Agent ID cannot be empty", "--agent-id");
       if (b.workspace_id !== undefined) workspaceId(b.workspace_id);
+      if (b.environmentId !== undefined && !b.environmentId)
+        invalid("Environment ID cannot be empty", "--environment");
     },
     run: (c) =>
       write(c, { method: "POST", path: "/v1/sessions", body: c.body }),
