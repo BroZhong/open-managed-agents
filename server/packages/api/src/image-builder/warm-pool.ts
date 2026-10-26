@@ -1,5 +1,5 @@
 import type { EnvironmentBuildQueue } from "@oma-server/store";
-import { isNotFound, type KubernetesApi } from "./kubernetes-api.js";
+import { isNotFound, type KubernetesApi } from "../lib/kubernetes.js";
 import type { Clock } from "./ports.js";
 
 /** The deployment's Warm Pool: one SandboxSet whose pod template runs one image. */

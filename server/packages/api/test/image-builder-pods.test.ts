@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KubernetesApiError, type KubernetesApi } from "../src/image-builder/kubernetes-api.js";
+import { KubernetesApiError, type KubernetesApi } from "../src/lib/kubernetes.js";
 import { buildHash, buildPodManifest, buildPodName, KubernetesBuildRunner } from "../src/image-builder/pod-runner.js";
 import { buildContext } from "../src/image-builder/build-context.js";
 import type { BuildJob } from "../src/image-builder/ports.js";
@@ -47,6 +47,7 @@ class FakeKube implements KubernetesApi {
   readonly streamPaths: string[] = [];
   phases: Phase[] = [running, terminated(0, `{"stage":"pushed","digest":"${DIGEST}"}`)];
   createConflicts = 0;
+  async close() {}
 
   async request<T>(method: string, path: string, options: { body?: any } = {}): Promise<T> {
     this.calls.push(`${method} ${path}`);

@@ -9,7 +9,7 @@ import { loadBuiltInEnvironments, rebuildOnNewBaseImages, syncBuiltInEnvironment
 import { AcsImageCaches } from "./acs-image-cache.js";
 import { KubernetesWarmPool, WarmPoolUpdater } from "./warm-pool.js";
 import { imageBuilderConfigFromEnv } from "./config.js";
-import { inClusterKubernetesApi } from "./kubernetes-api.js";
+import { inClusterKubernetesApi } from "../lib/kubernetes.js";
 import { BUILD_POD_DEFAULTS, KubernetesBuildRunner } from "./pod-runner.js";
 import { systemClock } from "./ports.js";
 import { SandboxImageVerifier } from "./verifier.js";

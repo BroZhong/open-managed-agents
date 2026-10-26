@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { BUILD_CONTEXT_DIR, parseDriverReport, scriptFailureMessage } from "./build-context.js";
-import { isConflict, isNotFound, type KubernetesApi } from "./kubernetes-api.js";
+import { isConflict, isNotFound, type KubernetesApi } from "../lib/kubernetes.js";
 import type { BuildAttemptRef, BuildJob, BuildLogSink, BuildRunResult, BuildRunner, Clock, KeepAttempt } from "./ports.js";
 
 /** How build pods run in the builder's namespace (ADR-0024 "Building", #299's pod). */

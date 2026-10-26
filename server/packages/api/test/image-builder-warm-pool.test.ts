@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { InMemoryEnvironmentStore } from "@oma-server/store-memory";
-import { KubernetesApiError, type KubernetesApi } from "../src/image-builder/kubernetes-api.js";
+import { KubernetesApiError, type KubernetesApi } from "../src/lib/kubernetes.js";
 import { KubernetesWarmPool, WarmPoolUpdater, type ImageCacheState, type ImageCaches, type WarmPool } from "../src/image-builder/warm-pool.js";
 import { AcsImageCaches, acsRpc, imageCacheName, type AcsRpc } from "../src/image-builder/acs-image-cache.js";
 import { ManualClock, settle } from "./fixtures/manual-clock.js";
@@ -119,6 +119,7 @@ describe("KubernetesWarmPool", () => {
         return (method === "GET" ? set : {}) as T;
       },
       async stream() { throw new Error("unused"); },
+      async close() {},
     };
   }
   const sandboxSet = (containers: unknown[]) => ({ spec: { template: { spec: { containers } } } });
