@@ -138,12 +138,15 @@ pausing.
   `E2BSandboxClient`: the release replaces the `oma-server` image of every
   Deployment that runs it (oma-api, oma-runner, oma-image-builder).
 - A Sandbox created before the release keeps the policy it was created with
-  (`spec.pauseTime`/`spec.shutdownTime` and the retention annotation on its
-  Sandbox CR) and would pause again after its next Turn. Before the release,
-  list the Sandboxes with `agents.kruise.io/reserve-paused-sandbox-duration`;
-  kill idle ones by id (their bindings go Cold on the next Turn's connect) and
-  let a Turn in progress finish first. On 2026-10-30 at 08:13Z production had 5
-  Paused Sandboxes, all deleted by 10:36Z, and no claimed running one.
+  and would pause again after its next Turn. The policy is on its Sandbox CR:
+  a pausing Sandbox has `spec.pauseTime`, a deleting one only
+  `spec.shutdownTime`. (The gateway writes
+  `agents.kruise.io/reserve-paused-sandbox-duration: forever` on every claimed
+  Sandbox it was not given one for, so that annotation is no marker.) Before
+  the release, list the claimed Sandboxes with `spec.pauseTime`; kill idle ones
+  by id (their bindings go Cold on the next Turn's connect) and let a Turn in
+  progress finish first. On 2026-10-30 at 08:13Z production had 5 Paused
+  Sandboxes, all deleted by 10:36Z, and no claimed running one.
 - oma-test acceptance: one full episode, steps 3–6 with Finalcut, at
   1 vCPU/4 GiB, with a gap of more than 15 minutes before Finalcut so that it
   runs on a new claim; `alibabacloud.com/pod-use-spec` on the claimed Pod; the
