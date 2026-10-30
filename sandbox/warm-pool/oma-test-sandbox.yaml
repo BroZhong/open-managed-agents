@@ -55,7 +55,7 @@ spec:
             memory: 4Gi
           requests:
             cpu: "1"
-            ephemeral-storage: 15Gi
+            ephemeral-storage: 30Gi
             memory: 4Gi
       imagePullSecrets:
       - name: ali-shanghai

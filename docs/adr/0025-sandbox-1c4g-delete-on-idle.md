@@ -65,8 +65,10 @@ Peak use per Sandbox, 15 days of ARMS, `container="sandbox"`:
 ## Decision
 
 **Resources.** Both Warm Pools (`oma-sandbox`, `oma-test-sandbox`) request and
-limit 1 vCPU and 4 GiB, with 15 GiB of ephemeral storage (ACS's minimum, free
-while running). Requests equal limits: ACS bills the larger of the two, so a
+limit 1 vCPU and 4 GiB, with 30 GiB of ephemeral storage. 30 GiB is ACS's
+minimum: on oma-test a 15 GiB request was raised to 30 GiB in the Pod
+(`alibabacloud.com/pod-ephemeral-storage: 30Gi`, `/` 30G), so the manifests say
+what ACS provisions. Requests equal limits: ACS bills the larger of the two, so a
 1-core request under a 2-core limit is billed as 2 cores. The template has no
 `persistentContents`: nothing is paused. The pool keeps 8 replicas and no
 PoolAutoscaler. Every Environment runs on these resources.
@@ -123,9 +125,9 @@ pausing.
 - Every Turn after a 15-minute gap draws from the Warm Pool instead of resuming.
   The 160 resumes in the sample become claims (0.5 s instead of 37 s when the
   pool has a Sandbox ready, a cold create when it does not, as before).
-- Estimated at list prices (not reconciled with a bill): about ¥0.41 per
-  Sandbox with 15 GiB, about ¥100–130 per 60-episode drama, down from ¥810. A
-  Sandbox idle for more than 15 minutes holds no quota.
+- Estimated at list prices (not reconciled with a bill): about ¥0.4–0.5 per
+  Sandbox, about ¥100–130 per 60-episode drama, down from ¥810. A Sandbox idle
+  for more than 15 minutes holds no quota.
 
 ## Rollout
 

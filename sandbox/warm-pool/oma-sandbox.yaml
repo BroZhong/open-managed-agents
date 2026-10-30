@@ -12,8 +12,9 @@
 # image once that is ready, after an ACS ImageCache for it. Re-applying this
 # manifest afterwards would put that older image back.
 #
-# Resources (ADR-0025): 1 vCPU, 4 GiB, 15 GiB ephemeral storage, requests equal
-# to limits (ACS bills the larger of the two). No persistentContents: a
+# Resources (ADR-0025): 1 vCPU, 4 GiB, requests equal to limits (ACS bills the
+# larger of the two), and 30 GiB of ephemeral storage, ACS's minimum: ACS
+# raises a smaller request to 30 GiB. No persistentContents: a
 # Sandbox is deleted at its deadline, never paused. Change them on the live
 # SandboxSet by patching spec.template.spec.containers[0].resources and
 # spec.persistentContents only, for the image reason above.
@@ -51,7 +52,7 @@ spec:
             memory: 4Gi
           requests:
             cpu: "1"
-            ephemeral-storage: 15Gi
+            ephemeral-storage: 30Gi
             memory: 4Gi
       imagePullSecrets:
       - name: ali-shanghai
