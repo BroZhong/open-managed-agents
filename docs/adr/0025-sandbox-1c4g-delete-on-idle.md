@@ -149,10 +149,9 @@ pausing.
   by id (their bindings go Cold on the next Turn's connect) and let a Turn in
   progress finish first. On 2026-10-30 at 08:13Z production had 5 Paused
   Sandboxes, all deleted by 10:36Z, and no claimed running one.
-- oma-test acceptance: one full episode, steps 3–6 with Finalcut, at
-  1 vCPU/4 GiB, with a gap of more than 15 minutes before Finalcut so that it
-  runs on a new claim; `alibabacloud.com/pod-use-spec` on the claimed Pod; the
-  Sandbox deleted 15 minutes after the Turn, not Paused, and its quota
-  released; the next Turn `deferred`, then a warm claim; an image-builder
-  verification Sandbox deleted at its deadline; sweeper lines without
-  unexpected kills.
+- oma-test acceptance (2026-10-30, [report](../verification/sandbox-1c4g-oma-test-2026-10-30.md)):
+  Finalcut at 1 vCPU/4 GiB in 545 s without OOM or restart (2C4G runs of the
+  same regression: 487–583 s); the Sandbox deleted 15 minutes after the Turn,
+  not Paused; the next Turn `deferred`, then a warm claim in 380 ms; the
+  sweeper without kills. Steps 3–5 and an image-builder verification Sandbox
+  were not exercised.
