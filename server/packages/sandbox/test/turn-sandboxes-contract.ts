@@ -140,7 +140,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const fence = await h.claim(session);
       const lease = (await h.acquire(session, fence))!;
       await lease.executor!.writeFile("saved.txt", "once");
-      h.client.pause(h.client.created[0]);
+      h.client.reclaim(h.client.created[0]);
       await expect(lease.executor!.writeFile("saved.txt", "twice")).rejects.toThrow(/not replayed/);
       await expect(lease.checkWorkspace()).rejects.toBeInstanceOf(WorkspaceMountUnavailable);
       await h.ack(session, fence);
@@ -562,21 +562,20 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const [recorded, othersSandbox] = h.client.created;
       // Left by lost creates: claimed for the binding, recorded by none.
       const extra = await claimedFor(h, session.id);
-      const pausedExtra = await claimedFor(h, session.id);
-      h.client.pause(pausedExtra);
+      const anotherExtra = await claimedFor(h, session.id);
       const othersExtra = await claimedFor(h, other.id);
       const list = vi.spyOn(h.client, "listSandboxes");
       await h.stores.sessionStore.terminate(session.id);
       expect(await h.sandboxes.reclaim(session)).toBe(true);
-      expect(h.client.destroyed).toEqual([recorded, extra, pausedExtra]);
-      expect(list).toHaveBeenCalledExactlyOnceWith({ metadata: { "oma.dev/binding": session.id }, states: ["running", "paused"] });
-      expect((await list.mock.results[0].value).map(({ sandboxId }: { sandboxId: string }) => sandboxId)).toEqual([extra, pausedExtra]);
+      expect(h.client.destroyed).toEqual([recorded, extra, anotherExtra]);
+      expect(list).toHaveBeenCalledExactlyOnceWith({ metadata: { "oma.dev/binding": session.id } });
+      expect((await list.mock.results[0].value).map(({ sandboxId }: { sandboxId: string }) => sandboxId)).toEqual([extra, anotherExtra]);
       expect(await h.client.state(othersExtra)).toBe("running");
       expect(await h.stores.delegationStore.withBindingLock(session.id, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } })))
         .toEqual({ sandboxId: null, creatingSince: null });
       // The other Session goes on in its own Sandbox.
       expect(await h.turn(other, (executor) => executor!.readFile("other.txt"))).toBe("theirs");
-      expect(h.client.created).toEqual([recorded, othersSandbox, extra, pausedExtra, othersExtra]);
+      expect(h.client.created).toEqual([recorded, othersSandbox, extra, anotherExtra, othersExtra]);
     });
 
     it.skipIf(!options.lifecycle)("kills nothing while input is queued for a Child Session of the binding", async () => {

@@ -30,14 +30,6 @@ describe('native lifecycle per Turn', () => {
     await session.readFile('saved');
     expect(client.mountChecks).toHaveLength(2);
   });
-  it('reports a paused operation as uncertain and restores the same resource for a subsequent tool', async () => {
-    const { client, session } = setup();
-    await session.writeFile('saved', 'once');
-    client.pause(client.created[0]);
-    await expect(session.writeFile('saved', 'twice')).rejects.toThrow(/not replayed/);
-    expect(await session.readFile('saved')).toBe('once');
-    expect(client.created).toHaveLength(1);
-  });
   it('rebuilds after confirmed deletion without replaying the failed operation', async () => {
     const { client, session } = setup();
     await session.writeFile('saved', 'once');
@@ -49,7 +41,7 @@ describe('native lifecycle per Turn', () => {
   it('does not replace a resource on a control-plane timeout, and can recover on the next call', async () => {
     const { client, session } = setup();
     await session.writeFile('saved', 'once');
-    client.pause(client.created[0]);
+    vi.spyOn(client, 'readFile').mockRejectedValueOnce(new Error('connection reset'));
     vi.spyOn(client, 'state').mockRejectedValueOnce(new Error('network timeout'));
     await expect(session.readFile('saved')).rejects.toThrow(/unconfirmed/);
     expect(client.created).toHaveLength(1);
@@ -94,13 +86,13 @@ describe('native lifecycle concurrency and late writes', () => {
     await session.writeFile('effect', 'once');
     const id = client.created[0];
     // Remote completion after the caller lost its response is outside DB fencing.
-    const lateIdleWrite = () => client.pause(id);
+    const lateIdleWrite = () => client.reclaim(id);
     await session.prepare(); // New Turn refreshes 24h.
     expect(client.deadlines.at(-1)).toEqual({ id, seconds: 86400 });
-    lateIdleWrite(); // Simulate the old 30m timeout taking effect and expiring.
+    lateIdleWrite(); // Simulate the old 15m timeout taking effect: the gateway deletes it.
     await expect(session.writeFile('effect', 'twice')).rejects.toThrow(/not replayed/);
     expect(await session.readFile('effect')).toBe('once');
-    expect(client.created).toHaveLength(1);
+    expect(client.created).toHaveLength(2);
   });
   it('keeps partial output and does not replay a command with an observable side effect', async () => {
     const { client, session } = setup();
@@ -108,7 +100,7 @@ describe('native lifecycle concurrency and late writes', () => {
     const execute = vi.spyOn(client, 'exec').mockImplementationOnce(async function* () {
       await client.writeFile(client.created[0], '/home/user/workspace/effect', 'once');
       yield { stream: 'stdout' as const, text: 'PARTIAL' };
-      client.pause(client.created[0]);
+      client.reclaim(client.created[0]);
       throw new Error('stream disconnected');
     });
     const chunks: string[] = [];

@@ -320,13 +320,13 @@ describe('managed Sandbox lifetime and exit evidence', () => {
     const { client, factoryCalls } = makeClient();
     await client.create({ ...claim, metadata: { 'oma.dev/binding': 'parent' } });
     expect(factoryCalls[0].opts).toMatchObject({
-      timeoutMs: 86400000, lifecycle: { onTimeout: 'pause', autoResume: false },
+      timeoutMs: 86400000, lifecycle: { onTimeout: 'kill' },
       metadata: { 'oma.dev/binding': 'parent',
-        'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
         'e2b.agents.kruise.io/claim-timeout-seconds': '150',
         'e2b.agents.kruise.io/wait-ready-timeout-seconds': '135' },
     });
     expect(factoryCalls[0].opts.metadata).not.toHaveProperty('e2b.agents.kruise.io/never-timeout');
+    expect(factoryCalls[0].opts.metadata).not.toHaveProperty('e2b.agents.kruise.io/reserve-paused-sandbox-duration');
   });
   it('derives every creation budget from the gateway claim timeout', () => {
     expect([WAIT_READY_SECONDS, CLAIM_SECONDS, CREATE_REQUEST_MS / 1000, INTENT_DEADLINE_SECONDS])
@@ -868,12 +868,12 @@ describe("E2BSandboxClient", () => {
     );
   });
 
-  it("control-plane state distinguishes Running and Paused without a health request", async () => {
+  it("control-plane state reports Running without a health request, and any other state as unknown", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create(claim);
     expect(await client.state(id)).toBe("running");
     sandboxes[0].running = false;
-    expect(await client.state(id)).toBe("paused");
+    await expect(client.state(id)).rejects.toThrow(/unknown/);
   });
 
   it("control-plane state distinguishes a missing Sandbox", async () => {
@@ -938,14 +938,14 @@ describe("parseFindOutput", () => {
 
 describe('direct lifecycle control-plane operations', () => {
   afterEach(() => { vi.restoreAllMocks(); });
-  it('deletes an uncached Paused identity without connecting, and requires deletion confirmation', async () => {
+  it('deletes an uncached identity without connecting, and requires deletion confirmation', async () => {
     const kill = vi.fn(async () => true);
-    const info = vi.fn().mockResolvedValueOnce({ state: 'paused' }).mockRejectedValueOnce(new SandboxNotFoundError('missing'));
+    const info = vi.fn().mockResolvedValueOnce({ state: 'running' }).mockRejectedValueOnce(new SandboxNotFoundError('missing'));
     const connect = vi.fn();
     const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', pool: 'oma-test-sandbox', verifyWorkspaceProbe: async () => {},
       killSandbox: kill, getSandboxInfo: info, connectSandbox: connect });
-    await expect(client.destroy('paused-from-another-runner')).rejects.toThrow(/not yet confirmed/);
-    await client.destroy('paused-from-another-runner');
+    await expect(client.destroy('created-by-another-runner')).rejects.toThrow(/not yet confirmed/);
+    await client.destroy('created-by-another-runner');
     expect(kill).toHaveBeenCalledTimes(2);
     expect(connect).not.toHaveBeenCalled();
   });
@@ -982,10 +982,10 @@ describe('direct lifecycle control-plane operations', () => {
 });
 
 describe('transport stream failure', () => {
-  it('returns uncertainty without issuing a destructive cleanup RPC that can stall on Paused', async () => {
+  it('returns uncertainty without issuing a destructive cleanup RPC that can stall on an unreachable Sandbox', async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create(claim);
-    sandboxes[0].processWait = async () => { throw new Error('transport timeout while paused'); };
+    sandboxes[0].processWait = async () => { throw new Error('transport timeout'); };
     await expect(collect(client.exec(id, ['long-command']))).rejects.toThrow('transport timeout');
     expect(sandboxes[0].processKill).not.toHaveBeenCalled();
     expect(sandboxes[0].processDisconnect).toHaveBeenCalledOnce();
@@ -1024,21 +1024,21 @@ describe("listing Sandboxes from the gateway (ADR-0023)", () => {
   const client = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", pool: "oma-test-sandbox", verifyWorkspaceProbe: async () => {} });
   afterEach(() => { vi.unstubAllEnvs(); });
 
-  it("filters by exact labels the gateway can parse, follows x-next-token and maps the year-1 deadline to none", async () => {
+  it("lists running Sandboxes by exact labels the gateway can parse, follows x-next-token and maps the year-1 deadline to none", async () => {
     const server = await gateway([
-      { body: [entry("sbx-a"), entry("sbx-b", { state: "paused", endAt: "0001-01-01T00:00:00Z" })], next: "page-2" },
+      { body: [entry("sbx-a"), entry("sbx-b", { endAt: "0001-01-01T00:00:00Z" }), entry("sbx-p", { state: "paused" })], next: "page-2" },
       { body: [entry("sbx-c", { metadata: null })] },
     ]);
     try {
-      const listed = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" }, states: ["running", "paused"] });
+      const listed = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" } });
       expect(listed).toEqual([
-        { sandboxId: "sbx-a", state: "running", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
-        { sandboxId: "sbx-b", state: "paused", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: null },
-        { sandboxId: "sbx-c", state: "running", metadata: {}, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
+        { sandboxId: "sbx-a", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
+        { sandboxId: "sbx-b", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: null },
+        { sandboxId: "sbx-c", metadata: {}, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
       ]);
       expect(server.requests.map(({ metadata }) => metadata)).toEqual(Array(2).fill({ "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" }));
       expect(server.requests.map(({ url }) => [url.searchParams.get("state"), url.searchParams.get("limit"), url.searchParams.get("nextToken")]))
-        .toEqual([["running,paused", "100", null], ["running,paused", "100", "page-2"]]);
+        .toEqual([["running", "100", null], ["running", "100", "page-2"]]);
       expect(server.requests.every(({ apiKey }) => apiKey === "gateway-key")).toBe(true);
     } finally { await server.close(); }
   });
@@ -1046,7 +1046,7 @@ describe("listing Sandboxes from the gateway (ADR-0023)", () => {
   it("lists every Sandbox of the API key, across pages, when no label filters", async () => {
     const server = await gateway([{ body: [entry("sbx-a")], next: "page-2" }, { body: [entry("sbx-b", { metadata: { "oma.dev/environment": "production" } })] }]);
     try {
-      const listed = await client().listSandboxes({ metadata: {}, states: ["running", "paused"] });
+      const listed = await client().listSandboxes({ metadata: {} });
       expect(listed.map(({ sandboxId }) => sandboxId)).toEqual(["sbx-a", "sbx-b"]);
       expect(server.requests.map(({ url }) => url.searchParams.has("metadata"))).toEqual([false, false]);
       expect(server.requests.map(({ url }) => url.searchParams.get("nextToken"))).toEqual([null, "page-2"]);
@@ -1056,7 +1056,7 @@ describe("listing Sandboxes from the gateway (ADR-0023)", () => {
   it("fails on a gateway error without repeating its body", async () => {
     const server = await gateway([]);
     try {
-      const failure = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1" }, states: ["running"] }).catch((error: Error) => error);
+      const failure = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1" } }).catch((error: Error) => error);
       expect(failure).toEqual(new Error("Sandbox list answered HTTP 500"));
     } finally { await server.close(); }
   });

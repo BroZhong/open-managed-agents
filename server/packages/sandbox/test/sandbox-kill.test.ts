@@ -21,22 +21,21 @@ describe("killing Sandboxes and confirming them missing", () => {
     expect(await client.state(a)).toBe("running");
   });
 
-  it("kills a binding's recorded Sandbox, then every one the gateway lists for that binding alone, running or paused", async () => {
+  it("kills a binding's recorded Sandbox, then every one the gateway lists for that binding alone", async () => {
     const client = new FakeSandboxClient();
     const recorded = await ofBinding(client, "root");
     const extra = await ofBinding(client, "root");
-    const paused = await ofBinding(client, "root");
-    client.pause(paused);
+    const another = await ofBinding(client, "root");
     const other = await ofBinding(client, "root-2");
     const unlabelled = (await client.create({ image: FAKE_ENVIRONMENT_IMAGE })).id;
     const list = vi.spyOn(client, "listSandboxes");
     const destroy = vi.spyOn(client, "destroy");
-    expect(await killBindingSandboxes(client, "root", recorded)).toEqual([recorded, extra, paused]);
-    expect(destroy.mock.calls.map(([id]) => id)).toEqual([recorded, extra, paused]);
+    expect(await killBindingSandboxes(client, "root", recorded)).toEqual([recorded, extra, another]);
+    expect(destroy.mock.calls.map(([id]) => id)).toEqual([recorded, extra, another]);
     // Listed after the recorded one went, by the exact binding label.
     expect(destroy.mock.invocationCallOrder[0]).toBeLessThan(list.mock.invocationCallOrder[0]);
-    expect(list).toHaveBeenCalledExactlyOnceWith({ metadata: { [SANDBOX_BINDING_LABEL]: "root" }, states: ["running", "paused"] });
-    expect((await list.mock.results[0].value).map(({ sandboxId }: { sandboxId: string }) => sandboxId)).toEqual([extra, paused]);
+    expect(list).toHaveBeenCalledExactlyOnceWith({ metadata: { [SANDBOX_BINDING_LABEL]: "root" } });
+    expect((await list.mock.results[0].value).map(({ sandboxId }: { sandboxId: string }) => sandboxId)).toEqual([extra, another]);
     expect(await client.state(other)).toBe("running");
     expect(await client.state(unlabelled)).toBe("running");
   });

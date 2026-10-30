@@ -1,5 +1,5 @@
 export const SANDBOX_RUNNING_SECONDS = 24 * 60 * 60;
-export const SANDBOX_IDLE_SECONDS = 30 * 60;
+export const SANDBOX_IDLE_SECONDS = 15 * 60;
 
 /**
  * The gateway's real bound on a claim, including the waits for a claim worker
@@ -167,17 +167,20 @@ export interface SandboxClaim {
   claimMs: number;
 }
 
-/** One Sandbox as the gateway's list (`GET /v2/sandboxes`) returns it. */
+/**
+ * One Sandbox as the gateway's list (`GET /v2/sandboxes`) returns it. Only
+ * running ones are listed: OMA's Sandboxes are deleted at their deadline,
+ * never paused (ADR-0025).
+ */
 export interface ListedSandbox {
   sandboxId: string;
-  state: "running" | "paused";
   /** Includes annotations that can hold credentials (#260): never log it. */
   metadata: Record<string, string>;
   /** When the Sandbox was claimed. */
   startedAt: Date;
   /**
-   * The platform deadline: pause for a running Sandbox, deletion for a paused
-   * one. null when the Sandbox has none; `setTimeout` is then a no-op.
+   * The platform deadline, when the gateway deletes the Sandbox. null when
+   * it has none; `setTimeout` is then a no-op.
    */
   endAt: Date | null;
 }
@@ -186,7 +189,6 @@ export interface ListedSandbox {
 export interface SandboxListFilter {
   /** Every one of these labels, with exactly these values; none lists every Sandbox of the API key. */
   metadata: Record<string, string>;
-  states: ReadonlyArray<ListedSandbox["state"]>;
 }
 
 /** One entry of the gateway's `GET /v2/sandboxes` body. */
@@ -199,15 +201,15 @@ export interface GatewayListEntry {
 }
 
 /**
- * A listed Sandbox from its gateway entry; undefined in a state other than
- * running or paused. The gateway reports "no deadline" as Go's zero time,
- * 0001-01-01T00:00:00Z, which becomes null.
+ * A listed Sandbox from its gateway entry; undefined when it is not running.
+ * The gateway reports "no deadline" as Go's zero time, 0001-01-01T00:00:00Z,
+ * which becomes null.
  */
 export function listedSandbox(entry: GatewayListEntry): ListedSandbox | undefined {
-  if (entry.state !== "running" && entry.state !== "paused") return undefined;
+  if (entry.state !== "running") return undefined;
   const endAt = entry.endAt ? Date.parse(entry.endAt) : Number.NaN;
   return {
-    sandboxId: entry.sandboxID, state: entry.state, metadata: entry.metadata ?? {},
+    sandboxId: entry.sandboxID, metadata: entry.metadata ?? {},
     startedAt: new Date(entry.startedAt), endAt: Number.isNaN(endAt) || endAt <= 0 ? null : new Date(endAt),
   };
 }
@@ -219,8 +221,8 @@ export interface SandboxClient {
   /** Transport loss is not an observed remote process exit. */
   hasUncertainExecution(id: string): boolean;
   resetExecutionUncertainty(id: string): void;
-  /** Read-only control-plane state; unknown transport errors must throw. */
-  state(id: string): Promise<"running" | "paused" | "missing">;
+  /** Read-only control-plane state; unknown transport errors and any other state must throw. */
+  state(id: string): Promise<"running" | "missing">;
   setTimeout(id: string, seconds: number): Promise<void>;
   /**
    * Native I/O primitives at absolute sandbox paths, separate from persistence.

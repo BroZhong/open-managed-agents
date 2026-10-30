@@ -11,7 +11,7 @@ import {
 
 const now = new Date("2026-10-24T04:00:00Z");
 const at = (minutes: number) => new Date(now.getTime() + minutes * 60_000);
-const options: SweepOptions = { environment: "production", now, intentDeadlineSeconds: 180, idleSeconds: 1800, maxKills: 50 };
+const options: SweepOptions = { environment: "production", now, intentDeadlineSeconds: 180, idleSeconds: 900, maxKills: 50 };
 
 interface SandboxShape extends Partial<Omit<ListedSandbox, "metadata">> {
   /** `oma.dev/environment`; null leaves the label off (a Sandbox from before ADR-0023). */
@@ -20,7 +20,7 @@ interface SandboxShape extends Partial<Omit<ListedSandbox, "metadata">> {
 function sandbox(sandboxId: string, binding: string | null, shape: SandboxShape = {}): ListedSandbox {
   const { environment = "production", ...rest } = shape;
   return {
-    sandboxId, state: "running", startedAt: at(-60), endAt: at(24 * 60),
+    sandboxId, startedAt: at(-60), endAt: at(24 * 60),
     metadata: {
       ...(binding === null ? {} : { [SANDBOX_BINDING_LABEL]: binding }),
       ...(environment === null ? {} : { [SANDBOX_ENVIRONMENT_LABEL]: environment }),
@@ -56,44 +56,35 @@ describe("sandbox sweep selection (ADR-0023 sweeper table)", () => {
       }
     });
 
-    it("shortens an unused running S whose deadline is later than 30 minutes", () => {
-      expect(decisionOf([sandbox("s", "b", { endAt: at(31) })], { b: ready("s") }))
+    it("shortens an unused S whose deadline is later than 15 minutes", () => {
+      expect(decisionOf([sandbox("s", "b", { endAt: at(16) })], { b: ready("s") }))
         .toEqual({ sandboxId: "s", bindingId: "b", action: "shorten" });
     });
 
-    it("leaves an unused running S whose deadline is already within 30 minutes", () => {
-      for (const endAt of [at(30), at(5), at(-1)]) {
+    it("leaves an unused S whose deadline is already within 15 minutes", () => {
+      for (const endAt of [at(15), at(5), at(-1)]) {
         expect(decisionOf([sandbox("s", "b", { endAt })], { b: ready("s") }))
           .toMatchObject({ action: "keep", reason: "short-deadline" });
       }
     });
 
-    it("kills an unused running S with no deadline at all, because setTimeout is a no-op for it", () => {
+    it("kills an unused S with no deadline at all, because setTimeout is a no-op for it", () => {
       expect(decisionOf([sandbox("s", "b", { endAt: null })], { b: ready("s") }))
         .toEqual({ sandboxId: "s", bindingId: "b", action: "kill", reason: "no-deadline", deferred: false });
-    });
-
-    it("leaves an unused paused S to its platform retention: the gateway cannot set a paused Sandbox's timeout", () => {
-      for (const endAt of [at(24 * 60), null]) {
-        expect(decisionOf([sandbox("s", "b", { state: "paused", endAt })], { b: ready("s") }))
-          .toMatchObject({ action: "keep", reason: "paused" });
-      }
     });
   });
 
   it("kills S when B's row is Ready(S2) with S2 ≠ S, whether or not B is in use, and keeps S2", () => {
     for (const inUse of [false, true]) {
-      const decisions = byId(sweep([sandbox("s", "b"), sandbox("s2", "b", { state: "paused" })], { b: ready("s2", { inUse }) }).decisions);
+      const decisions = byId(sweep([sandbox("s", "b"), sandbox("s2", "b", { endAt: at(10) })], { b: ready("s2", { inUse }) }).decisions);
       expect(decisions.s).toEqual({ sandboxId: "s", bindingId: "b", action: "kill", reason: "superseded", deferred: false });
       expect(decisions.s2.action).toBe("keep");
     }
   });
 
   it("kills S when B's row is Cold: nothing would ever adopt it", () => {
-    for (const state of ["running", "paused"] as const) {
-      expect(decisionOf([sandbox("s", "b", { state })], { b: cold() }))
-        .toEqual({ sandboxId: "s", bindingId: "b", action: "kill", reason: "cold", deferred: false });
-    }
+    expect(decisionOf([sandbox("s", "b")], { b: cold() }))
+      .toEqual({ sandboxId: "s", bindingId: "b", action: "kill", reason: "cold", deferred: false });
   });
 
   it("keeps S while B's row is Creating before its deadline: the creator may be producing S", () => {
@@ -104,56 +95,42 @@ describe("sandbox sweep selection (ADR-0023 sweeper table)", () => {
   });
 
   describe("B's row is Creating after its deadline", () => {
-    it("adopts S from the deadline on, and shortens it to 30 minutes when B has no user", () => {
+    it("adopts S from the deadline on, and shortens it to 15 minutes when B has no user", () => {
       for (const since of [at(-3), at(-60), new Date(0)]) {
         expect(decisionOf([sandbox("s", "b")], { b: creating(since) }))
           .toEqual({ sandboxId: "s", bindingId: "b", action: "adopt", shorten: true });
       }
     });
 
-    it("adopts without shortening when B is in use, already has a short deadline or S is paused", () => {
+    it("adopts without shortening when B is in use or S already has a short deadline", () => {
       expect(decisionOf([sandbox("s", "b")], { b: creating(new Date(0), { inUse: true }) }))
         .toMatchObject({ action: "adopt", shorten: false });
-      expect(decisionOf([sandbox("s", "b", { endAt: at(20) })], { b: creating(new Date(0)) }))
-        .toMatchObject({ action: "adopt", shorten: false });
-      expect(decisionOf([sandbox("s", "b", { state: "paused" })], { b: creating(new Date(0)) }))
+      expect(decisionOf([sandbox("s", "b", { endAt: at(10) })], { b: creating(new Date(0)) }))
         .toMatchObject({ action: "adopt", shorten: false });
     });
 
-    it("adopts a running Sandbox with no deadline without shortening; the Ready row decides it next round", () => {
+    it("adopts a Sandbox with no deadline without shortening; the Ready row decides it next round", () => {
       expect(decisionOf([sandbox("s", "b", { endAt: null })], { b: creating(new Date(0)) }))
         .toMatchObject({ action: "adopt", shorten: false });
     });
 
-    it("adopts one of several Sandboxes, preferring a running one, and kills the others as duplicates", () => {
+    it("adopts the earliest claimed of several Sandboxes, then the lowest id, whatever the listing order, and kills the others as duplicates", () => {
       const listed = [
-        sandbox("paused-early", "b", { state: "paused", startedAt: at(-90) }),
-        sandbox("running-late", "b", { startedAt: at(-10) }),
-        sandbox("running-early", "b", { startedAt: at(-20) }),
-      ];
-      const decisions = byId(sweep(listed, { b: creating(new Date(0)) }).decisions);
-      expect(decisions["running-early"]).toMatchObject({ action: "adopt", shorten: true });
-      expect(decisions["running-late"]).toMatchObject({ action: "kill", reason: "duplicate", deferred: false });
-      expect(decisions["paused-early"]).toMatchObject({ action: "kill", reason: "duplicate", deferred: false });
-    });
-
-    it("adopts the earliest claimed when all are paused, then the lowest id, whatever the listing order", () => {
-      const listed = [
-        sandbox("c", "b", { state: "paused", startedAt: at(-30) }),
-        sandbox("b2", "b", { state: "paused", startedAt: at(-60) }),
-        sandbox("a", "b", { state: "paused", startedAt: at(-60) }),
+        sandbox("c", "b", { startedAt: at(-30) }),
+        sandbox("b2", "b", { startedAt: at(-60) }),
+        sandbox("a", "b", { startedAt: at(-60) }),
       ];
       for (const order of [listed, [...listed].reverse()]) {
         const decisions = byId(sweep(order, { b: creating(new Date(0)) }).decisions);
-        expect(decisions.a).toMatchObject({ action: "adopt", shorten: false });
-        expect(decisions.b2).toMatchObject({ action: "kill", reason: "duplicate" });
-        expect(decisions.c).toMatchObject({ action: "kill", reason: "duplicate" });
+        expect(decisions.a).toMatchObject({ action: "adopt", shorten: true });
+        expect(decisions.b2).toMatchObject({ action: "kill", reason: "duplicate", deferred: false });
+        expect(decisions.c).toMatchObject({ action: "kill", reason: "duplicate", deferred: false });
       }
     });
   });
 
   it("kills S when B has no row in this environment", () => {
-    expect(decisionOf([sandbox("s", "b", { state: "paused" })], {}))
+    expect(decisionOf([sandbox("s", "b")], {}))
       .toEqual({ sandboxId: "s", bindingId: "b", action: "kill", reason: "no-row", deferred: false });
   });
 
@@ -201,7 +178,7 @@ describe("unlabelled Sandboxes from before ADR-0023", () => {
       sandbox("ready-unused", "b1", legacy),
       sandbox("superseded", "b2", legacy),
       sandbox("cold", "b3", legacy),
-      sandbox("unresolved", "b4", { ...legacy, state: "paused" }),
+      sandbox("unresolved", "b4", legacy),
       sandbox("terminated", "b5", legacy),
       sandbox("no-deadline", "b6", { ...legacy, endAt: null }),
     ], {
@@ -211,7 +188,7 @@ describe("unlabelled Sandboxes from before ADR-0023", () => {
     expect(decisions["ready-unused"].action).toBe("shorten");
     expect(decisions.superseded).toMatchObject({ action: "kill", reason: "superseded" });
     expect(decisions.cold).toMatchObject({ action: "kill", reason: "cold" });
-    expect(decisions.unresolved).toMatchObject({ action: "adopt", shorten: false });
+    expect(decisions.unresolved).toMatchObject({ action: "adopt", shorten: true });
     expect(decisions.terminated).toMatchObject({ action: "kill", reason: "terminated" });
     expect(decisions["no-deadline"]).toMatchObject({ action: "kill", reason: "no-deadline" });
   });
@@ -243,10 +220,10 @@ describe("the kill cap", () => {
     expect(counts).toMatchObject({ orphans: 60, killed: 50 });
   });
 
-  it("chooses the same kills in any listing order: no deadline first, then running, then paused, earliest claimed first", () => {
+  it("chooses the same kills in any listing order: no deadline first, then the earliest claimed", () => {
     const listed = [
-      orphan(1, { state: "paused" }),
-      orphan(2, { state: "paused" }),
+      orphan(1),
+      orphan(2),
       orphan(3),
       orphan(4),
       sandbox("nd-late", "b-nd-late", { endAt: null, startedAt: at(-5) }),
@@ -256,13 +233,13 @@ describe("the kill cap", () => {
     const bindings = { "b-nd-late": ready("nd-late"), "b-nd-early": ready("nd-early") };
     const killed = (order: ListedSandbox[]) => sweep(order, bindings, { maxKills: 4 }).decisions
       .filter((d) => d.action === "kill" && !d.deferred).map((d) => d.sandboxId).sort();
-    expect(killed(listed)).toEqual(["nd-early", "nd-late", "o00", "o03"].sort());
+    expect(killed(listed)).toEqual(["nd-early", "nd-late", "o00", "o01"].sort());
     expect(killed([...listed].reverse())).toEqual(killed(listed));
     expect(sweep(listed, bindings, { maxKills: 0 }).counts).toMatchObject({ orphans: 5, noDeadline: 2, killed: 0 });
   });
 
   it("caps duplicates of an unresolved binding like other kills and still adopts one", () => {
-    const listed = Array.from({ length: 4 }, (_, i) => sandbox(`d${i}`, "b", { state: "paused", startedAt: at(-10 + i) }));
+    const listed = Array.from({ length: 4 }, (_, i) => sandbox(`d${i}`, "b", { startedAt: at(-10 + i) }));
     const decisions = byId(sweep(listed, { b: creating(new Date(0)) }, { maxKills: 2 }).decisions);
     expect(decisions.d0).toMatchObject({ action: "adopt" });
     expect([decisions.d1, decisions.d2, decisions.d3].map((d) => d.action === "kill" && d.deferred)).toEqual([false, false, true]);
@@ -282,9 +259,9 @@ describe("one round", () => {
       sandbox("idle", "b-idle"),
       sandbox("forever", "b-forever", { endAt: null }),
       sandbox("orphan", "b-gone"),
-      sandbox("cold", "b-cold", { state: "paused" }),
+      sandbox("cold", "b-cold"),
       sandbox("adopted", "b-unresolved"),
-      sandbox("duplicate", "b-unresolved", { state: "paused" }),
+      sandbox("duplicate", "b-unresolved"),
       sandbox("adopted-in-use", "b-unresolved-in-use"),
       sandbox("foreign", "b-test", { environment: "test" }),
     ], {

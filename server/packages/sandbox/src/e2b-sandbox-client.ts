@@ -100,7 +100,7 @@ export type CreateSandboxFn = (
     metadata?: Record<string, string>;
     envs?: Record<string, string>;
     timeoutMs?: number;
-    lifecycle: { onTimeout: "pause"; autoResume: false };
+    lifecycle: { onTimeout: "kill" };
     requestTimeoutMs: number;
   },
 ) => Promise<E2BSandbox>;
@@ -117,11 +117,7 @@ export const CLAIM_PROBE = "cat /proc/uptime /proc/1/stat && getconf CLK_TCK && 
 
 /** Client timeouts of the control-plane calls other than create; each is one short gateway step. */
 const CONTROL_REQUEST_MS = {
-  /**
-   * The gateway bounds a resume only by this request; a timed-out connect
-   * leaves the resume running. The 2026-10-10 lifecycle verification measured
-   * 0.7–0.8 s from Paused and 30 ms from Running.
-   */
+  /** The 2026-10-10 lifecycle verification measured 30 ms to a running Sandbox. */
   connect: 60_000,
   /** Read from the manager's cache. */
   getInfo: 20_000,
@@ -241,11 +237,12 @@ export class E2BSandboxClient implements SandboxClient {
       domain: this.domain,
       metadata: { ...opts.metadata,
         [CLAIM_IMAGE_METADATA]: image,
-        'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
         'e2b.agents.kruise.io/claim-timeout-seconds': String(CLAIM_SECONDS),
         'e2b.agents.kruise.io/wait-ready-timeout-seconds': String(WAIT_READY_SECONDS),
       },
-      lifecycle: { onTimeout: 'pause', autoResume: false },
+      // Deleted at its deadline, never paused (ADR-0025): the next Turn
+      // claims from the Warm Pool faster than a paused Sandbox resumes.
+      lifecycle: { onTimeout: 'kill' },
       ...(opts.env ? { envs: opts.env } : {}),
       timeoutMs: (opts.timeoutSeconds ?? SANDBOX_RUNNING_SECONDS) * 1000,
     }).catch(createFailed);
@@ -456,10 +453,10 @@ export class E2BSandboxClient implements SandboxClient {
   }
 
   resetExecutionUncertainty(id: string): void { this.uncertain.delete(id); }
-  async state(id: string): Promise<"running" | "paused" | "missing"> {
+  async state(id: string): Promise<"running" | "missing"> {
     try {
       const info = await this.getSandboxInfo(id);
-      if (info.state === 'running' || info.state === 'paused') return info.state;
+      if (info.state === 'running') return info.state;
       throw new Error('Sandbox control-plane state is unknown');
     } catch (error) {
       if (error instanceof SandboxNotFoundError) { this.forget(id); return 'missing'; }
@@ -506,7 +503,7 @@ export class E2BSandboxClient implements SandboxClient {
     let nextToken: string | undefined;
     do {
       const { data, response } = await api.GET("/v2/sandboxes", {
-        params: { query: { metadata, state: [...filter.states], limit: LIST_PAGE_LIMIT, nextToken } },
+        params: { query: { metadata, state: ["running"], limit: LIST_PAGE_LIMIT, nextToken } },
         signal: AbortSignal.timeout(CONTROL_REQUEST_MS.list),
       });
       // The body may echo metadata, which can hold credentials (#260): report the status only.
@@ -704,7 +701,7 @@ async function* streamRun(
       error = reason instanceof Error ? reason : new Error(String(reason));
       if (handle) {
         // A lost stream is not exit evidence. Do not issue a new destructive
-        // RPC into a Paused/unknown Sandbox or block recovery on that RPC.
+        // RPC into an unreachable Sandbox or block recovery on that RPC.
         // Explicit user cancellation owns killPromise above; transport
         // failures disconnect and preserve uncertainty for the caller.
         try { await handle.disconnect(); } catch { /* Preserve the original error. */ }

@@ -1,9 +1,9 @@
 # Native Sandbox lifecycle deployment
 
-ADR-0019 and #217–#222 define the only maintained policy: 24 hours running, pause
-on expiry, approximately 24 hours retained from pause initiation, then platform
-deletion. Confirmed shared idle shortens the running deadline to 30 minutes.
-Pi stays in the Runner. Every Runner runs ADR-0023's sweeper; see Sweeper.
+ADR-0019 and #217–#222, as ADR-0025 revised them, define the only maintained
+policy: 24 hours running, then platform deletion; nothing is paused. Confirmed
+shared idle shortens the running deadline to 15 minutes. Pi stays in the Runner.
+Every Runner runs ADR-0023's sweeper; see Sweeper.
 
 ## Release prerequisites
 
@@ -35,27 +35,25 @@ out at 170 seconds, and a creation intent's deadline is 180 seconds. The Runner
 calls `sandbox-manager.sandbox-system.svc:8080` directly (`E2B_API_URL`); no ALB
 or proxy is on that path, so the budgets are code constants
 (`server/packages/sandbox/src/sandbox-client.ts`), not configuration. The other
-control-plane calls have shorter fixed client timeouts: connect, which resumes a
-Paused Sandbox, 60 seconds; getInfo 20 seconds; kill and setTimeout 30 seconds.
+control-plane calls have shorter fixed client timeouts: connect 60 seconds;
+getInfo 20 seconds; kill and setTimeout 30 seconds.
 These are bounded failure budgets, not a promise of cold-start latency. Native create
-requests include `reserve-paused-sandbox-duration: 24h`; `connect` refreshes 24h;
-`setTimeout` shortens to 30m without changing expiry action. No renewals happen
+requests `lifecycle: { onTimeout: 'kill' }` and 24h; `connect` refreshes 24h;
+`setTimeout` shortens to 15m without changing expiry action. No renewals happen
 between normal tools. Control-plane queries occur only during recovery/deletion,
-not as data-plane health probes.
-
-The platform's Paused state can precede completed pause. Its condition timestamp
-was also observed to remain stale. Do not claim process/memory recovery from ID
-stability or infer a full post-completion retention window. The user accepted
-pause operation time being included in the approximate retention period.
+not as data-plane health probes. `getInfo` answering any state but running is an
+unknown control-plane state, handled like a transport error.
 
 A failed or absent settlement callback leaves the existing finite deadline.
 Abandoned execution generations are superseded only by new Turn admission, not
 by an idle scanner. Ordinary background processes do not extend deadlines.
 
 A timeout update can complete remotely after the caller received an error; a DB
-lock cannot fence it. If a late idle update pauses a new Turn early, recovery
-restores the Sandbox for a subsequent tool and reports the original operation
-as uncertain. No implicit command replay or exactly-once guarantee is provided.
+lock cannot fence it. If a late idle update deletes a new Turn's Sandbox early,
+recovery clears the binding once the Sandbox is confirmed missing, a subsequent
+tool claims a new one, and the original operation is reported as uncertain.
+Local state outside the Workspace is lost. No implicit command replay or
+exactly-once guarantee is provided.
 
 ## Sandbox unavailability in a Turn's events
 
@@ -162,9 +160,9 @@ resumed after a takeover) waits: it reads the row again when the creator's
 regardless, so it continues at once when the creator records the Sandbox and
 within 2 seconds without Redis. A Turn starting while the binding is reclaimed
 waits the same way for the reclaimer's hint. Past `creating_since` + 180
-seconds it reconciles the binding itself: it lists the gateway's running and paused
+seconds it reconciles the binding itself: it lists the gateway's running
 Sandboxes labelled `oma.dev/binding=<root Session id>`, adopts the one it finds
-(a running one, else the earliest claimed, killing any others), or returns the
+(the earliest claimed, killing any others), or returns the
 binding to Cold and creates. The tool call whose create had the unknown outcome
 does so itself and creates once more at most, so it fails after about six
 minutes at worst. No operator action is needed, and none should clear the
@@ -201,7 +199,7 @@ binding) is killed by the sweeper within one period.
 Every Runner, and never the API, runs one round of ADR-0023's sweeper every 10
 minutes, give or take up to 2, the first at a random point of its first 10
 minutes; graceful shutdown stops it before its next action. A round lists every
-Sandbox of the Runner's gateway API key (running and paused, every page), reads
+running Sandbox of the Runner's gateway API key (every page), reads
 their bindings and Sessions from the Runner's schema in one query and selects
 by ADR-0023's table. A Sandbox labelled with another `oma.dev/environment` is
 never touched; one without the label only when its binding has a row in this
@@ -214,7 +212,7 @@ does: the claim is refused while a live Session of the binding has a resource
 use or queued input, and otherwise makes a Turn arriving meanwhile wait until
 the binding is Cold. It adopts the Sandbox of a binding Creating past its
 deadline as a tool call would (killing the others found), and shortens an
-unused running Sandbox's deadline to 30 minutes, then reads the binding once
+unused Sandbox's deadline to 15 minutes, then reads the binding once
 more and sets 24 hours back if a Turn began using it meanwhile. Unused means no
 queued input of a live Session of the binding; a resource use left by an
 acknowledged input does not count. At most 50 kills a round; the rest wait for
@@ -300,11 +298,12 @@ production`), images `oma-server@sha256:efc577190e34…` (tag `e2edb6655355`) fo
 
 ## Verification
 
-`verify-native-sandbox-lifecycle.mjs` and its 2026-10-10 evidence document the SDK,
-Gateway and Manager versions and the isolated native platform tests. The original
-strict retention gate failed; the later user-approved approximate contract accepts
-that observed behavior. Retain the original observations rather than rewriting
-history. See the integration report for the application changes and final checks.
+The 2026-10-10 native lifecycle reports document the SDK, Gateway and Manager
+versions and the isolated platform tests of ADR-0019's pause policy. Their
+scripts (`verify-native-sandbox-{lifecycle,production,integration}`) were
+removed with that policy; they remain in Git history. ADR-0025's delete-on-idle
+policy was accepted on oma-test on 2026-10-30
+([report](verification/sandbox-1c4g-oma-test-2026-10-30.md)).
 
 All native tool execution streams now have a three-hour Host wait ceiling.
 Shorter explicit bash timeouts retain five seconds of response grace within that

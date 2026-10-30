@@ -65,6 +65,7 @@ async function listSandboxes(): Promise<{ sandboxes: ListedSandbox[]; pages: num
     let pages = 0, otherStates = 0, nextToken: string | null = null;
     do {
       const url = new URL(`${apiUrl!.replace(/\/+$/, "")}/v2/sandboxes`);
+      // Paused too, though OMA never pauses (ADR-0025): the report counts any it finds.
       url.searchParams.set("state", "running,paused");
       url.searchParams.set("limit", String(PAGE_LIMIT));
       if (nextToken) url.searchParams.set("nextToken", nextToken);
@@ -172,8 +173,8 @@ const table = (head: string[], rows: (string | number)[][]) =>
   out.push(`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`, ...rows.map((r) => `| ${r.join(" | ")} |`), "");
 
 out.push(`# Sandbox sweep report: ${environment} (schema ${args.schema}), ${iso(now)}`, "",
-  `Read-only. Gateway list: ${sandboxes.length} Sandboxes (${tally(sandboxes.map((s) => s.state)).map(([k, n]) => `${k} ${n}`).join(", ")})` +
-  ` in ${pages} pages, ${listMs} ms${otherStates ? `; ${otherStates} in another state skipped` : ""}.` +
+  `Read-only. Gateway list: ${sandboxes.length} running Sandboxes` +
+  ` in ${pages} pages, ${listMs} ms${otherStates ? `; ${otherStates} paused or in another state skipped` : ""}.` +
   ` Binding column: \`${facts.column}\`${facts.column === "creation_pending" ? " (pending read as creating_since = epoch)" : ""}.`, "");
 out.push("## Labels", "");
 table(["oma.dev/environment", "oma.dev/binding", "Sandboxes"], tally(sandboxes.map((s) =>
@@ -189,11 +190,11 @@ out.push("Planned `sandbox_sweep` counters:", "", "```json",
   JSON.stringify({ msg: "sandbox_sweep", env: environment, ...counts }), "```", "");
 out.push("## Sandboxes", "");
 const rank = (d: SweepDecision) => ["kill", "adopt", "shorten", "keep"].indexOf(d.action);
-table(["sandboxId", "binding", "environment", "state", "startedAt", "endAt", "binding row", "recorded", "decision", "reason"],
+table(["sandboxId", "binding", "environment", "startedAt", "endAt", "binding row", "recorded", "decision", "reason"],
   [...decisions].sort((a, b) => rank(a) - rank(b) || describeDecision(a).localeCompare(describeDecision(b)) ||
     bySandbox.get(a.sandboxId)!.startedAt.getTime() - bySandbox.get(b.sandboxId)!.startedAt.getTime()).map((d) => {
     const s = bySandbox.get(d.sandboxId)!;
-    return [d.sandboxId, d.bindingId ?? "-", s.metadata[SANDBOX_ENVIRONMENT_LABEL] ?? "(none)", s.state, iso(s.startedAt), iso(s.endAt),
+    return [d.sandboxId, d.bindingId ?? "-", s.metadata[SANDBOX_ENVIRONMENT_LABEL] ?? "(none)", iso(s.startedAt), iso(s.endAt),
       d.bindingId === null ? "-" : describeRow(d.sandboxId, facts.bindings.get(d.bindingId)),
       facts.recordedBy.get(d.sandboxId) === undefined ? "no" : facts.recordedBy.get(d.sandboxId) === d.bindingId ? "yes" : "by another binding",
       describeDecision(d)];

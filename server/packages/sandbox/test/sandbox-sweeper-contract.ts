@@ -81,8 +81,8 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       const gateway = new FakeSandboxClient();
       const hints = signalBus();
       const lines: SweepRound[] = [];
-      const sandbox = async (binding: string | null, shape: { environment?: string | null; deadline?: boolean; paused?: boolean } = {}) => {
-        const { environment = ENVIRONMENT, deadline = true, paused = false } = shape;
+      const sandbox = async (binding: string | null, shape: { environment?: string | null; deadline?: boolean } = {}) => {
+        const { environment = ENVIRONMENT, deadline = true } = shape;
         const { id } = await gateway.create({
           image: FAKE_ENVIRONMENT_IMAGE,
           metadata: {
@@ -92,7 +92,6 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
           },
           ...(deadline ? { timeoutSeconds: SANDBOX_RUNNING_SECONDS } : {}),
         });
-        if (paused) gateway.pause(id);
         return id;
       };
       const move = (bindingId: string, next: BindingTransition) =>
@@ -123,7 +122,7 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
           sandboxSignals: hints, logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
       };
       const alive = async (id: string) => await gateway.state(id) !== "missing";
-      const deadlineOf = async (id: string) => (await gateway.listSandboxes({ metadata: {}, states: ["running", "paused"] }))
+      const deadlineOf = async (id: string) => (await gateway.listSandboxes({ metadata: {} }))
         .find(({ sandboxId }) => sandboxId === id)?.endAt?.getTime();
       return { stores, gateway, hints, lines, sandbox, move, manager, sweeper, alive, deadlineOf };
     }
@@ -159,8 +158,10 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
 
       const unresolved = await stores.session("env_video");
       await move(unresolved, "creating");
-      const duplicate = await sandbox(unresolved, { paused: true });
       const adoptable = await sandbox(unresolved);
+      // Claimed later by the gateway's clock: reconciliation keeps the earliest claimed.
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const duplicate = await sandbox(unresolved);
       await stores.elapse(INTENT_DEADLINE_SECONDS);
 
       // Committed after the time passed: within its deadline.
@@ -173,19 +174,15 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       await move(reclaimed, { ready: ofReclaimed });
       await stores.reclaiming(reclaimed);
 
-      const pausedBinding = await stores.session();
-      const paused = await sandbox(pausedBinding, { paused: true });
-      await move(pausedBinding, { ready: paused });
-
       const otherEnvironment = await sandbox("sesn_of_production", { environment: "production" });
       const unlabelledElsewhere = await sandbox("sesn_of_production_before_labels", { environment: null });
       const unbound = await sandbox(null);
       return {
-        bindings: { cold, terminated, superseding, inUse, undying, unresolved, creating, reclaimed, pausedBinding },
+        bindings: { cold, terminated, superseding, inUse, undying, unresolved, creating, reclaimed },
         // A reclamation left claimed is resumed: it kills its Sandbox by binding.
         killed: [orphanOfCold, unlabelledOfCold, orphanWithoutRow, ofTerminated, superseded, withoutDeadline, duplicate, ofReclaimed],
         shortened: [recorded, adoptable],
-        untouched: [used, beingCreated, paused, otherEnvironment, unlabelledElsewhere, unbound],
+        untouched: [used, beingCreated, otherEnvironment, unlabelledElsewhere, unbound],
         adoptable,
       };
     }
@@ -228,7 +225,7 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       expect(h.lines).toEqual([round]);
       expect(h.hints.published).toHaveLength(4);
       expect(round).toEqual({
-        msg: "sandbox_sweep", env: ENVIRONMENT, listed: 16,
+        msg: "sandbox_sweep", env: ENVIRONMENT, listed: 15,
         orphans: 6, unresolved: 1, unusedRunning: 2, noDeadline: 1, expired: 0,
         killed: 7, adopted: 1, cleared: 0, shortened: 2, restored: 0, reclaimed: 1, deferred: 0, skipped: 0, failed: 0, ms: expect.any(Number),
       });
@@ -266,7 +263,8 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       const raced = await stores.session();
       await move(raced, "creating");
       const preferred = await sandbox(raced);
-      const other = await sandbox(raced, { paused: true });
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const other = await sandbox(raced);
       await stores.elapse(INTENT_DEADLINE_SECONDS);
 
       const round = await h.sweeper(stores.runner(), { afterScan: async () => {
@@ -288,9 +286,9 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
 
       // The next round follows the rows as they are now.
       const next = await h.sweeper().sweep();
-      expect(next).toMatchObject({ killed: 1, adopted: 0, shortened: 1, skipped: 0 });
+      expect(next).toMatchObject({ killed: 1, adopted: 0, shortened: 2, skipped: 0 });
       expect(h.gateway.destroyed).toEqual([preferred]);
-      expect(h.gateway.deadlines.map(({ id }) => id)).toEqual([ofCold]);
+      expect(h.gateway.deadlines.map(({ id }) => id).sort()).toEqual([ofCold, other].sort());
     });
 
     it("acts only while the binding's row is still the one it decided on", async () => {
@@ -305,19 +303,24 @@ export function sandboxSweeperContract(name: string, createStores: () => Promise
       expect(await h.stores.row(cold)).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });
     });
 
-    it("kills at most 50 Sandboxes a round, the running ones first, and the rest in the next round", async () => {
+    reclaiming("kills at most 50 Sandboxes a round, the ones without a deadline first, and the rest in the next round", async () => {
       const h = await setup();
-      const running = [];
-      for (let i = 0; i < 55; i++) running.push(await h.sandbox(`sesn_gone_${i}`));
-      const paused = [];
-      for (let i = 0; i < 5; i++) paused.push(await h.sandbox(`sesn_gone_paused_${i}`, { paused: true }));
+      const withDeadline = [];
+      for (let i = 0; i < 55; i++) withDeadline.push(await h.sandbox(`sesn_gone_${i}`));
+      const withoutDeadline = [];
+      for (let i = 0; i < 5; i++) {
+        const binding = await h.stores.session();
+        const id = await h.sandbox(binding, { deadline: false });
+        await h.move(binding, { ready: id });
+        withoutDeadline.push(id);
+      }
       const first = await h.sweeper().sweep();
-      expect(first).toMatchObject({ orphans: 60, killed: 50, deferred: 10, failed: 0 });
+      expect(first).toMatchObject({ orphans: 55, noDeadline: 5, killed: 50, deferred: 10, failed: 0 });
       expect(h.gateway.destroyed).toHaveLength(50);
-      for (const id of paused) expect(await h.alive(id)).toBe(true);
+      for (const id of withoutDeadline) expect(await h.alive(id)).toBe(false);
       const second = await h.sweeper().sweep();
       expect(second).toMatchObject({ orphans: 10, killed: 10, deferred: 0 });
-      expect(new Set(h.gateway.destroyed)).toEqual(new Set([...running, ...paused]));
+      expect(new Set(h.gateway.destroyed)).toEqual(new Set([...withDeadline, ...withoutDeadline]));
     });
 
     it("counts a failed kill, goes on with the others and kills it in the next round; a failed list takes no action", async () => {

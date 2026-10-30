@@ -400,7 +400,7 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, sandboxSignals
     if (!ticket) return binding.withLock<boolean>(async ({ sandboxId: id, creatingSince }) => {
       // Unknown business users may retain a pointer beyond native expiry.
       // Control-plane NotFound is sufficient to clear that vanished resource;
-      // a Running/Paused resource remains untouched and is never resumed.
+      // a running resource remains untouched.
       if (id && await client.state(id) === 'missing') return { next: "cold", value: true };
       return { value: id === null && creatingSince === null };
     });
@@ -429,9 +429,9 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, sandboxSignals
  * Converge an Unresolved binding, Creating since `creatingSince` and past its
  * deadline, on what the gateway holds for it (ADR-0023, "reconcile"): ensure's
  * and the sweeper's one transition. Past the deadline no create of the intent
- * is in flight: none found → Cold; one → adopt it; several → keep a running
- * one, else the earliest claimed. The list runs outside the binding's lock;
- * the move is a compare-and-set on the intent. Resolves the Sandbox kept
+ * is in flight: none found → Cold; one → adopt it; several → keep the
+ * earliest claimed. The list runs outside the binding's lock; the move is a
+ * compare-and-set on the intent. Resolves the Sandbox kept
  * (undefined when it went Cold) and the others found, for the caller to kill;
  * null when the row no longer held that intent: another Runner reconciled it
  * first, or it moved on, and the caller follows the row.
@@ -442,7 +442,7 @@ export async function reconcileBinding(client: Pick<SandboxClient, "listSandboxe
   environmentId?: string): Promise<{ kept?: ListedSandbox; duplicates: ListedSandbox[] } | null> {
   // By binding alone: its id is a Session id, unique across environments,
   // and a Sandbox created before the environment label is adopted too.
-  const found = await client.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: binding.id }, states: ["running", "paused"] });
+  const found = await client.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: binding.id } });
   const [kept, ...duplicates] = [...found].sort(byKeepPreference);
   const converged = await binding.withLock<boolean>(async (row) => {
     if (row.sandboxId !== null || row.creatingSince?.getTime() !== creatingSince.getTime()) return { value: false };

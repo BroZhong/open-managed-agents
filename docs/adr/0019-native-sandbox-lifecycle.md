@@ -8,6 +8,11 @@ including time spent pausing, not a guaranteed 24 hours after completion.
 The original gate's delayed-pause evidence remains valid; this is a contract
 clarification, not a claim that the platform was fixed.
 
+Partly superseded by [ADR-0025](0025-sandbox-1c4g-delete-on-idle.md)
+(2026-10-30): a Sandbox is deleted at its deadline instead of paused, with no
+paused retention, and the idle deadline is 15 minutes instead of 30. Statements
+below about pausing, Paused retention and resuming no longer hold.
+
 Partly superseded and revised by [ADR-0023](0023-sandbox-binding-reconciliation.md)
 (2026-10-24):
 

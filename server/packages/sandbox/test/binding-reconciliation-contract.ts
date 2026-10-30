@@ -201,7 +201,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const row = (bindingId: string) => stores.delegationStore.withBindingLock(bindingId, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
       const elapse = async (seconds: number) => { gatewayClock.elapse(seconds); await stores.elapse(seconds); };
       /** The Sandboxes the gateway lists for a binding. */
-      const listed = async (bindingId: string) => (await gateway.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: bindingId }, states: ["running", "paused"] }))
+      const listed = async (bindingId: string) => (await gateway.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: bindingId } }))
         .map((sandbox) => sandbox.sandboxId).sort();
       /** A Sandbox claimed for the binding as a lost create leaves it, with the labels and mount ensure creates it with. */
       const claimed = async (bindingId: string) => (await gateway.create({ image: FAKE_ENVIRONMENT_IMAGE, timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: {
@@ -363,7 +363,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(await h.toolsWork(lease, session.id)).toBe(claimedId);
       expect(h.gateway.created).toEqual([claimedId]);
       expect(h.list).toHaveBeenCalledTimes(1);
-      const [adopted] = await h.gateway.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: session.id }, states: ["running"] });
+      const [adopted] = await h.gateway.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: session.id } });
       expect(adopted).toMatchObject({ sandboxId: claimedId, startedAt: new Date("2026-10-22T13:20:10Z"), metadata: { [SANDBOX_ENVIRONMENT_LABEL]: "test" } });
     });
 
@@ -410,32 +410,19 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(h.gateway.destroyed).toEqual([]);
     });
 
-    it("keeps a running Sandbox, else the earliest claimed, when reconciliation finds several, and kills the others", async () => {
+    it("keeps the earliest claimed Sandbox when reconciliation finds several, and kills the others", async () => {
       const h = await setup();
       const session = await h.session();
-      const pausedEarliest = await h.claimed(session.id);
+      const earliest = await h.claimed(session.id);
       h.gatewayClock.elapse(10);
-      const runningEarlier = await h.claimed(session.id);
+      const later = await h.claimed(session.id);
       h.gatewayClock.elapse(10);
-      const runningLater = await h.claimed(session.id);
-      h.gateway.pause(pausedEarliest);
+      const latest = await h.claimed(session.id);
       await h.stores.legacyPending(session.id);
       const { lease } = await h.turn(h.runner(), session);
-      expect(await h.toolsWork(lease, session.id)).toBe(runningEarlier);
-      expect(h.gateway.destroyed.sort()).toEqual([pausedEarliest, runningLater].sort());
-      expect(await h.listed(session.id)).toEqual([runningEarlier]);
-
-      // All paused: the earliest claimed is kept and resumed.
-      const other = await h.session();
-      const earliest = await h.claimed(other.id);
-      h.gatewayClock.elapse(10);
-      const later = await h.claimed(other.id);
-      h.gateway.pause(earliest);
-      h.gateway.pause(later);
-      await h.stores.legacyPending(other.id);
-      const next = await h.turn(h.runner(), other);
-      expect(await h.toolsWork(next.lease, other.id)).toBe(earliest);
-      expect(await h.listed(other.id)).toEqual([earliest]);
+      expect(await h.toolsWork(lease, session.id)).toBe(earliest);
+      expect(h.gateway.destroyed.sort()).toEqual([later, latest].sort());
+      expect(await h.listed(session.id)).toEqual([earliest]);
     });
 
     it("reconciles a binding left pending before the migration on its first use, without waiting", async () => {
