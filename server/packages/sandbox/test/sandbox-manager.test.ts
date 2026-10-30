@@ -43,7 +43,7 @@ function makeManager() {
 }
 
 describe("mounted Workspace Sandbox Manager", () => {
-  it('retries explicit deletion without resuming and clears the binding only after confirmation', async () => {
+  it('retries explicit deletion without connecting and clears the binding only after confirmation', async () => {
     const client = new FakeSandboxClient();
     const binding = durableBinding('root');
     const store: SandboxLifecycleStore = {
@@ -55,7 +55,6 @@ describe("mounted Workspace Sandbox Manager", () => {
     const session = manager.open(specFor(), binding);
     await session.writeFile('saved.txt', 'persistent');
     expect(client.createOptsOf(client.created[0]).timeoutSeconds).toBe(86400);
-    client.pause(binding.row().sandboxId!);
     const reconnect = vi.spyOn(client, 'reconnect');
     vi.spyOn(client, 'destroy').mockRejectedValueOnce(new Error('network unavailable'));
     await expect(manager.reclaim(binding)).rejects.toThrow('network');
@@ -79,7 +78,6 @@ describe("mounted Workspace Sandbox Manager", () => {
     const parent = manager.open(specFor(), binding);
     await parent.writeFile('saved', 'value');
     const original = id()!;
-    client.pause(original);
     const connect = vi.spyOn(client, 'reconnect');
     expect(await manager.reclaim(binding)).toBe(false);
     expect(id()).toBe(original);

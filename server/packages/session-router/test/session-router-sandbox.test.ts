@@ -1160,7 +1160,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
 });
 
 describe('SessionRouter — recoverable Sandbox faults', () => {
-  it('continues within one Turn after a paused tool failure without replaying its write', async () => {
+  it('continues within one Turn after the platform deleted its Sandbox, without replaying its write', async () => {
     const sandboxClient = new FakeSandboxClient();
     const errors: string[] = [];
     let runs = 0;
@@ -1168,7 +1168,7 @@ describe('SessionRouter — recoverable Sandbox faults', () => {
       const write = journalWriter(input);
       runs++;
       await input.toolExecutor!.writeFile('effect.txt', 'once');
-      sandboxClient.pause(sandboxClient.created[0]);
+      sandboxClient.reclaim(sandboxClient.created[0]);
       try { await input.toolExecutor!.writeFile('effect.txt', 'twice'); }
       catch (error) { errors.push(String(error)); }
       const saved = await input.toolExecutor!.readFile('effect.txt');
@@ -1186,6 +1186,6 @@ describe('SessionRouter — recoverable Sandbox faults', () => {
     expect(events.filter(event => event.type === 'session.turn_completed')).toHaveLength(1);
     expect(events.filter(event => event.type === 'session.turn_aborted')).toHaveLength(0);
     expect(events.find(event => event.type === 'agent.message')?.data).toMatchObject({ content: [{ type: 'text', text: 'once' }] });
-    expect(sandboxClient.created).toHaveLength(1);
+    expect(sandboxClient.created).toHaveLength(2);
   });
 });

@@ -205,17 +205,19 @@ The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, de
 _Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
 
 Sandbox lifetime is owned by the platform: each prepared Turn receives 24 hours
-running, expiry pauses, and pause initiation starts approximately 24 hours of
-retention before deletion. Pause operation time is included by explicit agreement.
+running, and at its deadline the gateway deletes the Sandbox. Nothing pauses a
+Sandbox; OMA knows only running and missing ones (ADR-0025).
 After all current shared executions settle and all input queues empty, the Runner
-shortens the running timeout to 30 minutes under binding coordination. Unknown
+shortens the running timeout to 15 minutes under binding coordination; the next
+Turn after that finds its Sandbox missing and claims a new one from the Warm Pool
+on its first tool call. Unknown
 execution or a missing callback leaves the existing finite deadline; it never
 creates permanent resource protection. A new admitted generation supersedes old
 abandoned business uses. Ordinary tools reuse a prepared handle within the Turn.
-Exceptions may restore Paused or rebuild a confirmed missing Sandbox, but
+Exceptions may rebuild a confirmed missing Sandbox, but
 never implicitly replay the uncertain command. Completed OSS writes survive;
-local processes, memory and dependencies need not. No OMA idle scanner or
-never-timeout policy remains. See ADR-0019 and `docs/sandbox-lifecycle-deployment.md`.
+local processes, memory and dependencies need not. No never-timeout policy
+remains. See ADR-0019, ADR-0025 and `docs/sandbox-lifecycle-deployment.md`.
 
 The Sandbox Binding records intent; whether a Sandbox exists is the
 gateway's answer. A binding is Ready (it names a Sandbox), Creating (an intent

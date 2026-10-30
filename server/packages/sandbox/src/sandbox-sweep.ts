@@ -52,8 +52,7 @@ export type SweepKeepReason =
   | "unlabelled" // no environment label and no binding row here: left to its platform deadline
   | "unbound" // this environment's label but no binding label: outside the binding protocol
   | "in-use"
-  | "paused" // Ready, unused and paused: bounded by platform retention, resumed by the next Turn
-  | "short-deadline" // Ready, unused, running, deadline within idleSeconds already
+  | "short-deadline" // Ready, unused, deadline within idleSeconds already
   | "creating" // the creator may still be producing it
   | "reclaiming"; // its reclamation kills it by binding: the claimer retries, and a round resumes one left claimed
 
@@ -89,16 +88,13 @@ type Kill = Extract<SweepDecision, { action: "kill" }>;
 
 /** An unknown claim time (the gateway reports one it cannot parse) sorts last. */
 const claimedAt = ({ startedAt }: ListedSandbox) => Number.isNaN(startedAt.getTime()) ? Number.POSITIVE_INFINITY : startedAt.getTime();
-const byClaimThenId = (a: ListedSandbox, b: ListedSandbox) =>
-  claimedAt(a) - claimedAt(b) || (a.sandboxId < b.sandboxId ? -1 : a.sandboxId > b.sandboxId ? 1 : 0);
-const runningFirst = (a: ListedSandbox, b: ListedSandbox) =>
-  Number(a.state === "paused") - Number(b.state === "paused");
 /**
  * The order in which reconciliation keeps one binding's Sandboxes, ensure's
- * and the sweeper's alike (ADR-0023): a running one, else the earliest
- * claimed; it keeps the first and kills the rest.
+ * and the sweeper's alike (ADR-0023): the earliest claimed, then the lowest
+ * id; it keeps the first and kills the rest.
  */
-export const byKeepPreference = (a: ListedSandbox, b: ListedSandbox) => runningFirst(a, b) || byClaimThenId(a, b);
+export const byKeepPreference = (a: ListedSandbox, b: ListedSandbox) =>
+  claimedAt(a) - claimedAt(b) || (a.sandboxId < b.sandboxId ? -1 : a.sandboxId > b.sandboxId ? 1 : 0);
 
 export function selectSweep(
   listed: readonly ListedSandbox[],
@@ -107,8 +103,7 @@ export function selectSweep(
 ): SweepSelection {
   const now = options.now.getTime();
   const idleDeadline = now + options.idleSeconds * 1000;
-  const longDeadline = (sandbox: ListedSandbox) =>
-    sandbox.state === "running" && sandbox.endAt !== null && sandbox.endAt.getTime() > idleDeadline;
+  const longDeadline = (sandbox: ListedSandbox) => sandbox.endAt !== null && sandbox.endAt.getTime() > idleDeadline;
 
   // A page boundary that moves while listing can return a Sandbox twice.
   const seen = new Set<string>();
@@ -132,7 +127,6 @@ export function selectSweep(
     else if (row.sandboxId !== null) {
       if (row.sandboxId !== sandboxId) kill("superseded");
       else if (row.inUse) keep("in-use");
-      else if (sandbox.state === "paused") keep("paused");
       else if (sandbox.endAt === null) kill("no-deadline");
       else if (longDeadline(sandbox)) decisions.set(sandboxId, { sandboxId, bindingId, action: "shorten" });
       else keep("short-deadline");
@@ -142,7 +136,7 @@ export function selectSweep(
     } else kill("cold");
   }
 
-  // Reconcile as ensure does: keep a running one, else the earliest claimed. An
+  // Reconcile as ensure does: keep the earliest claimed. An
   // adopted Sandbox without a deadline is not shortened (a no-op); unused, the
   // next round kills it by the Ready row.
   for (const [bindingId, group] of unresolved) {
@@ -153,15 +147,14 @@ export function selectSweep(
   }
 
   // The cap takes the costliest first: a Sandbox without a deadline would run
-  // forever, a running one until its deadline, a paused one only holds storage.
-  // Every Runner computes the same order, so the fleet converges on one set.
+  // forever, any other one until its deadline. Every Runner computes the same
+  // order, so the fleet converges on one set.
   const kills = sandboxes.flatMap((sandbox) => {
     const decision = decisions.get(sandbox.sandboxId)!;
     return decision.action === "kill" ? [{ sandbox, decision }] : [];
   });
-  const cost = ({ sandbox, decision }: { sandbox: ListedSandbox; decision: Kill }) =>
-    decision.reason === "no-deadline" ? 0 : sandbox.state === "running" ? 1 : 2;
-  kills.sort((a, b) => cost(a) - cost(b) || byClaimThenId(a.sandbox, b.sandbox));
+  const cost = ({ decision }: { decision: Kill }) => decision.reason === "no-deadline" ? 0 : 1;
+  kills.sort((a, b) => cost(a) - cost(b) || byKeepPreference(a.sandbox, b.sandbox));
   for (const { decision } of kills.slice(Math.max(0, options.maxKills))) decision.deferred = true;
 
   const ordered = sandboxes.map((sandbox) => decisions.get(sandbox.sandboxId)!);

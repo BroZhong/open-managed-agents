@@ -16,6 +16,12 @@ Revised by [ADR-0024](0024-environments.md): the Session field and the Redis
 signal kind `environment` below are renamed `sandbox`, with no alias, and an
 "environment failure" is now called a Sandbox unavailability.
 
+Revised by [ADR-0025](0025-sandbox-1c4g-delete-on-idle.md) (2026-10-30):
+Sandboxes are deleted at their deadline, never paused, so OMA lists running
+Sandboxes only; reconciliation keeps the earliest claimed one (not "a running
+one, else the earliest claimed"), the sweeper has no `paused` keep class, and
+an unused Ready Sandbox is shortened to 15 minutes and then deleted.
+
 ## Context
 
 A binding (`delegation_environments`, one per root Session, shared by its Child

@@ -84,7 +84,6 @@ export class SandboxImageVerifier implements ImageVerifier {
   async sweep(keep: KeepAttempt): Promise<number> {
     const listed = await this.deps.client.listSandboxes({
       metadata: { [VERIFICATION_LABELS.purpose]: PURPOSE, [SANDBOX_ENVIRONMENT_LABEL]: this.deps.environment },
-      states: ["running", "paused"],
     });
     let destroyed = 0;
     for (const sandbox of listed) {

@@ -158,7 +158,7 @@ export class SandboxSweeper {
     try {
       // Unfiltered: selection keeps another environment's Sandboxes, and an
       // unlabelled one is this environment's only if its binding has a row here.
-      const listed = await this.deps.client.listSandboxes({ metadata: {}, states: ["running", "paused"] });
+      const listed = await this.deps.client.listSandboxes({ metadata: {} });
       line.listed = listed.length;
       const facts = await this.deps.facts.sweepFacts([...new Set(listed.flatMap((s) => s.metadata[SANDBOX_BINDING_LABEL] ?? []))]);
       const unsettled = await this.deps.facts.unsettled(INTENT_DEADLINE_SECONDS, SWEEP_MAX_UNSETTLED);
@@ -291,7 +291,7 @@ export class SandboxSweeper {
   /**
    * Read the binding once more after shortening its Sandbox's deadline, and
    * set 24 hours back if it is in use: a Turn admitted since the decision may
-   * have connected (24 hours) before the shorten, which would pause it 30
+   * have connected (24 hours) before the shorten, which would delete it 15
    * minutes into the Turn. The read closes that window without holding the
    * row lock across a gateway call: an admitted Turn's input stays pending
    * until the Turn acknowledges it at its end, so a Turn admitted before the

@@ -17,6 +17,8 @@
 # video-production's image once that is ready, after an ACS ImageCache for it
 # (an uncached refill pulls the whole image, ~1.8 GB).
 #
+# Resources and lifecycle as production's (ADR-0025; see oma-sandbox.yaml).
+#
 # Shares sandbox-system and the ACS quota with production: never touch
 # auto-story-v2. Apply only to the agent-platform cluster:
 #   kubectl --kubeconfig ~/.kube/agent-platform-config apply -f sandbox/warm-pool/oma-test-sandbox.yaml
@@ -28,8 +30,6 @@ metadata:
   labels:
     oma.dev/test-only: "true"
 spec:
-  persistentContents:
-  - filesystem
   replicas: 1
   runtimes:
   - name: csi
@@ -51,11 +51,11 @@ spec:
         imagePullPolicy: IfNotPresent
         resources:
           limits:
-            cpu: "2"
+            cpu: "1"
             memory: 4Gi
           requests:
-            cpu: "2"
-            ephemeral-storage: 50Gi
+            cpu: "1"
+            ephemeral-storage: 15Gi
             memory: 4Gi
       imagePullSecrets:
       - name: ali-shanghai

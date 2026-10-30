@@ -12,6 +12,12 @@
 # image once that is ready, after an ACS ImageCache for it. Re-applying this
 # manifest afterwards would put that older image back.
 #
+# Resources (ADR-0025): 1 vCPU, 4 GiB, 15 GiB ephemeral storage, requests equal
+# to limits (ACS bills the larger of the two). No persistentContents: a
+# Sandbox is deleted at its deadline, never paused. Change them on the live
+# SandboxSet by patching spec.template.spec.containers[0].resources and
+# spec.persistentContents only, for the image reason above.
+#
 # auto-story-v2 stays untouched for rollback until the release is accepted.
 # Apply only to the agent-platform cluster:
 #   kubectl --kubeconfig ~/.kube/agent-platform-config apply -f sandbox/warm-pool/oma-sandbox.yaml
@@ -21,8 +27,6 @@ metadata:
   name: oma-sandbox
   namespace: sandbox-system
 spec:
-  persistentContents:
-  - filesystem
   replicas: 8
   runtimes:
   - name: csi
@@ -43,11 +47,11 @@ spec:
         imagePullPolicy: IfNotPresent
         resources:
           limits:
-            cpu: "2"
+            cpu: "1"
             memory: 4Gi
           requests:
-            cpu: "2"
-            ephemeral-storage: 50Gi
+            cpu: "1"
+            ephemeral-storage: 15Gi
             memory: 4Gi
       imagePullSecrets:
       - name: ali-shanghai

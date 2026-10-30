@@ -72,7 +72,6 @@ interface FakeSandbox {
    * is the seam tests use to exercise the executor's liveness-rebuild path.
    */
   reclaimed: boolean;
-  paused?: boolean;
   createOpts: SandboxCreateOptions;
   /** When the gateway claimed it. */
   claimedAt: Date;
@@ -143,15 +142,12 @@ export class FakeSandboxClient implements SandboxClient {
     this.require(id).endAt = new Date(this.clock().getTime() + seconds * 1000);
     this.deadlines.push({ id, seconds });
   }
-  pause(id: string): void { this.require(id).paused = true; }
-  async state(id: string): Promise<'running' | 'paused' | 'missing'> {
+  async state(id: string): Promise<'running' | 'missing'> {
     const sandbox = this.sandboxes.get(id);
-    if (!sandbox || sandbox.destroyed || sandbox.reclaimed) return 'missing';
-    return sandbox.paused ? 'paused' : 'running';
+    return !sandbox || sandbox.destroyed || sandbox.reclaimed ? 'missing' : 'running';
   }
   async reconnect(id: string, _metadata: Record<string, string>): Promise<boolean> {
     if (await this.state(id) === 'missing') return false;
-    this.sandboxes.get(id)!.paused = false;
     await this.setTimeout(id, 86400);
     return true;
   }
@@ -306,11 +302,10 @@ export class FakeSandboxClient implements SandboxClient {
     const listed: ListedSandbox[] = [];
     for (const sandbox of this.sandboxes.values()) {
       if (sandbox.destroyed || sandbox.reclaimed) continue;
-      const state = sandbox.paused ? "paused" : "running";
       // The E2B client claims with the image as create metadata, which the gateway lists.
       const metadata: Record<string, string> = { ...sandbox.createOpts.metadata, [CLAIM_IMAGE_METADATA]: sandbox.createOpts.image };
-      if (!filter.states.includes(state) || Object.entries(filter.metadata).some(([key, value]) => metadata[key] !== value)) continue;
-      listed.push({ sandboxId: sandbox.id, state, metadata, startedAt: sandbox.claimedAt, endAt: sandbox.endAt });
+      if (Object.entries(filter.metadata).some(([key, value]) => metadata[key] !== value)) continue;
+      listed.push({ sandboxId: sandbox.id, metadata, startedAt: sandbox.claimedAt, endAt: sandbox.endAt });
     }
     return listed;
   }
@@ -600,7 +595,6 @@ export class FakeSandboxClient implements SandboxClient {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox) throw new Error(`No sandbox ${id}`);
     if (sandbox.destroyed) throw new Error(`Sandbox ${id} is destroyed`);
-    if (sandbox.paused) throw new Error(`Sandbox ${id} is paused`);
     if (sandbox.mountFailure) throw new WorkspaceMountUnavailable();
     if (sandbox.reclaimed) throw new Error(`Sandbox ${id} was reclaimed`);
     return sandbox;
