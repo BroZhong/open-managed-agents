@@ -298,11 +298,12 @@ production`), images `oma-server@sha256:efc577190e34…` (tag `e2edb6655355`) fo
 
 ## Verification
 
-`verify-native-sandbox-lifecycle.mjs` and its 2026-10-10 evidence document the SDK,
-Gateway and Manager versions and the isolated native platform tests. The original
-strict retention gate failed; the later user-approved approximate contract accepts
-that observed behavior. Retain the original observations rather than rewriting
-history. See the integration report for the application changes and final checks.
+The 2026-10-10 native lifecycle reports document the SDK, Gateway and Manager
+versions and the isolated platform tests of ADR-0019's pause policy. Their
+scripts (`verify-native-sandbox-{lifecycle,production,integration}`) were
+removed with that policy; they remain in Git history. ADR-0025's delete-on-idle
+policy was accepted on oma-test on 2026-10-30
+([report](verification/sandbox-1c4g-oma-test-2026-10-30.md)).
 
 All native tool execution streams now have a three-hour Host wait ceiling.
 Shorter explicit bash timeouts retain five seconds of response grace within that
