@@ -78,7 +78,7 @@ describe("Sidebar Session navigation", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     const workspaceKey = ["workspaces", "byAgent", agent.id];
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(workspaceKey, [workspace, { id: "idle", name: "Idle", hasRunningSessions: false }]);
+    queryClient.setQueryData(workspaceKey, { pages: [{ data: [workspace, { id: "idle", name: "Idle", hasRunningSessions: false }], has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
       pages: [{ data: [], has_more: false }], pageParams: [undefined],
@@ -99,10 +99,66 @@ describe("Sidebar Session navigation", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     fireEvent.click(project.getByRole("button", { expanded: true }));
     expect(project.getByRole("status")).toBeTruthy();
-    act(() => { queryClient.setQueryData(workspaceKey, [{ ...workspace, hasRunningSessions: false }]); });
+    act(() => { queryClient.setQueryData(workspaceKey, { pages: [{ data: [{ ...workspace, hasRunningSessions: false }], has_more: false }], pageParams: [undefined] }); });
     await waitFor(() => expect(project.queryByRole("status")).toBeNull());
-    act(() => { queryClient.setQueryData(workspaceKey, [workspace]); });
+    act(() => { queryClient.setQueryData(workspaceKey, { pages: [{ data: [workspace], has_more: false }], pageParams: [undefined] }); });
     await waitFor(() => expect(project.getByRole("status")).toBeTruthy());
+  });
+
+  it("loads fifteen Workspaces, retries Show more without losing rows, and appends twenty independently of Sessions", async () => {
+    const agent = { id: "agent_workspaces", name: "Workspaces Agent" };
+    const workspaces = Array.from({ length: 38 }, (_, index) => ({ id: `ws_${index}`, name: `Project ${index}` }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity } } });
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
+      pages: [{ data: [], has_more: false }], pageParams: [undefined],
+    });
+    let attempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/v1/workspaces");
+      expect(url.searchParams.get("agent_id")).toBe(agent.id);
+      const cursor = url.searchParams.get("cursor");
+      if (cursor === "page_2" && ++attempts === 1) {
+        return new Response(JSON.stringify({ error: "Try again" }), { status: 503 });
+      }
+      const start = cursor === "page_3" ? 35 : cursor === "page_2" ? 15 : 0;
+      const limit = Number(url.searchParams.get("limit"));
+      expect(limit).toBe(cursor ? 20 : 15);
+      return new Response(JSON.stringify({
+        data: workspaces.slice(start, start + limit), has_more: start + limit < workspaces.length,
+        next_cursor: start === 0 ? "page_2" : start === 15 ? "page_3" : undefined,
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QueryClientProvider client={queryClient}><AuthProvider>
+      <MemoryRouter initialEntries={[`/agents/${agent.id}`]}><Routes>
+        <Route path="/agents/:id" element={<Sidebar />} />
+      </Routes></MemoryRouter>
+    </AuthProvider></QueryClientProvider>);
+    const list = within(screen.getByRole("group", { name: "Workspaces" }));
+    await list.findByRole("button", { name: "Show more" });
+    expect(list.getAllByRole("group")).toHaveLength(15);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(list.getByRole("button", { name: "Show more" }));
+    await list.findByRole("alert");
+    expect(list.getAllByRole("group")).toHaveLength(15);
+    fireEvent.click(list.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(list.getAllByRole("group")).toHaveLength(35));
+    expect(list.queryByRole("alert")).toBeNull();
+    fireEvent.click(list.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(list.getAllByRole("group")).toHaveLength(38));
+    expect(list.queryByRole("button", { name: "Show more" })).toBeNull();
+    expect(list.getAllByRole("group").map((row) => row.getAttribute("aria-label")))
+      .toEqual(workspaces.map((workspace) => `Workspace ${workspace.name}`));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // Loaded pages revalidate together; a changed order replaces rows without duplicates.
+    const reordered = [workspaces[37], ...workspaces.slice(0, 37)];
+    workspaces.splice(0, workspaces.length, ...reordered);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["workspaces", "byAgent", agent.id] }); });
+    await waitFor(() => expect(list.getAllByRole("group")[0].getAttribute("aria-label")).toBe("Workspace Project 37"));
+    expect(list.getAllByRole("group")).toHaveLength(38);
   });
 
   it.each(["workspace", "chats"] as const)("orders %s Sessions by modification time across loaded pages, regardless of creation time or status", (scope) => {
@@ -130,7 +186,7 @@ describe("Sidebar Session navigation", () => {
       { data: [recentlyModified, sameTime], has_more: false },
     ];
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], scope === "workspace" ? [workspace] : []);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: scope === "workspace" ? [workspace] : [], has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     queryClient.setQueryData(["sessions", "byAgent", agent.id, ...(scope === "workspace" ? ["workspace", workspace.id] : ["loose"]), "parents"], {
       pages, pageParams: [undefined, "cursor"],
@@ -177,7 +233,7 @@ describe("Sidebar Session navigation", () => {
       defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity } },
     });
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], workspaces);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: workspaces, has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     let resolveNextPage!: (response: Response) => void;
     const nextPage = new Promise<Response>((resolve) => { resolveNextPage = resolve; });
@@ -269,7 +325,7 @@ describe("Sidebar Session navigation", () => {
       defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity } },
     });
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], [workspace]);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: [workspace], has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     let nextPageAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -333,7 +389,7 @@ describe("Sidebar Session navigation", () => {
     });
     queryClient.setQueryData(["agents", agent.id], agent);
     queryClient.setQueryData(["sessions", active.id], active);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], [workspace]);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: [workspace], has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
       pages: [{ data: [], has_more: false }], pageParams: [undefined],
@@ -391,7 +447,7 @@ describe("Sidebar Session navigation", () => {
     queryClient.setQueryData(["sessions", "byAgent", agent.id], {
       pages: [{ data: [child, parent], has_more: false }], pageParams: [undefined],
     });
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], []);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: [], has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
@@ -465,9 +521,9 @@ describe("Sidebar Session navigation", () => {
     queryClient.setQueryData(["agents", agent.id], agent);
     queryClient.setQueryData(["agents", agent.id, "skills"], []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], group === "workspace" ? [{
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: group === "workspace" ? [{
       id: session.workspaceId, name: "Live workspace", tenantId: "tenant_1", createdAt: session.createdAt,
-    }] : []);
+    }] : [], has_more: false }], pageParams: [undefined] });
 
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     vi.stubGlobal(
@@ -578,7 +634,7 @@ describe("Sidebar Session navigation", () => {
     queryClient.setQueryData(["agents", agent.id], agent);
     queryClient.setQueryData(["agents", agent.id, "skills"], []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], []);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: [], has_more: false }], pageParams: [undefined] });
 
     let resolveOlderList!: (response: Response) => void;
     const olderList = new Promise<Response>((resolve) => {
@@ -728,7 +784,7 @@ describe("Sidebar Session navigation", () => {
       pageParams: [undefined],
     });
     queryClient.setQueryData(["loops", "byAgent", agent.id], [loop]);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], []);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: [], has_more: false }], pageParams: [undefined] });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(`/v1/loops/${loop.id}`) && init?.method === "POST") {
@@ -859,7 +915,7 @@ describe("Sidebar Session navigation", () => {
       ["sessions", "byAgent", agent.id, "workspace", workspace.id, "parents"],
       { pages: [{ data: [sourceSession, targetSession], has_more: false }], pageParams: [undefined] },
     );
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], [workspace]);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], { pages: [{ data: [workspace], has_more: false }], pageParams: [undefined] });
     queryClient.setQueryData(["agents", agent.id], agent);
 
     // Session GETs deliberately never resolve. This makes each navigation's

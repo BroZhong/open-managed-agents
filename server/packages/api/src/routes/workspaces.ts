@@ -1,6 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
-import { workspaceObjectPrefix } from "@oma-server/store";
+import { workspaceObjectPrefix, decodeWorkspaceUpdatedAtCursor } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -60,40 +60,22 @@ export function workspaceEntityRoutes(
     return c.json(workspace, 201);
   });
 
-  // GET /v1/workspaces — List the tenant's Workspaces (ordered by created_at).
+  // Agent discovery is sorted and paginated in the store, before returning rows.
   registerContractRoute(router, getOpenApiRoute("listWorkspaces"), async (c) => {
     const tenant = c.get("tenant");
-    const data = await workspaceStore.list(tenant.tenantId);
     const agentId = c.req.query("agent_id");
     if (agentId !== undefined) {
       if (!sessionStore) return c.json({ error: "Session discovery is unavailable" }, 503);
-      // Discover every project independently of the Agent's Session page. Only
-      // check for one visible Session per named Workspace, never load its history.
-      const namedWorkspaces = data.filter((workspace) => workspace.name);
-      const matches = [];
-      for (let offset = 0; offset < namedWorkspaces.length; offset += 10) {
-        const batch = await Promise.all(namedWorkspaces.slice(offset, offset + 10).map(async (workspace) => {
-          const filters = {
-            agentId,
-            workspaceId: workspace.id,
-            withoutLoop: true,
-            excludeDelegated: true,
-            limit: 1,
-          };
-          const sessions = await sessionStore.list(tenant.tenantId, filters);
-          if (sessions.data.length === 0) return null;
-          // Status filtering happens before pagination, including Sessions that
-          // have never been loaded by the sidebar.
-          const active = await Promise.all((["running", "waiting"] as const).map(
-            (status) => sessionStore.list(tenant.tenantId, { ...filters, status }),
-          ));
-          return { ...workspace, hasRunningSessions: active.some((page) => page.data.length > 0) };
-        }));
-        matches.push(...batch.filter((workspace) => workspace !== null));
+      const cursor = c.req.query("cursor");
+      if (cursor !== undefined && !decodeWorkspaceUpdatedAtCursor(cursor)) {
+        return c.json({ error: "Invalid Workspace cursor" }, 400);
       }
-      return c.json({ data: matches });
+      const result = await workspaceStore.listByAgent(tenant.tenantId, agentId, {
+        limit: Number(c.req.query("limit") ?? 50), cursor,
+      });
+      return c.json({ data: result.data, has_more: result.hasMore, ...(result.nextCursor ? { next_cursor: result.nextCursor } : {}) });
     }
-    return c.json({ data });
+    return c.json({ data: await workspaceStore.list(tenant.tenantId) });
   });
 
   // GET /v1/workspaces/:id — Get one; 404 on not-found or cross-tenant.

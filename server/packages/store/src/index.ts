@@ -99,6 +99,9 @@ export type {
 } from "./interfaces/user-store.js";
 
 export type {
+  AgentWorkspace,
+  AgentWorkspaceListOptions,
+  AgentWorkspaceListResult,
   WorkspaceMetadataStore,
   WorkspaceMetadataStoreCreateInput,
   WorkspaceMetadataStoreUpdateInput,
@@ -228,3 +231,5 @@ export type {
 export { DEFAULT_ENVIRONMENT_ID, ENVIRONMENT_BASE_IMAGES, newEnvironmentId, newEnvironmentBuildId, environmentDefinitionSha256, validateEnvironmentBuildLeaseMs } from "./environment.js";
 export { EnvironmentNameConflictError } from "./errors.js";
 export { PgEnvironmentStore } from "./postgres/environment-store.js";
+
+export { encodeWorkspaceUpdatedAtCursor, decodeWorkspaceUpdatedAtCursor } from "./workspace-list-cursor.js";

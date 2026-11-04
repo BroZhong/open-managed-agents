@@ -305,7 +305,8 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
   const { data: agent } = useAgent(agentId)
   const { data: activeSession } = useSession(location.pathname.startsWith("/sessions/") ? params.id ?? "" : "")
   const chatsQuery = useLooseSessions(agentId)
-  const { data: workspaces, isLoading: workspacesLoading, isError: workspacesError, refetch: refetchWorkspaces } = useAgentWorkspaces(agentId)
+  const workspacesQuery = useAgentWorkspaces(agentId)
+  const { data: workspaces, isLoading: workspacesLoading, isError: workspacesError } = workspacesQuery
   const { data: loops } = useAgentLoops(agentId)
   const createSession = useCreateSession()
   const createWorkspace = useCreateWorkspace()
@@ -436,7 +437,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           Note: the Agent config link is the header above; there is no separate
           `agent` settings row (it duplicated the header). `New chat` lives in
           the CHATS section header `+`, not as a top-level button. */}
-      <div className="pt-2">
+      <div role="group" aria-label="Workspaces" className="pt-2">
         <div className="flex items-center pr-1">
           <button
             type="button"
@@ -493,9 +494,9 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
               <p className="px-2.5 py-1 text-xs text-neutral-400">Loading Workspaces…</p>
             )}
             {workspacesError && (
-              <button type="button" onClick={() => void refetchWorkspaces()} className="px-2.5 py-1 text-left text-xs text-red-500">
-                Could not load Workspaces. Retry
-              </button>
+              <p role="alert" className="px-2.5 py-1 text-xs text-red-500">
+                {workspacesQuery.isFetchNextPageError ? "Failed to load more Workspaces." : "Could not load Workspaces."}
+              </p>
             )}
             {!workspacesLoading && !workspacesError && (workspaces ?? []).length === 0 && (
               <p className="px-2.5 py-1 text-xs text-neutral-400">None</p>
@@ -515,6 +516,16 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
                 }
               />
             ))}
+            {(workspacesQuery.hasNextPage || workspacesError) && <button
+              type="button"
+              onClick={() => void (workspacesError && !workspacesQuery.isFetchNextPageError
+                ? workspacesQuery.refetch()
+                : workspacesQuery.fetchNextPage({ cancelRefetch: false }))}
+              disabled={workspacesQuery.isFetching}
+              className="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)] disabled:opacity-50"
+            >
+              {workspacesQuery.isFetching ? "Loading…" : workspacesError ? "Retry" : "Show more"}
+            </button>}
           </div>
         )}
       </div>

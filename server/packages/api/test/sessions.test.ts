@@ -75,6 +75,7 @@ class InMemoryAgentStore implements AgentStore {
 
 // In-memory WorkspaceMetadataStore for testing
 class InMemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
+  async listByAgent() { return { data: [], hasMore: false }; }
   private workspaces = new Map<string, Workspace>();
   private nextId = 1;
   public createCalls: WorkspaceMetadataStoreCreateInput[] = [];

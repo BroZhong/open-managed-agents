@@ -14,6 +14,9 @@ export type {
 } from "./pending-event-store.js";
 export type { ApiKeyStore, ApiKeyCreateResult } from "./api-key-store.js";
 export type {
+  AgentWorkspace,
+  AgentWorkspaceListOptions,
+  AgentWorkspaceListResult,
   WorkspaceMetadataStore,
   WorkspaceMetadataStoreCreateInput,
   WorkspaceMetadataStoreUpdateInput,

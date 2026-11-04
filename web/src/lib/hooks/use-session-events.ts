@@ -6,11 +6,11 @@ import {
   useReducer,
   useRef,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
-import type { Workspace } from "@/lib/hooks/use-workspaces";
+import type { WorkspacesResponse } from "@/lib/hooks/use-workspaces";
 import {
   initialSessionEventStreamState,
   parseSessionSseFrame,
@@ -152,9 +152,9 @@ export function useSessionEvents(sessionId: string) {
     if (navigationSession && nextStatus !== undefined && nextStatus !== session?.status) {
       void queryClient.invalidateQueries({ queryKey: ["workspaces", "byAgent", navigationSession.agentId] });
     }
-    const namedWorkspace = navigationSession && queryClient.getQueryData<Workspace[]>(
+    const namedWorkspace = navigationSession && queryClient.getQueryData<InfiniteData<WorkspacesResponse>>(
       ["workspaces", "byAgent", navigationSession.agentId],
-    )?.some((workspace) => workspace.id === navigationSession.workspaceId && workspace.name);
+    )?.pages.some((page) => page.data.some((workspace) => workspace.id === navigationSession.workspaceId && workspace.name));
     const navigationQueries = navigationSession && !navigationSession.loopId && updatedAt
       ? queryClient.getQueryCache().findAll({
         queryKey: ["sessions", "byAgent", navigationSession.agentId],

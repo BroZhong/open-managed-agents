@@ -1758,6 +1758,12 @@
                 {
                   "type": "object",
                   "properties": {
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Present with agent_id: latest updatedAt among this Agent's visible non-Loop, non-delegated Sessions in the Workspace. Results are ordered by this timestamp descending, then Workspace ID descending.",
+                      "example": "2026-07-14T00:00:00.000Z"
+                    },
                     "hasRunningSessions": {
                       "type": "boolean",
                       "description": "Present with agent_id: whether a visible non-Loop, non-delegated Session for this Agent is running or waiting, independent of pagination."
@@ -1766,6 +1772,12 @@
                 }
               ]
             }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string"
           }
         },
         "required": [
@@ -8431,11 +8443,31 @@
       "get": {
         "operationId": "listWorkspaces",
         "summary": "List Workspaces",
-        "description": "Returns all live Workspaces owned by the Tenant, ordered by creation time ascending. With agent_id, returns only named Workspaces with at least one visible non-Loop, non-delegated Session owned by that Agent. Workspace discovery is independent of Session pagination. This endpoint is not paginated.",
+        "description": "Returns all live Workspaces owned by the Tenant, ordered by creation time ascending. With agent_id, returns only named Workspaces with at least one visible non-Loop, non-delegated Session owned by that Agent, ordered by the latest Session updatedAt descending, then Workspace ID descending. Agent-scoped discovery uses cursor pagination independently of Session pagination (default 50, maximum 100). Pass next_cursor with the same agent_id to continue. Without agent_id the tenant inventory remains unpaginated.",
         "tags": [
           "Workspaces"
         ],
         "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
           {
             "schema": {
               "type": "string",
