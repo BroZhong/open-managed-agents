@@ -182,6 +182,12 @@ data:
   SANDBOX_BASE_SECRET_NAME: base-secret
   PENDING_SCAN_INTERVAL_MS: '5000'
   LOOP_POLL_INTERVAL_MS: '15000'
+  # Runner Capacity N: the Turns one Runner executes at once (ADR-0026). A
+  # ScaledObject's target per replica stays below it.
+  RUNNER_CAPACITY: '50'
+  # A stopping Runner (a rollout, a scale-down) hands its Turns over for up to
+  # 45 minutes, so the tools they run finish and commit (ADR-0021, ADR-0026).
+  SHUTDOWN_GRACE_MS: '2700000'
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -201,6 +207,9 @@ spec:
         alibabacloud.com/acs: 'true'
     spec:
       serviceAccountName: oma-server
+      # SHUTDOWN_GRACE_MS plus 60 s to release the claims of the Turns still
+      # running at the handoff deadline and close the stores.
+      terminationGracePeriodSeconds: 2760
       imagePullSecrets:
       - name: ali-shanghai
       volumes:
@@ -225,6 +234,12 @@ spec:
         # Node defaults to a ~2 GB heap regardless of the container limit.
         - name: NODE_OPTIONS
           value: --max-old-space-size=6144
+        # Names this Runner's claims in PostgreSQL: the claim owner is the Pod
+        # name with a random suffix (ADR-0026).
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -338,13 +353,14 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 6
-  # A new Runner is ready before an old one receives SIGTERM, so the old one
-  # can hand its running Turns over instead of leaving them to lease expiry
-  # (ADR-0021).
+  # New Runners are ready before old ones receive SIGTERM, so the old ones
+  # can hand their running Turns over instead of leaving them to lease expiry
+  # (ADR-0021). A quarter at a time: with a 45-minute handoff, one at a time
+  # would make a rollout of many Runners take hours (ADR-0026).
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
+      maxSurge: 25%
       maxUnavailable: 0
 ---
 apiVersion: v1

@@ -148,18 +148,36 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("both environments run two rolling 2-CPU Runners; only test can kill them abruptly", () => {
+test("both environments run two 2-CPU Runners rolled out a quarter at a time; only test can kill them abruptly", () => {
   for (const env of ["test", "production"]) {
     const doc = runner(render(env));
     assert.match(doc, /^  replicas: 2$/m, env);
     assert.match(doc, /^    type: RollingUpdate$/m, env);
-    assert.match(doc, /^      maxSurge: 1$/m, env);
+    assert.match(doc, /^      maxSurge: 25%$/m, env);
     assert.match(doc, /^      maxUnavailable: 0$/m, env);
     assert.match(doc, /^            cpu: "2"$/m, env);
     assert.match(doc, /^            memory: 8Gi$/m, env);
   }
   assert.match(runner(render("test")), /^      shareProcessNamespace: true$/m);
   assert.doesNotMatch(runner(render("production")), /shareProcessNamespace/);
+});
+
+test("a stopping Runner hands its Turns over for 45 minutes and is killed 60 s after that deadline (ADR-0026)", () => {
+  for (const [env, poolMax] of [["test", "10"], ["production", "30"]]) {
+    const docs = render(env);
+    const cm = configMap(docs, "oma-runner-config");
+    const graceMs = Number(field(cm, "SHUTDOWN_GRACE_MS"));
+    assert.equal(graceMs, 45 * 60_000, env);
+    const doc = runner(docs);
+    assert.equal(Number(doc.match(/^      terminationGracePeriodSeconds: (\d+)$/m)?.[1]), graceMs / 1000 + 60, env);
+    assert.equal(field(cm, "RUNNER_CAPACITY"), "50", env);
+    // The claim owner is the Pod name with a suffix.
+    assert.match(doc, /^        - name: POD_NAME\n          valueFrom:\n            fieldRef:\n              fieldPath: metadata\.name$/m, env);
+    assert.equal(field(cm, "PG_POOL_MAX"), poolMax, env);
+    // The API keeps the short default shutdown.
+    assert.equal(field(configMap(docs, "oma-api-config"), "SHUTDOWN_GRACE_MS"), undefined, env);
+    assert.doesNotMatch(deployment(docs, "oma-api"), /terminationGracePeriodSeconds/, env);
+  }
 });
 
 const welltopPinned = (image) => /^registry-vpc\.cn-shanghai\.aliyuncs\.com\/welltop\/[a-z0-9._-]+@sha256:[0-9a-f]{64}$/.test(image);

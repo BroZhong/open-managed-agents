@@ -37,21 +37,22 @@ Stopping a Runner (rollout, scale-down, `kubectl delete pod`) hands its running
 Turns to the other Runners (ADR-0021). On SIGTERM it stops scanning and claiming
 and asks each running Turn to stop before its next model request: a tool that is
 running finishes and keeps its result. A Turn still in a tool when
-`SHUTDOWN_GRACE_MS` (20 s) runs out is detached; its Sandbox process is not
-stopped, and the next owner tells the Agent that call's outcome is unknown. Each
-claim is released and another Runner takes the Turn over at once on the `wake`
-signal, or within one scan without Redis; the trace shows a `session.turn_resumed`
-with reason `released`. Releasing the claims may take up to 5 s after the grace
-period, so keep the Pod's termination grace period at the Kubernetes default of
-30 s or more. A handoff needs another Runner to continue the Turn: with a single
+`SHUTDOWN_GRACE_MS` (45 minutes, ADR-0026) runs out is detached; its Sandbox
+process is not stopped, and the next owner tells the Agent that call's outcome is
+unknown. Each claim is released and another Runner takes the Turn over at once on
+the `wake` signal, or within one scan without Redis; the trace shows a
+`session.turn_resumed` with reason `released`. Releasing the claims may take up
+to 5 s after the grace period, so the Pod's termination grace period is
+`SHUTDOWN_GRACE_MS` plus 60 s (2760 s). ACS honours it, and stops the liveness
+probe once the Pod is deleted (measured 2026-11-04). A handoff needs another Runner to continue the Turn: with a single
 Runner, the Turn continues when the replacement Pod is ready. On the test
 cluster's virtual kubelet, `kubectl delete pod --force --grace-period=0` still
 delivers SIGTERM, so it tests the handoff; to test a lost Runner (lease expiry,
 reason `expired`), kill the process with SIGKILL inside the container.
 
 Each environment runs one API and two Runners (2 CPU / 8 GiB each). A rolling
-update starts a new Runner before an old one receives SIGTERM, which then hands
-its running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
+update starts new Runners, a quarter of them at a time, before old ones receive
+SIGTERM, which then hand their running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
 provides separate ConfigMaps, Deployments, readiness probes and internal Services;
 `deploy/environments/` adds each environment's namespace and configuration.
 API Pods have no Pi config mount or Sandbox service account. The legacy
