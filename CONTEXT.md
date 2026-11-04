@@ -94,7 +94,7 @@ A user's demand that the **Session**'s currently running **Turn** stop now. An I
 _Avoid_: cancel, stop the session, kill (an Interrupt ends a Turn, not a Session)
 
 **Queued Input**:
-A user message, Delegation Input, or Delegation Result that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history with its actual input source; so a given input is either queued or executing, never both. A Delegation Input never waits for a slot: once accepted, the first Runner to claim it starts it.
+A user message, Delegation Input, or Delegation Result that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history with its actual input source; so a given input is either queued or executing, never both. A Delegation Input never waits for room under its parent's limit: the limit is checked when it is accepted, and the first Runner to claim it starts it.
 _Avoid_: pending message, optimistic message, draft, backlog
 
 **Interrupted Turn**:

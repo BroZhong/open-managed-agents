@@ -56,7 +56,7 @@ spec:
       url: http://oma-api.oma-test.svc.cluster.local:3000/internal/runner-demand
       valueLocation: demand
       # C, the demand per Runner: below RUNNER_CAPACITY (N = 50), so a Runner
-      # has free slots when the fleet is at its target.
+      # has free places when the fleet is at its target.
       targetValue: '40'
       authMode: bearer
       # Longer than the endpoint's 5 s database timeout, so a slow answer is

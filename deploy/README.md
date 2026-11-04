@@ -604,7 +604,8 @@ deploy/scripts/run-sandbox-sweep-report.sh test > ~/oma-292/report-before.md
 kubectl -n oma-test get deploy oma-api oma-runner oma-web \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}' | tee ~/oma-292/rollback-images.txt
 kubectl -n oma-test annotate scaledobject oma-runner autoscaling.keda.sh/paused-replicas=0 --overwrite
-kubectl -n oma-test wait --for=delete pod -l app=oma-runner --timeout=180s
+# A stopping Runner hands its Turns over for up to terminationGracePeriodSeconds (2760 s).
+kubectl -n oma-test wait --for=delete pod -l app=oma-runner --timeout=2820s
 $R migration pre                       # no live claim; records the pending rows
 # 3. Migrations 0024 (#284; confirm the file name) and 0025 (#290), reviewed, applied in order by
 #    the privileged migration operator as in "Test migrations". Prepare their rollback SQL the same way.

@@ -149,7 +149,9 @@ explicitly. The following commands are for the separately authorized release:
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra rollout status deployment/oma-runner
    ```
 
-5. On staging (the `oma-test` environment in `deploy/README.md`) first, scale to two APIs and two Runners. Submit to one API while
+5. On staging (the `oma-test` environment in `deploy/README.md`) first, run two APIs and at least two Runners: KEDA owns the
+   test Runner count (ADR-0026), so raise it through the ScaledObject's `minReplicaCount` or the
+   `autoscaling.keda.sh/paused-replicas` annotation, never `kubectl scale`. Submit to one API while
    streaming from both; reconnect through the other API. Verify one promoted input,
    increasing unique durable sequences, complete final output and idle status.
    Delete one API Pod during a long Turn; its Runner must continue. Stop Redis and
@@ -177,7 +179,9 @@ explicitly. The following commands are for the separately authorized release:
    its additive termination-event handling lets open pages reflect remote deletion.
 9. Record cleanup retries (`session_cleanup`), unknown activity retention
    (`sandbox_activities`), PG scan failures and the real image-pair evidence.
-   Return production to its configured counts (one API, two Runners) after staging scale tests.
+   Return staging to its configured counts after its scale tests: one API, and the Runners to the ScaledObject's own
+   bounds (remove the pause annotation or restore `minReplicaCount`). Production runs one API and the five Runners its
+   overlay pins until its ScaledObject (ADR-0026 phase 3); it is not scaled for these tests.
 
 ## Rollback and recovery
 

@@ -222,7 +222,7 @@ test("KEDA scales the test Runners on their demand below Runner Capacity; produc
     "    metricType: AverageValue",
     "    type: metrics-api",
   ].join("\n"));
-  // C < N: at the fleet's target every Runner still has free slots.
+  // C < N: at the fleet's target every Runner still has free places.
   const target = Number(field(scaled, "targetValue"));
   const capacity = Number(field(configMap(docs, "oma-runner-config"), "RUNNER_CAPACITY"));
   assert.ok(target > 0 && target < capacity, `targetValue ${target} < RUNNER_CAPACITY ${capacity}`);

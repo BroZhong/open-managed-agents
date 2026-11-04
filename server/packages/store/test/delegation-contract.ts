@@ -186,7 +186,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await stores.delegationStore.updateEffectiveConfig(child.id, oldFence, { model: "provider/resolved", thinking: "high" });
       await stores.pendingEventStore.releaseClaim!(child.childId, oldFence.eventId, oldFence);
       const newFence = await fenceFor(child, "replacement");
-      // The Turn the takeover continues keeps its configuration and its slot; the owner is the new claim's.
+      // The Turn the takeover continues keeps its configuration; the owner is the new claim's.
       const resumed = await stores.delegationStore.startExecution(child.id, newFence, "child-turn", { model: "other" });
       expect(resumed).toMatchObject({ status: "running", turnId: "child-turn", ownerId: "replacement", generation: newFence.generation,
         effectiveConfig: { model: "provider/resolved", thinking: "high", maxSteps: 30 } });
