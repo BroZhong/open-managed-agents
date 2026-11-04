@@ -98,6 +98,14 @@ spec:
             secretKeyRef:
               name: oma-secrets
               key: OMA_PROVIDER_ENCRYPTION_KEY
+        # The bearer token of the internal Runner demand endpoint KEDA reads
+        # (ADR-0026). Without the Secret the endpoint is not served.
+        - name: RUNNER_DEMAND_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: oma-runner-demand
+              key: token
+              optional: true
         readinessProbe:
           httpGet:
             path: /api/ready
@@ -195,8 +203,9 @@ metadata:
   name: oma-runner
   labels:
     app: oma-runner
+# No replicas: where KEDA scales the Runners an apply must not reset their
+# count; an overlay that does not scale them pins it.
 spec:
-  replicas: 2
   selector:
     matchLabels:
       app: oma-runner

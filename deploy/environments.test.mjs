@@ -148,10 +148,9 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("both environments run two 2-CPU Runners rolled out a quarter at a time; only test can kill them abruptly", () => {
+test("both environments run 2-CPU Runners rolled out a quarter at a time; only test can kill them abruptly", () => {
   for (const env of ["test", "production"]) {
     const doc = runner(render(env));
-    assert.match(doc, /^  replicas: 2$/m, env);
     assert.match(doc, /^    type: RollingUpdate$/m, env);
     assert.match(doc, /^      maxSurge: 25%$/m, env);
     assert.match(doc, /^      maxUnavailable: 0$/m, env);
@@ -177,6 +176,76 @@ test("a stopping Runner hands its Turns over for 45 minutes and is killed 60 s a
     // The API keeps the short default shutdown.
     assert.equal(field(configMap(docs, "oma-api-config"), "SHUTDOWN_GRACE_MS"), undefined, env);
     assert.doesNotMatch(deployment(docs, "oma-api"), /terminationGracePeriodSeconds/, env);
+  }
+});
+
+test("KEDA scales the test Runners on their demand below Runner Capacity; production keeps five (ADR-0026)", () => {
+  const docs = render("test");
+  // No apply resets the count KEDA sets.
+  assert.doesNotMatch(runner(docs), /^  replicas:/m);
+  const scaled = ofKind(docs, "ScaledObject", "oma-runner");
+  assert.ok(scaled, "test renders the ScaledObject");
+  assert.equal(scaled.slice(scaled.indexOf("spec:")), [
+    "spec:",
+    "  advanced:",
+    "    horizontalPodAutoscalerConfig:",
+    "      behavior:",
+    "        scaleDown:",
+    "          policies:",
+    "          - periodSeconds: 60",
+    "            type: Pods",
+    "            value: 2",
+    "          stabilizationWindowSeconds: 600",
+    "        scaleUp:",
+    "          policies:",
+    "          - periodSeconds: 15",
+    "            type: Pods",
+    "            value: 10",
+    "          stabilizationWindowSeconds: 0",
+    "  fallback:",
+    "    behavior: currentReplicasIfHigher",
+    "    failureThreshold: 3",
+    "    replicas: 2",
+    "  maxReplicaCount: 50",
+    "  minReplicaCount: 2",
+    "  scaleTargetRef:",
+    "    name: oma-runner",
+    "  triggers:",
+    "  - authenticationRef:",
+    "      name: oma-runner-demand",
+    "    metadata:",
+    "      authMode: bearer",
+    '      targetValue: "40"',
+    "      timeout: 7s",
+    "      url: http://oma-api.oma-test.svc.cluster.local:3000/internal/runner-demand",
+    "      valueLocation: demand",
+    "    metricType: AverageValue",
+    "    type: metrics-api",
+  ].join("\n"));
+  // C < N: at the fleet's target every Runner still has free slots.
+  const target = Number(field(scaled, "targetValue"));
+  const capacity = Number(field(configMap(docs, "oma-runner-config"), "RUNNER_CAPACITY"));
+  assert.ok(target > 0 && target < capacity, `targetValue ${target} < RUNNER_CAPACITY ${capacity}`);
+  // The endpoint is the test API's own Service and port, outside the public /api prefix.
+  const service = ofKind(docs, "Service", "oma-api");
+  assert.match(service, /^  - port: 3000$/m);
+  assert.equal(field(configMap(docs, "oma-api-config"), "API_BASE_PATH"), "/api");
+  assert.doesNotMatch(new URL(field(scaled, "url")).pathname, /^\/api\//);
+  // The API checks the token the TriggerAuthentication sends: one Secret.
+  assert.equal(ofKind(docs, "TriggerAuthentication", "oma-runner-demand").slice(
+    ofKind(docs, "TriggerAuthentication", "oma-runner-demand").indexOf("spec:")),
+  ["spec:", "  secretTargetRef:", "  - key: token", "    name: oma-runner-demand", "    parameter: token"].join("\n"));
+
+  const production = render("production");
+  assert.match(runner(production), /^  replicas: 5$/m);
+  assert.doesNotMatch(production.join("\n"), /^kind: (ScaledObject|TriggerAuthentication)$/m);
+});
+
+test("each API reads the demand token from an optional Secret, so an environment without it still starts", () => {
+  for (const env of ["test", "production"]) {
+    const api = deployment(render(env), "oma-api");
+    assert.match(api, /^        - name: RUNNER_DEMAND_TOKEN\n          valueFrom:\n            secretKeyRef:\n              key: token\n              name: oma-runner-demand\n              optional: true$/m, env);
+    assert.doesNotMatch(runner(render(env)), /RUNNER_DEMAND_TOKEN|oma-runner-demand/, env);
   }
 });
 

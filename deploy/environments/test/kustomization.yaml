@@ -10,6 +10,8 @@ resources:
 - namespace.yaml
 - service-account.yaml
 - redis.yaml
+# KEDA scales the Runners on their demand (ADR-0026).
+- runner-autoscaling.yaml
 patches:
 - target:
     kind: ConfigMap

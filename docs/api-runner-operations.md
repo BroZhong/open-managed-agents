@@ -50,7 +50,9 @@ cluster's virtual kubelet, `kubectl delete pod --force --grace-period=0` still
 delivers SIGTERM, so it tests the handoff; to test a lost Runner (lease expiry,
 reason `expired`), kill the process with SIGKILL inside the container.
 
-Each environment runs one API and two Runners (2 CPU / 8 GiB each). A rolling
+Each environment runs one API and 2 CPU / 8 GiB Runners: on test KEDA scales
+them between 2 and 50 on their demand, production runs five (ADR-0026,
+`deploy/README.md` "Runner autoscaling"). A rolling
 update starts new Runners, a quarter of them at a time, before old ones receive
 SIGTERM, which then hand their running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
 provides separate ConfigMaps, Deployments, readiness probes and internal Services;
