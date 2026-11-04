@@ -1,7 +1,6 @@
 import { SessionRouter } from "@oma-server/session-router";
 import { DefaultSandboxManager, DefaultTurnSandboxes, E2BSandboxClient, SandboxSweeper, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
-import { hostname } from "node:os";
 import { PgAdvisoryLeadership, PgSessionCleanupStore, pgConfigFromEnv, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
@@ -12,7 +11,7 @@ import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
 import { sandboxSignals } from "./lib/sandbox-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
-import { runnerCapacityFromEnv, runnerClaimOwnerId } from "./lib/runner-capacity.js";
+import { runnerCapacityFromEnv, runnerClaimOwnerId, runnerPodName } from "./lib/runner-capacity.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
@@ -102,7 +101,7 @@ export async function startExecution(deps: PgStores & {
   const sweeper = native && sandboxManager ? new SandboxSweeper({
     client: native.client, facts: native.lifecycle, bindings: deps.delegationStore, manager: sandboxManager,
     environment: native.environment, sandboxSignals: native.hints,
-    leadership: new PgAdvisoryLeadership(pgConfigFromEnv(), "sandbox_sweeper", `oma-sandbox-sweeper ${process.env.POD_NAME || hostname()}`),
+    leadership: new PgAdvisoryLeadership(pgConfigFromEnv(), "sandbox_sweeper", `oma-sandbox-sweeper ${runnerPodName(process.env)}`),
   }) : undefined;
   sweeper?.start();
   return { router, ready: () => dispatch.ready, stop: async () => { platformSecrets.stop(); await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };

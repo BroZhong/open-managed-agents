@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runnerCapacityFromEnv, runnerClaimOwnerId } from "../src/lib/runner-capacity.js";
+import { hostname } from "node:os";
+import { runnerCapacityFromEnv, runnerClaimOwnerId, runnerPodName } from "../src/lib/runner-capacity.js";
 
 describe("the Runner's capacity and claim owner from its environment (ADR-0026)", () => {
   it("RUNNER_CAPACITY defaults to 50, and anything but a positive integer refuses the Runner's start", () => {
@@ -11,9 +12,11 @@ describe("the Runner's capacity and claim owner from its environment (ADR-0026)"
     }
   });
 
-  it("claims as its Pod's name and a suffix of its own process, or as host outside Kubernetes", () => {
+  it("claims as its Pod's name and a suffix of its own process, or as its host's name outside Kubernetes", () => {
     expect(runnerClaimOwnerId({ POD_NAME: "oma-runner-7d9f8c-x2k4p" }, "a1b2c3d4")).toBe("oma-runner-7d9f8c-x2k4p_a1b2c3d4");
-    expect(runnerClaimOwnerId({})).toMatch(/^host_[0-9a-f]{8}$/);
+    expect(runnerClaimOwnerId({}, "a1b2c3d4")).toBe(`${hostname()}_a1b2c3d4`);
+    // The sweeper's connection is named after the same Pod.
+    expect(runnerPodName({ POD_NAME: " oma-runner-1 " })).toBe("oma-runner-1");
     // A restarted container in the same Pod claims as a different owner.
     expect(runnerClaimOwnerId({ POD_NAME: "oma-runner-1" })).not.toBe(runnerClaimOwnerId({ POD_NAME: "oma-runner-1" }));
   });
