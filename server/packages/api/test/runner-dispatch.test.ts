@@ -17,6 +17,48 @@ class Signals implements SessionSignals {
 }
 
 describe("RunnerDispatch", () => {
+  it("logs one runner_capacity line a minute with the Turns the Router executes and its free slots (ADR-0026)", async () => {
+    vi.useFakeTimers();
+    try {
+      const router = {
+        handleNewEvent: vi.fn(async () => {}), checkNow: vi.fn(),
+        recoverPendingEvents: vi.fn(async () => ({ recovered: [], discarded: [], failed: [] })),
+        capacityReport: vi.fn(() => ({ capacity: 50, executing: 12, free: 38 })),
+      };
+      const lines: string[] = [];
+      const dispatch = new RunnerDispatch({
+        router: router as unknown as SessionRouter, sessions: { getById: vi.fn() } as unknown as SessionStore, signals: new Signals(),
+        scanIntervalMs: 60_000, owner: "oma-runner-1_a1b2c3d4", logger: { info: (line: string) => lines.push(line) },
+      });
+      await dispatch.start();
+      await vi.advanceTimersByTimeAsync(119_000);
+      expect(lines.map((line) => JSON.parse(line))).toEqual([
+        { msg: "runner_capacity", owner: "oma-runner-1_a1b2c3d4", capacity: 50, executing: 12, free: 38 },
+      ]);
+      await dispatch.stop();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(lines).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands the Router the Session it read for a wake, so a full Runner knows a Child Session's without reading it again (#328)", async () => {
+    const signals = new Signals();
+    const router = {
+      handleNewEvent: vi.fn(async () => {}), checkNow: vi.fn(),
+      recoverPendingEvents: vi.fn(async () => ({ recovered: [], discarded: [], failed: [] })),
+    };
+    const session = { id: "sess_child", status: "idle", agent: { id: "agent" }, delegation: { parentSessionId: "sess_parent" } };
+    const dispatch = new RunnerDispatch({
+      router: router as unknown as SessionRouter, sessions: { getById: vi.fn(async () => session) } as unknown as SessionStore, signals, scanIntervalMs: 60_000,
+    });
+    await dispatch.start();
+    signals.publish({ sessionId: "sess_child", kind: "wake" });
+    await vi.waitFor(() => expect(router.handleNewEvent).toHaveBeenCalledExactlyOnceWith("sess_child", session.agent, session));
+    await dispatch.stop();
+  });
+
   it("passes a check hint to the Router at once, even while a wake for the Session is being handled", async () => {
     const signals = new Signals();
     const drain = new Promise<void>(() => {}); // The Session's drain is still running.

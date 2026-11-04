@@ -455,9 +455,22 @@ describe("createMemoryStores", () => {
       await stores.pendingEventStore.enqueue("s2", { type: "a", data: {}, sessionThreadId: "th1" });
       await stores.pendingEventStore.enqueue("s1", { type: "a", data: {}, sessionThreadId: "th1" });
 
-      expect(await stores.pendingEventStore.listClaimableSessionIds(100)).toEqual(["s2", "s1"]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual(["s2", "s1"]);
       await stores.pendingEventStore.clear("s1");
-      expect(await stores.pendingEventStore.listClaimableSessionIds(100)).toEqual(["s2"]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual(["s2"]);
+    });
+
+    it("lists the oldest heads first, each kind of Session up to its own limit (#328)", async () => {
+      const agent = await stores.agentStore.create({ tenantId: "t", name: "a", model: "m", system: "s", runtime: "mock" });
+      const create = (parentSessionId?: string) => stores.sessionStore.create({ tenantId: "t", agentId: agent.id, agent, workspaceId: "w",
+        ...(parentSessionId ? { delegation: { parentSessionId, parentTurnId: "turn", parentToolUseId: "call", sandboxSessionId: parentSessionId } } : {}) });
+      const [top1, top2] = [await create(), await create()];
+      const child = await create(top1.id);
+      for (const session of [top2, child, top1]) await stores.pendingEventStore.enqueue(session.id, { type: "a", data: {}, sessionThreadId: "th1" });
+
+      expect(await stores.pendingEventStore.listClaimableSessionIds({ topLevel: 1, child: 0 })).toEqual([top2.id]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds({ topLevel: 0, child: 5 })).toEqual([child.id]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds({ topLevel: 5, child: 5 })).toEqual([top2.id, child.id, top1.id]);
     });
 
     it("lists only Sessions whose head no live claim holds: the owner drains the rest of its queue", async () => {
@@ -472,7 +485,7 @@ describe("createMemoryStores", () => {
       await pending.claim("expired", "host_a", 1);
       await new Promise((resolve) => setTimeout(resolve, 5));
 
-      expect(await pending.listClaimableSessionIds(100)).toEqual(["released", "expired", "unclaimed"]);
+      expect(await pending.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual(["released", "expired", "unclaimed"]);
       expect(await pending.headClaimable("live")).toBe(false);
       for (const id of ["released", "expired", "unclaimed"]) expect(await pending.headClaimable(id)).toBe(true);
       expect(await pending.headClaimable("empty")).toBe(false);

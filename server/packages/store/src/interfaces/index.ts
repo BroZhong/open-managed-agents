@@ -4,6 +4,7 @@ export type { EventLogStore, EventLogIngressStore, EventLogStoreAppendInput, Eve
 export type {
   PendingEventStore,
   PendingEventIngressStore,
+  ClaimableHeadLimit,
   PendingEvent,
   PendingEventEnqueueInput,
   PendingEventClaim,

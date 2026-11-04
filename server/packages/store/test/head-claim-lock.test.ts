@@ -68,14 +68,34 @@ describe("the pending scan lists claimable heads in arrival order", () => {
     store = new PgPendingEventStore(harness.pool);
   });
 
+  const heads = (topLevel: number, child = 0) => store.listClaimableSessionIds({ topLevel, child });
+
   it("orders Sessions by their head's arrival, not by id, and lists at most the limit", async () => {
     for (const id of ["sess_c", "sess_a", "sess_b"]) await store.enqueue(id, { type: "m", data: {}, sessionThreadId: "t" });
     // A later input of the first Session does not move its head.
     await store.enqueue("sess_c", { type: "m", data: {}, sessionThreadId: "t" });
-    expect(await store.listClaimableSessionIds(10)).toEqual(["sess_c", "sess_a", "sess_b"]);
-    expect(await store.listClaimableSessionIds(2)).toEqual(["sess_c", "sess_a"]);
+    expect(await heads(10)).toEqual(["sess_c", "sess_a", "sess_b"]);
+    expect(await heads(2)).toEqual(["sess_c", "sess_a"]);
     // A head under a live claim is passed over; the next Session's head takes its place.
     await store.claim("sess_c", "runner-a", 60_000);
-    expect(await store.listClaimableSessionIds(2)).toEqual(["sess_a", "sess_b"]);
+    expect(await heads(2)).toEqual(["sess_a", "sess_b"]);
+  });
+
+  it("limits Child Sessions' heads apart from the others', so a top-level backlog never hides one (#328)", async () => {
+    const now = new Date();
+    const session = (id: string, parent?: string) => harness.pool.query(
+      `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, created_at, updated_at, delegation)
+       VALUES ($1, 'tenant', 'agent', 'idle', '{}', 'workspace', $2, $2, $3)`,
+      [id, now, JSON.stringify(parent ? { parentSessionId: parent } : null)]);
+    for (const id of ["top_1", "top_2", "top_3"]) await session(id);
+    await session("child_1", "top_1");
+    await session("child_2", "top_2");
+    for (const id of ["top_1", "top_2", "child_1", "top_3", "child_2"]) await store.enqueue(id, { type: "m", data: {}, sessionThreadId: "t" });
+    // A head without a Session row counts as top-level.
+    await store.enqueue("missing", { type: "m", data: {}, sessionThreadId: "t" });
+
+    expect(await heads(0, 10)).toEqual(["child_1", "child_2"]);
+    expect(await heads(1, 1)).toEqual(["top_1", "child_1"]);
+    expect(await heads(10, 10)).toEqual(["top_1", "top_2", "child_1", "top_3", "child_2", "missing"]);
   });
 });

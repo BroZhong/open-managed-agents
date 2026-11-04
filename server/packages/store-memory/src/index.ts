@@ -80,7 +80,7 @@ export function createMemoryStores(options: MemoryStoresOptions = {}): MemorySto
     session.status = "idle";
     session.updatedAt = new Date();
     return { accepted: true, idleEvent };
-  });
+  }, (sessionId) => Boolean(sessionStore.getRecord(sessionId)?.delegation));
   sessionStore = new InMemorySessionStore((sessionId, fence) =>
     pendingEventStore.ownsClaim(sessionId, fence.eventId, fence));
   eventLogStore = new InMemoryEventLogStore(

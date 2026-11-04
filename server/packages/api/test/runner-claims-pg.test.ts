@@ -6,6 +6,7 @@ import { SessionRouter, type SessionRouterDeps } from "@oma-server/session-route
 import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { createPgTestHarness, type PgTestHarness } from "../../store/test/pg-harness.js";
+import { runnerClaimOwnerId } from "../src/lib/runner-capacity.js";
 
 /**
  * Runners competing for a Session's head on one PostgreSQL (#325, ADR-0026):
@@ -152,6 +153,26 @@ describe.skipIf(!process.env.PG_TEST_URL)("Runners competing for a Session's hea
     await Promise.all(drains);
     await until(idle);
     expect(owners).toHaveLength(1);
+  });
+
+  it("each Runner claims as its Pod: PostgreSQL shows which Pod holds which claims (#328)", async () => {
+    const sessions = [session, ...await Promise.all([1, 2].map(() => stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: session.workspaceId })))];
+    for (const { id } of sessions) await stores.pendingEventStore.enqueue(id, { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let running = 0;
+    const holding: Adapter = { async run(input) { running++; await released; await journalWriter(input)(event("agent.message", { content: [] })); return "finished"; } };
+    const a = await runner(runnerClaimOwnerId({ POD_NAME: "oma-runner-5f7c9-abcde" }), holding);
+    const b = await runner(runnerClaimOwnerId({ POD_NAME: "oma-runner-5f7c9-fghij" }), holding);
+    const drains = [a.router.handleNewEvent(sessions[0].id, agent), a.router.handleNewEvent(sessions[1].id, agent), b.router.handleNewEvent(sessions[2].id, agent)];
+    await until(() => running === 3);
+
+    const { rows } = await harness.pool.query<{ pod: string; claims: string }>(
+      `SELECT regexp_replace(claim_owner, '_[^_]+$', '') AS pod, count(*) AS claims FROM pending_events
+       WHERE claim_expires_at > clock_timestamp() GROUP BY pod ORDER BY pod`);
+    expect(rows.map((row) => [row.pod, Number(row.claims)])).toEqual([["oma-runner-5f7c9-abcde", 2], ["oma-runner-5f7c9-fghij", 1]]);
+    release();
+    await Promise.all(drains);
   });
 
   it("a Runner that shuts down releases the head of the Turn it hands over, and the Runner its wake reaches claims it without a pending scan", async () => {

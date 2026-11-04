@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import type { StoredEvent } from "../types.js";
 import type { Pool } from "./connection.js";
 import type {
+  ClaimableHeadLimit,
   PendingEvent,
   PendingEventClaim,
   PendingEventClaimRef,
@@ -395,21 +396,33 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     }
   }
 
-  async listClaimableSessionIds(limit: number): Promise<string[]> {
-    if (!Number.isInteger(limit) || limit < 0) throw new RangeError("claimable head limit must be a non-negative integer");
+  async listClaimableSessionIds(limit: ClaimableHeadLimit): Promise<string[]> {
+    for (const count of [limit.topLevel, limit.child]) {
+      if (!Number.isInteger(count) || count < 0) throw new RangeError("claimable head limit must be a non-negative integer");
+    }
     // Each Session's head by pending_events_session_idx, then the claim
     // predicate of `claim`. A Runner's scan thus never contends for a head
-    // whose owner holds a live lease. The oldest heads first (#325).
+    // whose owner holds a live lease. The oldest heads first (#325), each
+    // kind of Session up to its own limit (#328): a backlog of top-level
+    // heads a full Runner refuses never hides a Child Session's head.
     const { rows } = await this.pool.query<{ session_id: string }>(
-      `SELECT session_id FROM (
-         SELECT DISTINCT ON (session_id) session_id, seq, claim_owner, claim_expires_at
-         FROM pending_events
-         ORDER BY session_id, seq
-       ) head
-       WHERE claim_owner IS NULL OR claim_expires_at <= clock_timestamp()
-       ORDER BY seq ASC
-       LIMIT $1`,
-      [limit],
+      `WITH claimable AS (
+         SELECT head.session_id, head.seq, s.delegation->>'parentSessionId' IS NOT NULL AS child
+         FROM (
+           SELECT DISTINCT ON (session_id) session_id, seq, claim_owner, claim_expires_at
+           FROM pending_events
+           ORDER BY session_id, seq
+         ) head
+         LEFT JOIN sessions s ON s.id = head.session_id
+         WHERE head.claim_owner IS NULL OR head.claim_expires_at <= clock_timestamp()
+       )
+       SELECT session_id FROM (
+         (SELECT session_id, seq FROM claimable WHERE NOT child ORDER BY seq LIMIT $1)
+         UNION ALL
+         (SELECT session_id, seq FROM claimable WHERE child ORDER BY seq LIMIT $2)
+       ) heads
+       ORDER BY seq ASC`,
+      [limit.topLevel, limit.child],
     );
     return rows.map((row) => row.session_id);
   }

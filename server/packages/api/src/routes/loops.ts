@@ -122,7 +122,7 @@ export function loopRoutes(deps: LoopRouteDeps): OpenAPIHono<Env> {
     if (!dispatched) return c.json({ error: "Loop not found" }, 404);
     deps.wakeSession?.(dispatched.session.id);
     void deps.sessionRouter
-      ?.handleNewEvent(dispatched.session.id, dispatched.session.agent)
+      ?.handleNewEvent(dispatched.session.id, dispatched.session.agent, dispatched.session)
       .catch((error) => {
         console.error(`SessionRouter failed after Loop ${dispatched.loop.id} dispatch:`, error);
       });

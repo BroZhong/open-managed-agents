@@ -11,6 +11,7 @@ import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
 import { sandboxSignals } from "./lib/sandbox-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
+import { runnerCapacityFromEnv, runnerClaimOwnerId } from "./lib/runner-capacity.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
@@ -21,6 +22,9 @@ export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
   skillBundleStore: SkillBundleStore; eventStreamHub: EventStreamHub; turnStreamStore: TurnStreamStore;
 }, execution?: { resolveAdapter(runtime: string): Adapter | undefined; sandboxManager: SandboxManager; workspaceMount: Omit<WorkspaceMountSpec, "prefix"> }) {
+  // A Runner with an invalid capacity refuses to start (ADR-0026).
+  const capacity = runnerCapacityFromEnv(process.env);
+  const owner = runnerClaimOwnerId(process.env);
   const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
   if (proxyUrl && !deps.local) {
     const { ProxyAgent, setGlobalDispatcher } = await import("undici");
@@ -72,13 +76,14 @@ export async function startExecution(deps: PgStores & {
       runtimeAdapters(deps.local ? { mock: mockAdapter } : { "pi-agent": piAgentAdapter, mock: mockAdapter }),
     wakeSession: sessionId => deps.signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => deps.signals.publish({ sessionId, kind: "check" }),
+    capacity, pendingClaimOwnerId: owner,
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
     maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 500),
     onDrainError: reportDrainFailure,
   });
   const cleanup = new PgSessionCleanupStore(deps.pool);
   const dispatch = new RunnerDispatch({
-    router, sessions: deps.sessionStore, signals: deps.signals,
+    router, sessions: deps.sessionStore, signals: deps.signals, owner,
     scanIntervalMs: Number(process.env.PENDING_SCAN_INTERVAL_MS ?? 5000),
     cleanup: () => cleanup.sweep(id => router.cleanupTerminatedSession(id)),
   });

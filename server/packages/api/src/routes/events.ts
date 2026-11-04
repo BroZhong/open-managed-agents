@@ -224,7 +224,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
 
     // Trigger session router if we enqueued pending events
     if (acceptedPending && deps.sessionRouter) {
-      void deps.sessionRouter.handleNewEvent(sessionId, session.agent).catch((error) => {
+      void deps.sessionRouter.handleNewEvent(sessionId, session.agent, session).catch((error) => {
         // The input is already durable in the Pending Event Store. Keep the
         // request accepted and leave recovery/retry to the router lifecycle.
         console.error(`SessionRouter failed after accepting input for ${sessionId}:`, error);

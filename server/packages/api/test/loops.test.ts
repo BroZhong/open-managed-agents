@@ -184,7 +184,7 @@ describe("Agent Loops", () => {
       type: "user.message",
       data: { content: [{ type: "text", text: "Analyze recent Sessions." }] },
     });
-    expect(handleNewEvent).toHaveBeenCalledWith(session.id, expect.objectContaining({ id: agent.id }));
+    expect(handleNewEvent).toHaveBeenCalledWith(session.id, expect.objectContaining({ id: agent.id }), expect.objectContaining({ id: session.id }));
   });
 
   it("attributes a run-now Loop Turn to the authenticating API key", async () => {

@@ -1,4 +1,5 @@
 import type {
+  ClaimableHeadLimit,
   StoredEvent,
   PendingEvent,
   PendingEventClaim,
@@ -42,6 +43,8 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
   constructor(
     private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
     private readonly completeTurn: CompleteTurn = unboundCompleteTurn,
+    /** Whether a Session is a Child Session; the pending scan limits each kind apart (#328). */
+    private readonly isChildSession: (sessionId: string) => boolean = () => false,
   ) {}
 
   async ackCompletedTurn(
@@ -208,12 +211,19 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       current.generation === claim.generation && current.expiresAtMs > Date.now());
   }
 
-  async listClaimableSessionIds(limit: number): Promise<string[]> {
-    if (!Number.isInteger(limit) || limit < 0) throw new RangeError("claimable head limit must be a non-negative integer");
-    // The oldest heads first, as their ids were enqueued.
+  async listClaimableSessionIds(limit: ClaimableHeadLimit): Promise<string[]> {
+    for (const count of [limit.topLevel, limit.child]) {
+      if (!Number.isInteger(count) || count < 0) throw new RangeError("claimable head limit must be a non-negative integer");
+    }
+    // The oldest heads first, as their ids were enqueued, each kind of
+    // Session up to its own limit.
+    const left = { ...limit };
     return [...this.queues.keys()].filter((sessionId) => this.isHeadClaimable(sessionId))
       .sort((a, b) => enqueueOrder(this.queues.get(a)![0].id) - enqueueOrder(this.queues.get(b)![0].id))
-      .slice(0, limit);
+      .filter((sessionId) => {
+        const kind = this.isChildSession(sessionId) ? "child" : "topLevel";
+        return left[kind]-- > 0;
+      });
   }
 
   async headClaimable(sessionId: string): Promise<boolean> {

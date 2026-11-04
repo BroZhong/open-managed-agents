@@ -77,6 +77,7 @@ export type {
 export type {
   PendingEventStore,
   PendingEventIngressStore,
+  ClaimableHeadLimit,
   PendingEvent,
   PendingEventEnqueueInput,
   PendingEventClaim,

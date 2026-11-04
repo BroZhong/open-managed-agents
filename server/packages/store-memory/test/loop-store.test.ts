@@ -79,7 +79,7 @@ describe("InMemoryLoopStore", () => {
 
     expect((await sessions.list("tenant_1")).data).toEqual([]);
     expect(await workspaces.list("tenant_1")).toEqual([]);
-    expect(await pending.listClaimableSessionIds(100)).toEqual([]);
+    expect(await pending.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual([]);
     const unchangedLoop = await loops.getById(loop.id);
     expect(unchangedLoop?.lastRunAt).toBeUndefined();
     expect(unchangedLoop).toMatchObject({
@@ -127,7 +127,7 @@ describe("InMemoryLoopStore", () => {
 
     expect((await sessions.list("tenant_1")).data).toEqual([]);
     expect(await workspaces.list("tenant_1")).toEqual([]);
-    expect(await pending.listClaimableSessionIds(100)).toEqual([]);
+    expect(await pending.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual([]);
     for (const loop of [first, second]) {
       expect(loop.lastRunAt).toBeUndefined();
       expect(loop.nextRunAt).toEqual(

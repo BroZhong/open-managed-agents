@@ -56,6 +56,18 @@ export interface PendingEventFence extends PendingEventClaimRef {
   eventId: string;
 }
 
+/**
+ * How many claimable heads one pending scan lists, by kind of Session: a
+ * Runner admits top-level Sessions only below its Runner Capacity, and
+ * claims every Child Session's (#328, ADR-0026).
+ */
+export interface ClaimableHeadLimit {
+  /** Heads of Sessions that are not Child Sessions, the oldest first. */
+  topLevel: number;
+  /** Heads of Child Sessions, the oldest first. */
+  child: number;
+}
+
 /** What one heartbeat learns from renewing its claim. */
 export interface PendingEventRenewal {
   /** False once the exact owner+generation no longer holds a live claim. */
@@ -125,9 +137,11 @@ export interface PendingEventStore {
    * holds it (never claimed, released, or its lease expired). A head under a
    * live claim is not listed: its owner drains the rest of its queue, and the
    * head is listed again once the owner's lease expires. The oldest heads
-   * first, at most `limit` of them (#325).
+   * first (#325), at most `limit.topLevel` of Sessions that are not Child
+   * Sessions and `limit.child` of Child Sessions (#328). A head whose
+   * Session is missing counts as top-level.
    */
-  listClaimableSessionIds(limit: number): Promise<string[]>;
+  listClaimableSessionIds(limit: ClaimableHeadLimit): Promise<string[]>;
   /** Whether the Session has a FIFO head that {@link claim} would take now. */
   headClaimable(sessionId: string): Promise<boolean>;
   /** Discard every pending event for one Session (missing/terminated cleanup). */
