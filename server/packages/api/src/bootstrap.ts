@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, OSSSkillBundleStore, OSSEventPayloadStore, OSSEnvironmentBuildLogStore, EventPayloadCodec, type ArtifactStore, type EnvironmentBuildLogStore, type SkillBundleStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, PgRunnerDemandStore, OSSArtifactStore, OSSSkillBundleStore, OSSEventPayloadStore, OSSEnvironmentBuildLogStore, EventPayloadCodec, type ArtifactStore, type EnvironmentBuildLogStore, type SkillBundleStore } from "@oma-server/store";
 import { createRedisClient, redisConfigFromEnv, RedisTurnStreamStore, BestEffortTurnStreamStore, RedisSessionSignals } from "@oma-server/redis";
 import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createApp } from "./app.js";
@@ -9,6 +9,7 @@ import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { runnerThinkingOptions } from "./lib/thinking-options.js";
 import { ModelProviderService } from "./lib/model-providers.js";
 import { EnvironmentService } from "./lib/environments.js";
+import { runnerDemandRoutes } from "./lib/runner-demand.js";
 
 export type HostRole = "api" | "runner" | "combined";
 
@@ -67,6 +68,11 @@ export async function startHost(role: HostRole): Promise<void> {
     try { return c.json(await managedOptions(model)); }
     catch { return c.json({ error: "Model capabilities unavailable" }, 503); }
   });
+  // KEDA scales the Runners on this (ADR-0026). Mounted ahead of the console
+  // routes, so none of their middleware runs for it even without a prefix.
+  const runnerDemand = role === "runner" ? undefined
+    : runnerDemandRoutes({ token: process.env.RUNNER_DEMAND_TOKEN, reader: new PgRunnerDemandStore(pool) });
+  if (runnerDemand) app.route("/", runnerDemand);
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
     modelProviderService: modelProviders,

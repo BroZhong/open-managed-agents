@@ -200,6 +200,7 @@ export type * from "./interfaces/delegation-store.js";
 export { TransactionalDelegationStore, delegationFenceLost, sandboxBindingId } from "./delegation-store.js";
 export type { DelegationTransaction, DelegationRecord, DelegationTable, SandboxBindingRecord } from "./delegation-store.js";
 export { PgDelegationStore } from "./postgres/delegation-store.js";
+export { PgRunnerDemandStore, type RunnerDemand } from "./postgres/runner-demand-store.js";
 
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";
 export { PgSessionShareStore } from "./postgres/session-share-store.js";

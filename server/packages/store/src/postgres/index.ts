@@ -5,6 +5,7 @@ export { PgEnvironmentStore } from "./environment-store.js";
 import { PgSessionShareStore } from "./session-share-store.js";
 export { PgSessionShareStore } from "./session-share-store.js";
 export { PgSessionCleanupStore } from "./session-cleanup-store.js";
+export { PgRunnerDemandStore, type RunnerDemand } from "./runner-demand-store.js";
 import { PgDelegationStore } from "./delegation-store.js";
 import type { AgentStore } from "../interfaces/agent-store.js";
 import type { AgentFileStore } from "../interfaces/agent-file-store.js";
