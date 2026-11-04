@@ -35,6 +35,7 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
+import { InFlightCalls } from "./in-flight-calls.js";
 import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts, type Takeover } from "./plan-resume.js";
 import { repairResult, type DanglingCallResolver, type RepairCause } from "./dangling-call-results.js";
 import { INSTALL_ATTEMPT_STOPPED, SkillInstallSpans, skillInstallKey, unendedSkillInstalls, type SkillInstallEndData } from "./skill-install-spans.js";
@@ -68,6 +69,8 @@ interface AttemptWrites {
   delegationRun?: DelegationRun;
   /** Durable form and idempotency key of an Adapter event, set before the Adapter runs. */
   fromAdapter?(event: DurableEvent): { event: JournalEvent; key: string };
+  /** Hears every event the journal committed, the Router's own and the Adapter's. */
+  committed?(event: JournalEvent): void;
 }
 
 /** The claim heartbeat of one Turn attempt. */
@@ -85,9 +88,12 @@ interface ActiveSessionRun {
   stopAttempt?: (reason: unknown) => void;
   /**
    * Stops the running Turn attempt, if any, on the same path and hands its
-   * Turn over as it stands: the handoff deadline of a shutdown (#254).
+   * Turn over as it stands: the handoff deadline of a shutdown (#254), and
+   * a shutdown's start for a Turn that only waits on subagents (#330).
    */
   detach?: (reason: unknown) => void;
+  /** The running attempt's tool calls whose results are not committed (#330). */
+  calls?: InFlightCalls;
   /**
    * The drain released its input because its Child execution waits for a
    * slot of the parent's concurrency limit. The sibling that frees one wakes
@@ -103,7 +109,10 @@ interface ActiveSessionRun {
   claimedNothing?: boolean;
   /** Whether the Session is a Child Session, once known: it is admitted beyond the Runner Capacity. */
   child?: boolean;
-  /** The drain holds one of the Runner's executing slots (#328). */
+  /**
+   * The drain holds one of the Runner's executing slots (#328), except while
+   * its Turn only waits on subagents (#330).
+   */
   slot?: boolean;
   /** The drain claimed an input: the slot it releases served a Turn. */
   claimed?: boolean;
@@ -297,6 +306,8 @@ export class SessionRouter {
   private readonly capacity: number;
   /** Executing slots the drains hold (#328): one per drain past admission. */
   private executing = 0;
+  /** Turns that only wait on subagents and so hold no slot (#330). */
+  private syncWaiting = 0;
   /**
    * Since its last fill this Runner, being full, left a top-level Session's
    * claimable head to others: a freed slot then claims the oldest such head
@@ -497,9 +508,12 @@ export class SessionRouter {
    * Hand this Runner's running Turns to the other Runners as it shuts down
    * (#254). It claims no more input and cancels its claim retries. Each
    * running Adapter is asked to stop before its next model request; tools it
-   * runs are not cancelled, so their results are committed. A Turn still
-   * running after `timeoutMs` is detached on the one stop path: its write
-   * entry is revoked and what it runs in the Sandbox keeps running. Every
+   * runs are not cancelled, so their results are committed. A Turn whose
+   * every call in flight waits on a subagent is detached at once, now or as
+   * it starts waiting: its next owner resumes the same waits from their
+   * records (#330, ADR-0026). A Turn still running after `timeoutMs` is
+   * detached on the one stop path: its write entry is revoked and what it
+   * runs in the Sandbox keeps running. Every
    * claim this leaves is released without a terminal event, and the other
    * Runners are woken to take the Turn over at once; a Turn that completes
    * meanwhile leaves the input queued behind it to them the same way.
@@ -516,6 +530,11 @@ export class SessionRouter {
     for (const sessionId of [...this.claimRetryTimers.keys()]) {
       this.resetClaimRetry(sessionId);
       this.wakeSession?.(sessionId);
+    }
+    // A Turn that only waits on subagents goes now: its next owner resumes
+    // the same waits from their records (#330).
+    for (const activeRun of this.activeSessions.values()) {
+      if (activeRun.calls?.waitingOnly) activeRun.detach?.(new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError"));
     }
     if (await this.waitForIdle(timeoutMs)) return true;
     const reason = new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError");
@@ -698,9 +717,32 @@ export class SessionRouter {
     }
   }
 
-  /** The executing Turns, and the free slots below the Runner Capacity (ADR-0026). */
-  capacityReport(): { capacity: number; executing: number; free: number } {
-    return { capacity: this.capacity, executing: this.executing, free: Math.max(0, this.capacity - this.executing) };
+  /**
+   * The executing Turns, the Turns that only wait on subagents and so count
+   * as none, and the free slots below the Runner Capacity (ADR-0026).
+   */
+  capacityReport(): { capacity: number; executing: number; syncWaiting: number; free: number } {
+    return { capacity: this.capacity, executing: this.executing, syncWaiting: this.syncWaiting,
+      free: Math.max(0, this.capacity - this.executing) };
+  }
+
+  /**
+   * The attempt's Turn starts or stops only waiting on subagents (#330,
+   * ADR-0026). Waiting, it frees its slot, which the oldest top-level head
+   * this Runner left may take; a Runner shutting down hands it over now, for
+   * the next owner resumes its waits. Done waiting, it takes a slot back at
+   * once, beyond the Runner Capacity if it must: a Turn under way is never
+   * refused.
+   */
+  private waitingOnlyChanged(activeRun: ActiveSessionRun, waitingOnly: boolean): void {
+    if (waitingOnly) {
+      this.syncWaiting++;
+      if (this.releaseSlot(activeRun) && this.admissionRefused) this.fill();
+      if (this.handingOff) activeRun.detach?.(new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError"));
+      return;
+    }
+    this.syncWaiting--;
+    if (!activeRun.slot) { activeRun.slot = true; this.executing++; }
   }
 
   /**
@@ -995,7 +1037,7 @@ export class SessionRouter {
       append: async (event, key) => {
         const consumed = attempt.delegationRun &&
           await this.delegations?.consumeResult(attempt.delegationRun, event);
-        return consumed ?? this.eventLogStore.append(sessionId, {
+        const stored = consumed ?? await this.eventLogStore.append(sessionId, {
           type: event.type,
           data: event.data,
           sessionThreadId: event.sessionThreadId ?? "sthr_primary",
@@ -1003,6 +1045,8 @@ export class SessionRouter {
           idempotencyKey: key,
           pendingFence,
         });
+        attempt.committed?.(event);
+        return stored;
       },
       publish: (stored) => this.eventStreamHub.publish(sessionId, {
         type: stored.type,
@@ -1317,6 +1361,12 @@ export class SessionRouter {
       let sandboxPrepares: SandboxPrepareSpans | undefined;
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
+      // The attempt's calls in flight, from what it commits and the waits it starts (#330).
+      const calls: InFlightCalls = new InFlightCalls((waitingOnly) => {
+        if (activeRun.calls === calls) this.waitingOnlyChanged(activeRun, waitingOnly);
+      });
+      activeRun.calls = calls;
+      attemptWrites.committed = (event) => calls.committed(event);
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
       const heartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
       const stopHeartbeat = heartbeat.stop;
@@ -1571,7 +1621,7 @@ export class SessionRouter {
       }
       const delegationRun: DelegationRun = { session, turnId, fence: pendingFence,
         signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId,
-        effectiveConfig: { model: currentAgent.model }, journal };
+        effectiveConfig: { model: currentAgent.model }, journal, onWait: (toolUseId) => calls.waits(toolUseId) };
       attemptWrites.delegationRun = delegationRun;
       // Sandbox commands are fenced by ownership of this Turn, not by its
       // signal. An Interrupt aborts the Turn while this attempt still owns it,
@@ -1640,6 +1690,9 @@ export class SessionRouter {
       let adapterInput: AdapterInput;
       try {
         if (plan.waits.length && this.delegations) {
+          // Each of them holds its wait from the start, not only once its
+          // turn to be awaited comes.
+          for (const wait of plan.waits) if (wait.status === "waiting") calls.waits(wait.callerToolUseId);
           await this.delegations.recoverWaits(delegationRun, plan.waits);
           // Consuming the last result records the running transition, written
           // by the next flush: the history handed to the Adapter includes it.
@@ -1846,6 +1899,12 @@ export class SessionRouter {
           signal.removeEventListener("abort", forwardOuterAbort);
           if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
           if (activeRun.detach === detach) activeRun.detach = undefined;
+          // An attempt that ends while it only waits leaves the drain no slot:
+          // a next claim is admitted again.
+          if (activeRun.calls === calls) {
+            activeRun.calls = undefined;
+            if (calls.waitingOnly) this.syncWaiting--;
+          }
           if (failure) await this.reportAttemptFailure(sessionId, failure.error);
           // Released, not left to expire: the next claim learns the Turn was
           // handed over, which no takeover limit counts, and need not wait.

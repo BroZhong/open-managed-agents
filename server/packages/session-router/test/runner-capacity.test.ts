@@ -97,7 +97,7 @@ describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
     const first = woken.slice(0, 3).map((session) => session.id);
     expect(new Set(started.slice(0, 3))).toEqual(new Set(first));
     expect(started.slice(3)).toEqual(sessions.map((session) => session.id).filter((id) => !first.includes(id)));
-    expect(router.capacityReport()).toEqual({ capacity: 3, executing: 0, free: 3 });
+    expect(router.capacityReport()).toEqual({ capacity: 3, executing: 0, syncWaiting: 0, free: 3 });
     expect(h.scans).toEqual([]);
     expect(h.errors).toEqual([]);
   });
@@ -205,10 +205,73 @@ describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
     expect(h.errors).toEqual([]);
   });
 
+  it("N=1: a parent that only waits on its child frees its slot for another top-level Session, and continues beyond N once its wait ends (#330)", async () => {
+    const h = await harness({ sandboxed: true });
+    const parent = await h.createSession();
+    const other = await h.createSession();
+    const delegateNow = gate();
+    const childAnswer = gate();
+    const otherDone = gate();
+    const ran: string[] = [];
+    let resumedAt: ReturnType<SessionRouter["capacityReport"]> | undefined;
+    let a!: SessionRouter;
+    const adapter: Adapter = {
+      async run(input) {
+        const write = journalWriter(input);
+        if (input.execution?.isChild) {
+          ran.push("child");
+          await childAnswer.opened;
+          await answer(input, "child answer");
+          return "finished";
+        }
+        if (input.sessionId === other.id) {
+          ran.push("other");
+          await otherDone.opened;
+          await answer(input);
+          return "finished";
+        }
+        ran.push("parent");
+        await delegateNow.opened;
+        await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
+        await write(event("agent.tool_use", { toolUseId: "call_agent", name: "Agent", input: { prompt: "child" } }));
+        const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "call_agent" });
+        await write(event("agent.tool_result", { toolUseId: "call_agent", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }));
+        resumedAt = a.capacityReport();
+        await answer(input, "parent answer");
+        return "finished";
+      },
+    };
+    // The child runs on another Runner, so this one's only Turns are the two top-level ones.
+    const b = h.start(adapter, { pendingClaimOwnerId: "runner-b", wakeSession: () => {} });
+    a = h.start(adapter, { capacity: 1, wakeSession: (sessionId) => void h.stores.sessionStore.getById(sessionId)
+      .then((session) => session && b.handleNewEvent(sessionId, session.agent, session)) });
+    await h.enqueue(parent.id, "delegate");
+    void a.handleNewEvent(parent.id, h.agent, parent);
+    await until(() => ran.includes("parent"));
+    // Full: the other Session is refused while the parent runs.
+    await h.enqueue(other.id);
+    await a.handleNewEvent(other.id, h.agent, other);
+    expect(ran).toEqual(["parent"]);
+
+    delegateNow.open();
+    await until(() => ran.includes("other") && ran.includes("child"));
+    expect(a.capacityReport()).toEqual({ capacity: 1, executing: 1, syncWaiting: 1, free: 0 });
+
+    childAnswer.open();
+    await until(() => h.idle(parent.id));
+    // The parent continued while the other Session still ran: two executing beyond N=1.
+    expect(resumedAt).toEqual({ capacity: 1, executing: 2, syncWaiting: 0, free: 0 });
+    otherDone.open();
+    await until(() => h.idle(other.id));
+    expect(a.capacityReport()).toEqual({ capacity: 1, executing: 0, syncWaiting: 0, free: 1 });
+    expect(h.scans).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+
   it("N defaults to 50 and must be a positive integer", async () => {
     const h = await harness();
     const adapter: Adapter = { async run() { return "finished"; } };
-    expect(h.start(adapter).capacityReport()).toEqual({ capacity: 50, executing: 0, free: 50 });
+    expect(h.start(adapter).capacityReport()).toEqual({ capacity: 50, executing: 0, syncWaiting: 0, free: 50 });
     for (const capacity of [0, -1, 1.5, Number.NaN]) expect(() => h.start(adapter, { capacity })).toThrow(RangeError);
   });
 });

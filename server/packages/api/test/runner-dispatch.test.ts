@@ -23,7 +23,7 @@ describe("RunnerDispatch", () => {
       const router = {
         handleNewEvent: vi.fn(async () => {}), checkNow: vi.fn(),
         recoverPendingEvents: vi.fn(async () => ({ recovered: [], discarded: [], failed: [] })),
-        capacityReport: vi.fn(() => ({ capacity: 50, executing: 12, free: 38 })),
+        capacityReport: vi.fn(() => ({ capacity: 50, executing: 12, syncWaiting: 3, free: 38 })),
       };
       const lines: string[] = [];
       const dispatch = new RunnerDispatch({
@@ -33,7 +33,7 @@ describe("RunnerDispatch", () => {
       await dispatch.start();
       await vi.advanceTimersByTimeAsync(119_000);
       expect(lines.map((line) => JSON.parse(line))).toEqual([
-        { msg: "runner_capacity", owner: "oma-runner-1_a1b2c3d4", capacity: 50, executing: 12, free: 38 },
+        { msg: "runner_capacity", owner: "oma-runner-1_a1b2c3d4", capacity: 50, executing: 12, syncWaiting: 3, free: 38 },
       ]);
       await dispatch.stop();
       await vi.advanceTimersByTimeAsync(120_000);
