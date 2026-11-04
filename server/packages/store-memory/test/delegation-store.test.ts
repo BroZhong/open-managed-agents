@@ -16,7 +16,7 @@ describe("Memory delegation transactions", () => {
     const claim = (await stores.pendingEventStore.claim(parent.id, "parent-owner", 60_000))!;
     const fence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
     const input = { tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "turn", callerToolUseId: "tool",
-      prompt: "Do task", mode: "sync" as const, parentModel: "provider/model", maxSteps: 30, sandboxSessionId: parent.id };
+      prompt: "Do task", mode: "sync" as const, parentModel: "provider/model", maxSteps: 30, maxConcurrent: 4, sandboxSessionId: parent.id };
     return { stores, agent, parent, other, fence, input };
   };
 
@@ -55,7 +55,7 @@ describe("Memory delegation transactions", () => {
       const execution = await stores.delegationStore.accept({ ...input, mode: "async", callerToolUseId }, fence);
       const claim = (await stores.pendingEventStore.claim(execution.childId, "child-owner", 60_000))!;
       const childFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
-      await stores.delegationStore.startExecution(execution.id, childFence, `turn-${callerToolUseId}`, {}, 4);
+      await stores.delegationStore.startExecution(execution.id, childFence, `turn-${callerToolUseId}`, {});
       await stores.sessionStore.terminate(execution.childId);
       executions.push({ execution, fence: childFence });
     }
@@ -120,7 +120,7 @@ describe("Memory delegation transactions", () => {
       return getById(id);
     });
     await expect(stores.delegationStore.accept({ tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "turn", callerToolUseId: "tool",
-      prompt: "Do task", mode: "sync", parentModel: "provider/model", maxSteps: 30, sandboxSessionId: parent.id }, fence)).rejects.toThrow();
+      prompt: "Do task", mode: "sync", parentModel: "provider/model", maxSteps: 30, maxConcurrent: 4, sandboxSessionId: parent.id }, fence)).rejects.toThrow();
     expect(queued).toBe(true);
     expect(await stores.pendingEventStore.count(other.id)).toBe(1);
   });

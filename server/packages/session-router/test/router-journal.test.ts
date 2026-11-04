@@ -209,10 +209,10 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       const parent = await h.deadClaim();
       const caller = { tenantId: "tenant", callerSessionId: h.session.id, callerTurnId: parent.turnId };
       const execution = await h.stores.delegationStore.accept({ ...caller, callerToolUseId: "call", prompt: "child", mode: "sync",
-        parentModel: "test", maxSteps: 30, sandboxSessionId: h.session.id }, parent.fence);
+        parentModel: "test", maxSteps: 30, maxConcurrent: 4, sandboxSessionId: h.session.id }, parent.fence);
       const lost = (await h.stores.pendingEventStore.claim(execution.childId, "dead-host", 30_000))!;
       const lostFence = { eventId: execution.pendingEventId, ownerId: lost.ownerId, generation: lost.generation };
-      await h.stores.delegationStore.startExecution(execution.id, lostFence, "child-turn", {}, 4);
+      await h.stores.delegationStore.startExecution(execution.id, lostFence, "child-turn", {});
       // The parent was interrupted while it waited; the child's Runner was lost before it saw the command.
       const command = await h.stores.delegationStore.command({ ...caller, callerToolUseId: `interrupt_${execution.id}`,
         childId: execution.childId, executionId: execution.id, kind: "interrupt", message: "The originating synchronous parent Turn was interrupted" }, parent.fence);
@@ -244,10 +244,10 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
         sessionThreadId: "sthr_primary", pendingFence: parent.fence });
       const execution = await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.session.id,
         callerTurnId: parent.turnId, callerToolUseId: "wait", prompt: "child", mode: "sync", parentModel: "test",
-        maxSteps: 30, sandboxSessionId: h.session.id }, parent.fence);
+        maxSteps: 30, maxConcurrent: 4, sandboxSessionId: h.session.id }, parent.fence);
       const childClaim = (await h.stores.pendingEventStore.claim(execution.childId, "child-host", 30_000))!;
       const childFence = { eventId: execution.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation };
-      await h.stores.delegationStore.startExecution(execution.id, childFence, "child-turn", {}, 4);
+      await h.stores.delegationStore.startExecution(execution.id, childFence, "child-turn", {});
       await h.stores.delegationStore.finishExecution(execution.id, childFence, { status: "completed", output: "done", reason: "finished", trace: { sessionId: execution.childId } });
       await h.stores.pendingEventStore.ack(execution.childId, execution.pendingEventId, childFence);
       await h.stores.pendingEventStore.releaseClaim(h.session.id, parent.pending.id, parent.claim);
@@ -270,7 +270,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       const parent = await h.deadClaim();
       await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.session.id,
         callerTurnId: parent.turnId, callerToolUseId: "wait", prompt: "child", mode: "sync", parentModel: "test",
-        maxSteps: 30, sandboxSessionId: h.session.id }, parent.fence);
+        maxSteps: 30, maxConcurrent: 4, sandboxSessionId: h.session.id }, parent.fence);
       await h.stores.pendingEventStore.releaseClaim(h.session.id, parent.pending.id, parent.claim);
       const before = (await h.log()).at(-1)!.seq;
       // The child never runs, so the resumed wait lasts until the Interrupt.

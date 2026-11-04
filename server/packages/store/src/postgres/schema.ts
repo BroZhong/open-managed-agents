@@ -158,9 +158,8 @@ ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS delegation JSONB;
 -- The Environment the Session is frozen to at creation (ADR-0024); NULL: none.
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS environment_id TEXT;
 
--- One coordination lock orders quota admissions and multi-row transitions.
-CREATE TABLE IF NOT EXISTS ${s}.delegation_lock (id TEXT PRIMARY KEY);
-INSERT INTO ${s}.delegation_lock (id) VALUES ('coordination') ON CONFLICT DO NOTHING;
+-- Coordination transactions lock their Delegation Family with an advisory
+-- lock (ADR-0027); migration 0031 dropped the global delegation_lock row.
 CREATE TABLE IF NOT EXISTS ${s}.delegation_executions (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS delegation_caller_identity_idx ON ${s}.delegation_executions
   ((record->>'tenantId'), (record->>'callerSessionId'), (record->>'callerTurnId'), (record->>'callerToolUseId'));
