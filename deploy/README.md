@@ -107,7 +107,11 @@ curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status =
 ```
 
 Unlike production, test applies the complete rendered manifest. Do not put
-manual changes on test resources; add them to the overlay.
+manual changes on test resources; add them to the overlay. The manifest
+declares no Runner replicas: KEDA sets them ([Runner autoscaling](#runner-autoscaling-adr-0026)).
+`rollout status` returns once the new Runners are ready; old ones may stay
+Terminating for up to 45 minutes while they hand their Turns over
+(`kubectl -n oma-test get pods -l app=oma-runner`).
 
 ### Test migrations
 
@@ -141,6 +145,80 @@ kubectl -n oma-infra get secret oma-secrets -o json \
       '.metadata = {name: "oma-secrets", namespace: "oma-test"} | .data.PG_PASSWORD = $pg' \
   | kubectl apply -f -
 ```
+
+### Runner autoscaling (ADR-0026)
+
+On test, KEDA scales `oma-runner` on its demand; production runs a fixed five
+(the production overlay pins them) until its own ScaledObject (#335). KEDA is
+installed once for the cluster: see [keda/README.md](keda/README.md) and
+[keda/values.yaml](keda/values.yaml).
+
+`environments/test/runner-autoscaling.yaml` declares the ScaledObject
+`oma-runner` and its TriggerAuthentication. KEDA's Metrics API scaler reads
+`demand` from `GET /internal/runner-demand` on the `oma-api` Service, a route
+outside `/api` that the public Ingress never reaches, with a bearer token, and
+drives the HPA `keda-hpa-oma-runner`: replicas = ceil(demand / 40), between 2
+and 50, at most 10 more per 15 s, and after 600 s of lower demand at most 2
+fewer per minute. The target 40 stays below the Runners' `RUNNER_CAPACITY` (50);
+the render test checks both. A failed read (the endpoint answers 503, never 0)
+does not scale in: the HPA keeps its count, and after 3 consecutive failures
+KEDA reports the current count (at least 2) until a read succeeds.
+
+The token is one Secret: the API reads it as `RUNNER_DEMAND_TOKEN` (optional;
+without it the endpoint is not served) and the TriggerAuthentication sends it.
+Create it before the first apply:
+
+```bash
+kubectl -n oma-test create secret generic oma-runner-demand --from-literal=token="$(openssl rand -hex 32)"
+```
+
+To rotate it, replace the Secret and restart `oma-api`. KEDA rebuilds its scaler
+after the next failed read and sends the new token.
+
+Check the scaling:
+
+```bash
+kubectl -n oma-test get scaledobject oma-runner      # READY True
+kubectl -n oma-test get hpa keda-hpa-oma-runner      # TARGETS: demand per replica / 40
+kubectl -n oma-test describe hpa keda-hpa-oma-runner | sed -n '/Conditions/,$p'
+kubectl get --raw '/apis/external.metrics.k8s.io/v1beta1/namespaces/oma-test/s0-metric-api-demand?labelSelector=scaledobject.keda.sh%2Fname%3Doma-runner'
+```
+
+Change the Runner count only through the ScaledObject:
+
+- Bounds: edit `minReplicaCount` / `maxReplicaCount` in the overlay and apply.
+  A `kubectl patch` takes effect at once; the next apply restores the overlay.
+- Hold a count: `kubectl -n oma-test annotate scaledobject oma-runner
+  autoscaling.keda.sh/paused-replicas=<n> --overwrite` scales to n and stops
+  autoscaling; `0` stops every Runner, e.g. for a migration.
+- Stop scaling in only: `autoscaling.keda.sh/paused-scale-in=true`.
+- Resume: remove the annotation, e.g. `kubectl -n oma-test annotate
+  scaledobject oma-runner autoscaling.keda.sh/paused-replicas-`.
+
+The overlay declares neither annotation, so an apply keeps them. Never use
+`kubectl scale` or the console's replica count: the HPA overrides them at its
+next read.
+
+The first apply without Runner replicas, once per namespace (test now,
+production with #335):
+
+1. Create the `oma-runner-demand` Secret as above.
+2. `deploy/scripts/drop-runner-replicas.sh oma-test` (preview it with
+   `--dry-run=server`). It removes `spec.replicas` from the Deployment's
+   last-applied configuration and changes no Pod count. Otherwise the next
+   client-side apply drops the field and the Runners fall to the default of 1
+   until the HPA raises them again: a server-side dry run of that apply
+   returns 1.
+3. Release as in [Test releases](#test-releases), with API and Runner images
+   that serve the endpoint and Runner Capacity. Before the new API is up the
+   reads fail, and the fallback keeps at least 2 Runners.
+4. Check as above, and that `kubectl -n oma-test get deploy oma-runner -o
+   jsonpath='{.spec.replicas}'` never went below 2.
+
+To stop autoscaling, pin `replicas` in the test overlay, delete the KEDA objects
+(`kubectl -n oma-test delete scaledobject/oma-runner
+triggerauthentication/oma-runner-demand`; the Deployment keeps the count it
+has), remove `runner-autoscaling.yaml` from the overlay and apply.
 
 ## Image builder (ADR-0024)
 
@@ -422,7 +500,8 @@ and can be deleted.
 
 `app/` and `environments/` declare the running split API/Runner, Web and
 Ingress for both environments (see [Environments](#environments)); only the test
-overlay also creates Redis. `k8s.yaml` is the legacy combined-Server manifest.
+overlay also creates Redis and the Runner's ScaledObject. `keda/` holds the
+cluster's KEDA install parameters and runbook. `k8s.yaml` is the legacy combined-Server manifest.
 Neither creates production Redis,
 sing-box, RDS, Workspace OSS, Skill Supabase Storage, the ALB controller, or the
 ACK sandbox-manager installation.
@@ -519,7 +598,7 @@ deploy/scripts/run-sandbox-sweep-report.sh test > ~/oma-292/report-before.md
 # 2. Rollback images, then no Runner: no create may be in flight during the migration.
 kubectl -n oma-test get deploy oma-api oma-runner oma-web \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}' | tee ~/oma-292/rollback-images.txt
-kubectl -n oma-test scale deploy/oma-runner --replicas=0
+kubectl -n oma-test annotate scaledobject oma-runner autoscaling.keda.sh/paused-replicas=0 --overwrite
 kubectl -n oma-test wait --for=delete pod -l app=oma-runner --timeout=180s
 $R migration pre                       # no live claim; records the pending rows
 # 3. Migrations 0024 (#284; confirm the file name) and 0025 (#290), reviewed, applied in order by
@@ -527,8 +606,8 @@ $R migration pre                       # no live claim; records the pending rows
 node deploy/scripts/migration-for-env.mjs test deploy/migrations/0024_<name>.sql > ~/oma-292/0024-test.sql
 node deploy/scripts/migration-for-env.mjs test deploy/migrations/0025_binding_environment_status.sql > ~/oma-292/0025-test.sql
 # 4. The new image, built on vfs-dev from the release commit (see "Image pipeline"), then
-#    "Test releases": the full manifest also returns oma-runner to 2 replicas. deploy-app.sh
-#    targets production only.
+#    "Test releases", then resume the Runners: kubectl -n oma-test annotate scaledobject oma-runner
+#    autoscaling.keda.sh/paused-replicas-. deploy-app.sh targets production only.
 node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION BUILDER_VERSION > /tmp/oma-test.yaml
 kubectl diff -f /tmp/oma-test.yaml; kubectl apply -f /tmp/oma-test.yaml
 for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
