@@ -57,13 +57,13 @@ function appendCore(keyed: boolean, newRow: boolean): Statement[] {
 }
 
 /**
- * TransactionalDelegationStore.transaction in PG: every write path (and the
- * reads that are not overridden) takes ONE global row lock, so these
- * transactions serialize across all Runners. `fences` is the number of
- * assertFence calls, each rechecked just before COMMIT.
+ * TransactionalDelegationStore.transaction in PG: every write path takes its
+ * Delegation Family's advisory lock (ADR-0027) in one statement that reads the
+ * family's root by key, so these transactions serialize within a family only.
+ * `fences` is the number of assertFence calls, each rechecked just before COMMIT.
  */
 function delegationTx(fences: number, ...body: Statement[]): Statement[] {
-  return [BEGIN, pk("SELECT FOR UPDATE", "delegation_lock"), ...body,
+  return [BEGIN, pk("SELECT pg_advisory_xact_lock", "delegation_family"), ...body,
     ...Array.from({ length: fences }, () => pk("SELECT", "pending_events")), COMMIT];
 }
 /** DelegationTransaction.assertFence. */
@@ -140,7 +140,7 @@ export const PG_COSTS: Record<string, Cost> = {
   "skillStore.getById": fixed([seq("SELECT", "skills")]),
   "loopStore.dispatchDue": fixed(tx(ix("SELECT FOR UPDATE SKIP LOCKED", "loops"))), // + per due Loop
 
-  // PgDelegationStore: plain queries (overridden, no global lock)
+  // PgDelegationStore: plain queries (overridden, no family lock)
   "delegationStore.getExecution": fixed([pk("SELECT", "delegation_executions")]),
   "delegationStore.getByPendingEventId": fixed([ix("SELECT", "delegation_executions")]),
   "delegationStore.listExecutions": fixed([ix("SELECT", "delegation_executions")]),
@@ -149,9 +149,10 @@ export const PG_COSTS: Record<string, Cost> = {
   "delegationStore.get": fixed([pk("SELECT", "sessions"), ix("SELECT", "delegation_executions")]),
   "delegationStore.listCommands": fixed([ix("SELECT", "delegation_commands")]),
   "delegationStore.listWaits": fixed([ix("SELECT", "delegation_waits")]),
-  // Two open-state scans (partial indexes, 0021) joined to sessions; a transaction only when something is found.
+  // Two open-state scans (partial indexes, 0021) joined to sessions; then one
+  // transaction per Delegation Family found, counted per reconciled execution.
   "delegationStore.reconcileTerminatedExecutions": (facts) => [ix("SELECT", "delegation_executions"), ix("SELECT", "delegation_waits"),
-    ...(((facts.result as unknown[]) ?? []).length ? delegationTx(0, EXECUTION_BY_ID, ...TX_SESSION, ...TX_SESSION) : [])],
+    ...((facts.result as unknown[]) ?? []).flatMap(() => delegationTx(0, EXECUTION_BY_ID, ...TX_SESSION, ...TX_SESSION))],
   // A callback that throws (a Turn waiting for another's create) leaves after the
   // snapshot; the UPDATE runs only when the callback moves the row or records an
   // Sandbox unavailability or the recovery from one (#290), counted as always.
@@ -160,7 +161,7 @@ export const PG_COSTS: Record<string, Cost> = {
   // GET /v1/sessions/{id}: one autocommitted read, no lock (#290).
   "delegationStore.sandbox": fixed([pk("SELECT", "delegation_environments")]),
 
-  // PgDelegationStore: transactions under the global delegation_lock
+  // PgDelegationStore: transactions under their Delegation Family's lock
   "delegationStore.acquireResourceUse": fixed(delegationTx(1, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_resource_uses"))),
   "delegationStore.releaseResourceUse": fixed(delegationTx(0, seq("SELECT", "delegation_resource_uses"), pk("DELETE", "delegation_resource_uses"))),
   // + per resource use and per queued execution of the binding
@@ -187,7 +188,7 @@ export const PG_COSTS: Record<string, Cost> = {
   // and running executions against its limit (ADR-0027).
   "delegationStore.accept": fixed(delegationTx(1, ...ASSERT_FENCE, ...TX_SESSION, ix("SELECT", "delegation_executions"),
     ix("SELECT", "delegation_executions"), ix("SELECT", "delegation_executions"),
-    pk("SELECT FOR UPDATE", "workspaces"), st("INSERT", "sessions"), seq("SELECT", "delegation_executions"), st("INSERT", "pending_events"),
+    pk("SELECT FOR SHARE", "workspaces"), st("INSERT", "sessions"), seq("SELECT", "delegation_executions"), st("INSERT", "pending_events"),
     st("INSERT ON CONFLICT", "delegation_executions"), st("INSERT ON CONFLICT", "delegation_waits"))),
 
   // PgSandboxLifecycleStore (one binding row lock per transaction)

@@ -25,6 +25,17 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     return fence;
   }
   const outcome = (child: DelegationExecution) => ({ status: "completed" as const, reason: "finished", output: "done", trace: { sessionId: child.childId, turnId: "child-turn" } });
+  /** Another Delegation Family in the same Tenant and Workspace: a parent with its claimed input. */
+  async function family(name: string) {
+    const agent = (await stores.agentStore.list("tenant")).data[0];
+    const parent = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: "workspace" });
+    await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    const claim = (await stores.pendingEventStore.claim(parent.id, name, 60000))!;
+    const fence: PendingEventFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
+    return { parent, fence, caller: { ...caller, callerSessionId: parent.id, sandboxSessionId: parent.id } };
+  }
+  /** Settles within `ms`, or reports it still waits. */
+  const within = <T>(promise: Promise<T>, ms = 1_000) => Promise.race([promise.then(() => "settled"), new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), ms))]);
   it("orders new child admission after a concurrent Workspace soft deletion commits", async () => {
     await stores.workspaceStore.create({ tenantId: caller.tenantId, id: "workspace" });
     const deletion = await harness.pool.connect();
@@ -45,7 +56,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
       expect(await stores.delegationStore.list(caller.tenantId, caller.callerSessionId)).toEqual([]);
     } finally { await deletion.query("ROLLBACK"); deletion.release(); }
   });
-  it("serializes acceptance across independent store instances and admits only the parent's limit (ADR-0027)", async () => {
+  it("serializes a family's acceptance across independent store instances under its lock and admits only the parent's limit (ADR-0027)", async () => {
     const other = new PgDelegationStore(harness.pool);
     const accepted = await Promise.all([stores.delegationStore.accept(caller, parentFence), other.accept(caller, parentFence), other.accept(caller, parentFence)]);
     expect(new Set(accepted.map((row) => row.id)).size).toBe(1);
@@ -59,6 +70,80 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     expect(outcomes.filter((outcome) => outcome instanceof DelegationLimitReached)).toHaveLength(5);
     expect(await stores.delegationStore.list("tenant", caller.callerSessionId)).toHaveLength(4);
     expect((await stores.sessionStore.list("tenant", { limit: 100 })).data).toHaveLength(5);
+  });
+  it("does not make another Delegation Family wait while a transaction holds its family's lock (ADR-0027)", async () => {
+    await stores.workspaceStore.create({ tenantId: caller.tenantId, id: "workspace" });
+    const other = await family("other");
+    const otherChild = await stores.delegationStore.accept(other.caller, other.fence);
+    // A transaction of the first family takes its lock, then waits for the
+    // parent's row, which a client outside the store holds.
+    const blocker = await harness.pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM sessions WHERE id = $1 FOR UPDATE", [caller.callerSessionId]);
+      const blocked = stores.delegationStore.accept(caller, parentFence);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // The family's own transactions wait for its lock, a reclaimability
+      // read too, though it reads no row the blocker holds.
+      const sameFamily = stores.delegationStore.hasResourceUsers(caller.callerSessionId);
+      expect(await within(sameFamily, 300)).toBe("waiting");
+      // Every kind of transaction of the other family proceeds: acceptance
+      // (in the same Workspace), start, Sandbox resource use, reclaimability,
+      // waits, commands and publication.
+      expect(await within(stores.delegationStore.accept({ ...other.caller, callerToolUseId: "second", mode: "sync" }, other.fence))).toBe("settled");
+      const childFence = await start(otherChild);
+      expect(await within(stores.delegationStore.acquireResourceUse(otherChild.childId, other.parent.id, childFence))).toBe("settled");
+      expect(await within(stores.delegationStore.acquireResourceUse(other.parent.id, other.parent.id, other.fence))).toBe("settled");
+      expect(await within(stores.delegationStore.hasResourceUsers(other.parent.id))).toBe("settled");
+      expect(await within(stores.delegationStore.command({ ...other.caller, callerToolUseId: "steer", childId: otherChild.childId, kind: "steer", message: "go on" }, other.fence))).toBe("settled");
+      expect(await within(stores.delegationStore.finishExecution(otherChild.id, childFence, outcome(otherChild)))).toBe("settled");
+      expect(await within(stores.delegationStore.releaseResourceUse(other.parent.id, other.fence))).toBe("settled");
+      expect(await within(stores.delegationStore.reconcileTerminatedExecutions(other.parent.id))).toBe("settled");
+      await blocker.query("COMMIT");
+      expect((await blocked).status).toBe("queued");
+      expect(await sameFamily).toBe(true);
+    } finally { await blocker.query("ROLLBACK").catch(() => {}); blocker.release(); }
+  });
+  it("publishes before it consumes, once, while many families finish and consume at once", async () => {
+    const families = await Promise.all(Array.from({ length: 6 }, (_, index) => family(`parent-${index}`)));
+    const runs = await Promise.all(families.map(async ({ caller: own, fence }) => {
+      const child = await stores.delegationStore.accept(own, fence);
+      const childFence = await start(child);
+      const consume = () => stores.delegationStore.consumeResult(child.id, { ...own, callerToolUseId: "tool" }, fence, {
+        type: "agent.tool_result", data: { toolUseId: "tool", content: [] }, sessionThreadId: "sthr_primary" });
+      // A consumption that runs first finds no published result and is refused.
+      const [, early] = await Promise.all([stores.delegationStore.finishExecution(child.id, childFence, outcome(child)),
+        consume().then(() => "consumed", (error: Error) => error.message)]);
+      if (early !== "consumed") { expect(early).toBe("Delegation result unavailable"); await consume(); }
+      return { own, child };
+    }));
+    for (const { own, child } of runs) {
+      const log = (await stores.eventLogStore.getEvents(own.callerSessionId)).data;
+      expect(log.filter((event) => event.type === "subagent.result")).toHaveLength(1);
+      expect(log.filter((event) => event.type === "agent.tool_result")).toHaveLength(1);
+      // The tool consumed the result, so its asynchronous delivery is withdrawn.
+      expect(await stores.delegationStore.getExecution("tenant", child.id)).toMatchObject({ status: "completed", notificationStatus: "consumed" });
+      expect((await stores.pendingEventStore.listUnclaimed(own.callerSessionId, 10)).filter((event) => event.type === "subagent.result")).toEqual([]);
+    }
+  });
+  it("judges a Sandbox in use under its family's lock while a child starts and its parent releases", async () => {
+    const families = await Promise.all(Array.from({ length: 6 }, (_, index) => family(`binding-${index}`)));
+    await Promise.all(families.map(async ({ parent, caller: own, fence }) => {
+      await stores.delegationStore.acquireResourceUse(parent.id, parent.id, fence);
+      const child = await stores.delegationStore.accept(own, fence);
+      const claim = (await stores.pendingEventStore.claim(child.childId, "child", 60000))!;
+      const childFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
+      // The child's queued execution, then its resource use, keep the
+      // Sandbox in use as the parent lets go: no read may fall between them.
+      const reads = await Promise.all([
+        stores.delegationStore.startExecution(child.id, childFence, "child-turn", {}).then(() => true),
+        stores.delegationStore.releaseResourceUse(parent.id, fence).then(() => true),
+        ...Array.from({ length: 4 }, () => stores.delegationStore.hasResourceUsers(parent.id)),
+      ]);
+      expect(reads).toEqual(Array(6).fill(true));
+      await stores.delegationStore.finishExecution(child.id, childFence, outcome(child));
+      expect(await stores.delegationStore.hasResourceUsers(parent.id)).toBe(false);
+    }));
   });
   it("rolls back terminal plus parent event when pending callback insert fails", async () => {
     const child = await stores.delegationStore.accept(caller, parentFence); const fence = await start(child);

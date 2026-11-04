@@ -86,6 +86,22 @@ function createMemHarness(noAstCoverageCheck = false): PgTestHarness {
       impure: true,
       implementation: () => new Date(),
     });
+    // The Delegation Family lock (ADR-0027). pg-mem runs one statement at a
+    // time and has no lock waits, so it is a no-op, as FOR UPDATE is here;
+    // real PostgreSQL proves the exclusion.
+    db.public.registerFunction({
+      name: "hashtextextended",
+      args: [DataType.text, DataType.integer],
+      returns: DataType.bigint,
+      implementation: (value: string) => [...value].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) % 2 ** 31, 7),
+    });
+    db.public.registerFunction({
+      name: "pg_advisory_xact_lock",
+      args: [DataType.bigint],
+      returns: DataType.bool,
+      impure: true,
+      implementation: () => true,
+    });
     db.public.registerFunction({
       name: "to_char",
       args: [DataType.timestamptz, DataType.text],

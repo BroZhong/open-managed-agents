@@ -7,6 +7,15 @@ import type { Session, StoredEvent } from "./types.js";
 import { DelegationLimitReached, PendingEventClaimLostError } from "./errors.js";
 
 export type DelegationTable = "executions" | "waits" | "commands" | "resource_uses";
+/**
+ * The Delegation Family a coordination transaction locks (ADR-0027): a parent
+ * Session and its Child Sessions, so transactions of different families never
+ * wait for each other. It is named by the immutable record that places the
+ * transaction: one of its Sessions (a Child names its parent), an execution
+ * (its calling parent) or a command (its execution's). Null for a read, which
+ * locks nothing.
+ */
+export type DelegationFamilyRef = { session: string } | { execution: string } | { command: string };
 export type DelegationRecord = DelegationExecution | DelegationWait | DelegationCommand | ResourceUseLease;
 /** Internal transaction seam shared by production SQL and the development stores. */
 export interface DelegationTransaction {
@@ -24,7 +33,7 @@ const terminal = (execution: DelegationExecution) => execution.status !== "queue
 const identity = (caller: DelegationCaller) => JSON.stringify([caller.tenantId, caller.callerSessionId, caller.callerTurnId, caller.callerToolUseId]);
 const callerFilter = (caller: DelegationCaller) => ({ tenantId: caller.tenantId, callerSessionId: caller.callerSessionId, callerTurnId: caller.callerTurnId, callerToolUseId: caller.callerToolUseId });
 export abstract class TransactionalDelegationStore implements DelegationStore {
-  protected abstract transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T>;
+  protected abstract transaction<T>(family: DelegationFamilyRef | null, work: (tx: DelegationTransaction) => Promise<T>): Promise<T>;
   abstract withBindingLock<T>(bindingId: string, work: (binding: SandboxBindingRow) => Promise<BindingLockResult<T>>): Promise<T>;
   abstract installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
   abstract recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
@@ -45,15 +54,16 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     const child = await tx.sessions.getById(childId);
     return Boolean(child && child.tenantId === tenantId && child.delegation && (child.delegation.parentSessionId === callerSessionId || childId === callerSessionId));
   }
-  protected terminatedExecutionIds(sessionId: string | undefined, limit: number): Promise<string[]> {
-    return this.transaction(async (tx) => {
-      const ids: string[] = [];
+  /** Open executions whose Child Session, or whose synchronous parent, was terminated: by id, with the parent that names their family. */
+  protected terminatedExecutions(sessionId: string | undefined, limit: number): Promise<Array<{ id: string; callerSessionId: string }>> {
+    return this.transaction(null, async (tx) => {
+      const ids: Array<{ id: string; callerSessionId: string }> = [];
       for (const status of ["queued", "running"]) {
         for (const execution of await tx.read<DelegationExecution>("executions", { status })) {
           if (sessionId && execution.childId !== sessionId && execution.callerSessionId !== sessionId) continue;
           const child = await tx.sessions.getById(execution.childId);
           const parent = await tx.sessions.getById(execution.callerSessionId);
-          if (child?.status === "terminated" || parent?.status === "terminated" && execution.mode === "sync" && !execution.parentTerminationRequested) ids.push(execution.id);
+          if (child?.status === "terminated" || parent?.status === "terminated" && execution.mode === "sync" && !execution.parentTerminationRequested) ids.push({ id: execution.id, callerSessionId: execution.callerSessionId });
           if (ids.length >= limit) return ids;
         }
       }
@@ -61,7 +71,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   protected terminatedParentWaits(sessionId: string | undefined, limit: number): Promise<DelegationWait[]> {
-    return this.transaction(async (tx) => {
+    return this.transaction(null, async (tx) => {
       const result: DelegationWait[] = [];
       for (const wait of await tx.read<DelegationWait>("waits", { status: "waiting", ...(sessionId ? { callerSessionId: sessionId } : {}) })) {
         if ((await tx.sessions.getById(wait.callerSessionId))?.status === "terminated") result.push(wait);
@@ -72,9 +82,19 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
   }
   async reconcileTerminatedExecutions(sessionId?: string, limit = 100): Promise<DelegationExecution[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid termination reconciliation batch size");
-    const [ids, waits] = await Promise.all([this.terminatedExecutionIds(sessionId, limit), this.terminatedParentWaits(sessionId, limit)]);
-    if (!ids.length && !waits.length) return [];
-    return this.transaction(async (tx) => {
+    const [executions, parentWaits] = await Promise.all([this.terminatedExecutions(sessionId, limit), this.terminatedParentWaits(sessionId, limit)]);
+    // One transaction per Delegation Family, each under its family's lock
+    // alone: a transaction never holds two, so families cannot deadlock.
+    const families = new Map<string, { ids: string[]; waits: DelegationWait[] }>();
+    const family = (parentId: string) => { const found = families.get(parentId) ?? { ids: [], waits: [] }; families.set(parentId, found); return found; };
+    for (const execution of executions) family(execution.callerSessionId).ids.push(execution.id);
+    for (const wait of parentWaits) family(wait.callerSessionId).waits.push(wait);
+    const reconciled: DelegationExecution[] = [];
+    for (const [parentId, { ids, waits }] of families) reconciled.push(...await this.reconcileFamily(parentId, ids, waits));
+    return reconciled;
+  }
+  private reconcileFamily(parentId: string, ids: string[], waits: DelegationWait[]): Promise<DelegationExecution[]> {
+    return this.transaction({ session: parentId }, async (tx) => {
       for (const candidate of waits) {
         const wait = (await tx.read<DelegationWait>("waits", callerFilter(candidate)))[0];
         if (wait?.status === "waiting" && (await tx.sessions.getById(wait.callerSessionId))?.status === "terminated") {
@@ -118,7 +138,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     if (input.mode !== "sync" && input.mode !== "async") throw new Error("Invalid delegation mode");
     if (typeof input.parentModel !== "string" || !input.parentModel.trim()) throw new Error("Resolved parent model is required");
     if (!Number.isInteger(input.maxConcurrent) || input.maxConcurrent < 1) throw new Error("Invalid delegation concurrency limit");
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: input.callerSessionId }, async (tx) => {
       await tx.assertFence(input.callerSessionId, fence);
       const parent = await tx.sessions.getById(input.callerSessionId);
       if (!parent || parent.tenantId !== input.tenantId || parent.status === "terminated") throw new Error("Parent Session unavailable");
@@ -126,7 +146,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       const existing = (await tx.read<DelegationExecution>("executions", callerFilter(input)))[0];
       if (existing) return existing;
       // Admission (ADR-0027): the parent's unfinished executions, queued or
-      // running, are counted under the coordination lock, so concurrent calls
+      // running, are counted under the family's lock, so concurrent calls
       // cannot both take the last place. A running one whose owner was lost
       // still counts: its takeover continues it. Beyond the limit the call is
       // refused, not queued, and creates nothing.
@@ -162,10 +182,10 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       return execution;
     });
   }
-  getChild(tenantId: string, childId: string) { return this.transaction(async (tx) => { const child = await tx.sessions.getById(childId); return child?.tenantId === tenantId && child.delegation ? child : null; }); }
-  getExecution(tenantId: string, executionId: string) { return this.transaction(async (tx) => (await tx.read<DelegationExecution>("executions", { tenantId, id: executionId }))[0] ?? null); }
+  getChild(tenantId: string, childId: string) { return this.transaction(null, async (tx) => { const child = await tx.sessions.getById(childId); return child?.tenantId === tenantId && child.delegation ? child : null; }); }
+  getExecution(tenantId: string, executionId: string) { return this.transaction(null, async (tx) => (await tx.read<DelegationExecution>("executions", { tenantId, id: executionId }))[0] ?? null); }
   listExecutions(tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }) {
-    return this.transaction(async (tx) => {
+    return this.transaction(null, async (tx) => {
       const filters: Record<string, string> = { tenantId };
       for (const field of ["callerSessionId", "callerTurnId", "callerToolUseId", "childId"] as const) if (opts[field]) filters[field] = opts[field];
       const rows = await tx.read<DelegationExecution>("executions", filters);
@@ -175,16 +195,16 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   get(tenantId: string, callerSessionId: string, childId: string, executionId?: string) {
-    return this.transaction(async (tx) => {
+    return this.transaction(null, async (tx) => {
       if (!await this.accessible(tx, tenantId, callerSessionId, childId)) return null;
       const rows = await tx.read<DelegationExecution>("executions", { tenantId, childId, ...(executionId ? { id: executionId } : {}) });
       return rows.sort((a, b) => b.sequence - a.sequence)[0] ?? null;
     });
   }
-  getByPendingEventId(pendingEventId: string) { return this.transaction(async (tx) => (await tx.read<DelegationExecution>("executions", { pendingEventId }))[0] ?? null); }
+  getByPendingEventId(pendingEventId: string) { return this.transaction(null, async (tx) => (await tx.read<DelegationExecution>("executions", { pendingEventId }))[0] ?? null); }
   list(tenantId: string, callerSessionId: string) { return this.listExecutions(tenantId, { callerSessionId, limit: 500 }); }
   startExecution(executionId: string, fence: PendingEventFence, turnId: string, effectiveConfig: Record<string, unknown>) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ execution: executionId }, async (tx) => {
       const execution = await this.execution(tx, executionId);
       await tx.assertFence(execution.childId, fence);
       if (fence.eventId !== execution.pendingEventId) throw new Error("Delegation input fence mismatch");
@@ -218,7 +238,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       ownerId: fence.ownerId, generation: fence.generation });
   }
   updateEffectiveConfig(executionId: string, fence: PendingEventFence, config: Record<string, unknown>) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ execution: executionId }, async (tx) => {
       const execution = await this.execution(tx, executionId);
       await tx.assertFence(execution.childId, fence);
       if (execution.status !== "running" || fence.eventId !== execution.pendingEventId ||
@@ -255,7 +275,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     return execution;
   }
   finishExecution(executionId: string, fence: PendingEventFence, outcome: DelegationOutcome) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ execution: executionId }, async (tx) => {
       const execution = await this.execution(tx, executionId);
       await tx.assertFence(execution.childId, fence);
       if (fence.eventId !== execution.pendingEventId || (execution.generation !== undefined && execution.generation !== fence.generation)) throw new Error("Delegation generation mismatch");
@@ -263,7 +283,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   saveWait(wait: Omit<DelegationWait, "status">, fence: PendingEventFence) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: wait.callerSessionId }, async (tx) => {
       await tx.assertFence(wait.callerSessionId, fence);
       if (wait.parentPendingEventId !== fence.eventId) throw new Error("Parent pending input mismatch");
       const execution = await this.execution(tx, wait.executionId);
@@ -275,9 +295,9 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       return saved;
     });
   }
-  listWaits(parentSessionId: string, parentPendingEventId: string) { return this.transaction((tx) => tx.read<DelegationWait>("waits", { callerSessionId: parentSessionId, parentPendingEventId })); }
+  listWaits(parentSessionId: string, parentPendingEventId: string) { return this.transaction(null, (tx) => tx.read<DelegationWait>("waits", { callerSessionId: parentSessionId, parentPendingEventId })); }
   consumeResult(executionId: string, caller: DelegationCaller, fence: PendingEventFence, event: EventLogStoreAppendInput) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: caller.callerSessionId }, async (tx) => {
       await tx.assertFence(caller.callerSessionId, fence);
       const execution = await this.execution(tx, executionId);
       if (!terminal(execution) || !await this.accessible(tx, caller.tenantId, caller.callerSessionId, execution.childId)) throw new Error("Delegation result unavailable");
@@ -294,7 +314,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   markNotificationProcessed(executionId: string, parentFence: PendingEventFence) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ execution: executionId }, async (tx) => {
       const execution = await this.execution(tx, executionId);
       await tx.assertFence(execution.callerSessionId, parentFence);
       if (execution.notificationPendingEventId !== parentFence.eventId) throw new Error("Notification pending input mismatch");
@@ -303,14 +323,14 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   cancelWaits(parentSessionId: string, parentTurnId: string, fence?: PendingEventFence) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: parentSessionId }, async (tx) => {
       if (fence) await tx.assertFence(parentSessionId, fence);
       const waits = await tx.read<DelegationWait>("waits", { callerSessionId: parentSessionId, callerTurnId: parentTurnId, status: "waiting" });
       for (const wait of waits) { wait.status = "cancelled"; await tx.put("waits", identity(wait), wait); }
     });
   }
   command(input: DelegationCaller & { childId: string; executionId?: string; kind: "steer" | "interrupt"; message: string }, callerFence?: PendingEventFence) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: input.callerSessionId }, async (tx) => {
       if (callerFence) await tx.assertFence(input.callerSessionId, callerFence);
       if (!await this.accessible(tx, input.tenantId, input.callerSessionId, input.childId)) throw new Error("Child Session not accessible");
       const existing = (await tx.read<DelegationCommand>("commands", callerFilter(input)))[0];
@@ -332,9 +352,9 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       return command;
     });
   }
-  listCommands(executionId: string) { return this.transaction(async (tx) => (await tx.read<DelegationCommand>("commands", { executionId })).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))); }
+  listCommands(executionId: string) { return this.transaction(null, async (tx) => (await tx.read<DelegationCommand>("commands", { executionId })).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))); }
   applyCommand(commandId: string, fence: PendingEventFence, event: EventLogStoreAppendInput) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ command: commandId }, async (tx) => {
       const command = (await tx.read<DelegationCommand>("commands", { id: commandId }))[0];
       if (!command) throw new Error("Delegation command not found");
       const execution = await this.execution(tx, command.executionId);
@@ -351,7 +371,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   acquireResourceUse(sessionId: string, sandboxSessionId: string, fence: PendingEventFence) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: sessionId }, async (tx) => {
       await tx.assertFence(sessionId, fence);
       const lease: ResourceUseLease = { sessionId, sandboxSessionId, pendingEventId: fence.eventId, ownerId: fence.ownerId, generation: fence.generation };
       await tx.put("resource_uses", fence.eventId, lease);
@@ -359,7 +379,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     });
   }
   releaseResourceUse(sessionId: string, fence: PendingEventFence) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: sessionId }, async (tx) => {
       const lease = (await tx.read<ResourceUseLease>("resource_uses", { sessionId, pendingEventId: fence.eventId }))[0];
       // Router completion is history/queue bookkeeping, not remote settlement.
       // The Sandbox lifecycle owner removes managed Turns only after observed
@@ -369,8 +389,13 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       }
     });
   }
+  /**
+   * A binding is its root Session's, which a Child Session shares
+   * (sandboxBindingId), so its users are one Delegation Family's: the family
+   * lock orders this read with their registrations.
+   */
   hasResourceUsers(sandboxSessionId: string) {
-    return this.transaction(async (tx) => {
+    return this.transaction({ session: sandboxSessionId }, async (tx) => {
       for (const use of await tx.read<ResourceUseLease>("resource_uses", { sandboxSessionId })) {
         if (use.managedTurn) {
           if ((await tx.sessions.getById(use.sessionId))?.status !== "terminated") return true;

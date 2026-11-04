@@ -196,7 +196,7 @@ export type {
 } from "./skill-bundle.js";
 export type * from "./interfaces/delegation-store.js";
 export { TransactionalDelegationStore, delegationFenceLost, sandboxBindingId } from "./delegation-store.js";
-export type { DelegationTransaction, DelegationRecord, DelegationTable, SandboxBindingRecord } from "./delegation-store.js";
+export type { DelegationFamilyRef, DelegationTransaction, DelegationRecord, DelegationTable, SandboxBindingRecord } from "./delegation-store.js";
 export { PgDelegationStore } from "./postgres/delegation-store.js";
 
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";

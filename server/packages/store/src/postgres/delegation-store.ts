@@ -3,7 +3,7 @@ import { eventSequenceWidth } from "../event-presentation.js";
 import type { Pool, PoolClient } from "./connection.js";
 import { PgSessionStore } from "./session-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationTable, type DelegationRecord, type SandboxBindingRecord } from "../delegation-store.js";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationFamilyRef, type DelegationTransaction, type DelegationTable, type DelegationRecord, type SandboxBindingRecord } from "../delegation-store.js";
 import type { EventLogStoreAppendInput } from "../interfaces/event-log-store.js";
 import type { DelegationExecution, DelegationCommand, DelegationWait, SandboxBindingRow, BindingLockResult, BindingTransition, InstalledSkillSet, SkillSetRecordOutcome } from "../interfaces/delegation-store.js";
 import type { StoredEvent } from "../types.js";
@@ -11,6 +11,24 @@ import { SandboxBindingChanged } from "../errors.js";
 import type { PendingEventFence } from "../interfaces/pending-event-store.js";
 
 const tables: Record<DelegationTable, string> = { executions: "delegation_executions", waits: "delegation_waits", commands: "delegation_commands", resource_uses: "delegation_resource_uses" };
+/** The root, the parent Session, of the family a record places a transaction in; read from the immutable field that names it. */
+const familyRoots: Record<"session" | "execution" | "command", string> = {
+  session: "SELECT delegation->>'parentSessionId' FROM sessions WHERE id = $1",
+  execution: "SELECT record->>'callerSessionId' FROM delegation_executions WHERE id = $1",
+  command: `SELECT execution.record->>'callerSessionId' FROM delegation_commands command
+    JOIN delegation_executions execution ON execution.id = command.record->>'executionId' WHERE command.id = $1`,
+};
+/**
+ * Lock a Delegation Family for the transaction (ADR-0027) in one statement.
+ * The key hashes the root's id, or the record's own id when nothing names a
+ * root (a root Session, or a record that is missing and fails the work). It
+ * is namespaced by the schema: production (`oma`) and test (`oma_test`) share
+ * one database, and advisory locks are database-wide.
+ */
+async function lockFamily(client: PoolClient, ref: DelegationFamilyRef): Promise<void> {
+  const [kind, id] = Object.entries(ref)[0] as [keyof typeof familyRoots, string];
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || '/delegation_family/' || COALESCE((${familyRoots[kind]}), $1), 0))`, [id]);
+}
 type BindingRow = { sandbox_id: string | null; environment_id: string | null; image: string | null; reclaiming: boolean; creating_since: Date | null; last_error_code: string | null; now: Date };
 /** The row as compared: both reads come back as Dates of millisecond precision. */
 const sameRow = (a: BindingRow, b: BindingRow) =>
@@ -23,8 +41,8 @@ const written = (next: BindingTransition): [string | null, boolean, string | nul
 export class PgDelegationStore extends TransactionalDelegationStore {
   private readonly bindingQueues = new Map<string, Promise<void>>();
   constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) { super(); }
-  protected override async terminatedExecutionIds(sessionId: string | undefined, limit: number): Promise<string[]> {
-    const result = await this.pool.query<{ id: string }>(`SELECT execution.id FROM delegation_executions execution
+  protected override async terminatedExecutions(sessionId: string | undefined, limit: number): Promise<Array<{ id: string; callerSessionId: string }>> {
+    const result = await this.pool.query<{ id: string; caller_session_id: string }>(`SELECT execution.id, parent.id AS caller_session_id FROM delegation_executions execution
       JOIN sessions child ON child.id = execution.record->>'childId'
       JOIN sessions parent ON parent.id = execution.record->>'callerSessionId'
       WHERE execution.record->>'status' IN ('queued', 'running')
@@ -32,7 +50,7 @@ export class PgDelegationStore extends TransactionalDelegationStore {
           AND COALESCE(execution.record->>'parentTerminationRequested', 'false') <> 'true'))
         ${sessionId ? "AND (child.id = $2 OR parent.id = $2)" : ""}
       ORDER BY execution.id LIMIT $1`, [limit, ...(sessionId ? [sessionId] : [])]);
-    return result.rows.map((row) => row.id);
+    return result.rows.map((row) => ({ id: row.id, callerSessionId: row.caller_session_id }));
   }
   protected override async terminatedParentWaits(sessionId: string | undefined, limit: number): Promise<DelegationWait[]> {
     const result = await this.pool.query<{ record: DelegationWait }>(`SELECT waiting.record FROM delegation_waits waiting
@@ -83,13 +101,14 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     const result = await this.pool.query<{ record: DelegationWait }>("SELECT record FROM delegation_waits WHERE record->>'callerSessionId' = $1 AND record->>'parentPendingEventId' = $2", [parentSessionId, parentPendingEventId]);
     return result.rows.map((row) => row.record);
   }
-  protected async transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
+  protected async transaction<T>(family: DelegationFamilyRef | null, work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // A row lock works on all supported PostgreSQL versions and orders quota
-      // admission, acceptance idempotency, terminal publication and consumption.
-      await client.query("SELECT id FROM delegation_lock WHERE id = 'coordination' FOR UPDATE");
+      // The family's lock orders its admissions against its limit, acceptance
+      // idempotency, terminal publication and consumption, and its Sandbox
+      // resource uses; other families' transactions do not wait for it.
+      if (family) await lockFamily(client, family);
       // These methods use only .query(), never start a nested transaction.
       const queryPool = client as unknown as Pool;
       const sessions = new PgSessionStore(queryPool);
@@ -125,8 +144,9 @@ export class PgDelegationStore extends TransactionalDelegationStore {
         assertWorkspaceNotDeleted: async (tenantId, workspaceId) => {
           // Order new child creation against softDelete's UPDATE. Existing inputs
           // and resumes never take this gate: soft deletion does not end execution.
+          // A share lock: families delegating in one Workspace do not wait for each other.
           const result = await client.query<{ deleted_at: Date | null }>(
-            "SELECT deleted_at FROM workspaces WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+            "SELECT deleted_at FROM workspaces WHERE tenant_id = $1 AND id = $2 FOR SHARE",
             [tenantId, workspaceId],
           );
           if (result.rows[0]?.deleted_at) throw new Error("Workspace has been deleted");

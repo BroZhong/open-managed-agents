@@ -460,7 +460,10 @@ resume. `SUBAGENT_MAX_CONCURRENT` (default 4) is a parent Session's limit of
 unfinished (queued or running) child executions: an `Agent` call beyond it, new
 or resume, gets a tool error instead of a queued child (ADR-0027).
 `SUBAGENT_MAX_MODEL_STEPS` defaults to 500 (maximum 1000) model steps per
-execution. A waiting parent counts against neither.
+execution. A waiting parent counts against neither. Delegation transactions lock
+their Delegation Family, not one global row (ADR-0027): migration 0031 drops
+`delegation_lock` and is contracting. Apply it once no Runner of an earlier image
+runs; its rollback recreates the row and must run before an earlier image starts.
 The Host assigns its configured budget to each new or resumed execution; the
 Agent tool accepts no budget override. Exhaustion returns `budget_exhausted`;
 only an explicit resume starts a fresh budget. The live verification script’s

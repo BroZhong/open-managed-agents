@@ -1,4 +1,4 @@
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type SandboxBindingRow, type BindingLockResult, type SandboxBindingRecord, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationFamilyRef, type DelegationTransaction, type DelegationRecord, type DelegationTable, type SandboxBindingRow, type BindingLockResult, type SandboxBindingRecord, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { InMemorySessionStore } from "./session-store.js";
 import type { InMemoryPendingEventStore } from "./pending-event-store.js";
 import type { InMemoryEventLogStore } from "./event-log-store.js";
@@ -13,12 +13,13 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">,
     /** Stands in for PostgreSQL's now(): the clock binding intents are written and judged with. */
     private readonly databaseClock: () => Date = () => new Date()) { super(); }
-  protected transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
+  protected transaction<T>(_family: DelegationFamilyRef | null, work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const perform = async () => {
-      // The queue serializes these transactions, as the delegation lock row
-      // does in PostgreSQL, but not the other writers of the stores they
-      // share: a claim taken, a lease that lapsed, an input queued, another
-      // Router's events. So a failed transaction undoes exactly its own
+      // The queue serializes these transactions of every Delegation Family,
+      // reads too: a stricter order than PostgreSQL's family lock (ADR-0027).
+      // It does not serialize the other writers of the stores they share: a
+      // claim taken, a lease that lapsed, an input queued, another Router's
+      // events. So a failed transaction undoes exactly its own
       // writes, newest first, and whatever others committed meanwhile stays.
       // Ids and event sequence numbers are not handed out again, as
       // PostgreSQL sequences are not: another writer may have seen them.
