@@ -1,5 +1,7 @@
 export type { SandboxActivity, SandboxBindingFacts, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore, UnsettledBinding } from './interfaces/sandbox-lifecycle-store.js';
 export { PgSandboxLifecycleStore } from './postgres/sandbox-lifecycle-store.js';
+export type { Leadership } from './interfaces/leadership.js';
+export { PgAdvisoryLeadership } from './postgres/advisory-leadership.js';
 export type {
   Agent,
   AgentToolConfig,

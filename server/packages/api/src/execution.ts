@@ -1,7 +1,8 @@
 import { SessionRouter } from "@oma-server/session-router";
 import { DefaultSandboxManager, DefaultTurnSandboxes, E2BSandboxClient, SandboxSweeper, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
-import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
+import { hostname } from "node:os";
+import { PgAdvisoryLeadership, PgSessionCleanupStore, pgConfigFromEnv, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
 import { runtimeAdapters } from "./lib/runtime-adapters.js";
@@ -85,14 +86,18 @@ export async function startExecution(deps: PgStores & {
   await dispatch.start();
   const loops = new LoopScheduler({ loopStore: deps.loopStore, sessionRouter: router, pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000) });
   loops.start();
-  // Only Runners sweep their environment's Sandboxes (ADR-0023): a round every
-  // 10 minutes ± 2, the first at a random point, each written as one
-  // `sandbox_sweep` log line. Shutdown stops it before its next action. It
-  // kills a Sandbox a binding records by reclaiming the binding through the
-  // Runner's Sandbox Manager, as termination does.
+  // Only Runners sweep their environment's Sandboxes (ADR-0023), and of them
+  // the one that leads (ADR-0026): every 10 minutes ± 2, the first at a random
+  // point, each Runner asks for the lead, and the leader's rounds are each
+  // written as one `sandbox_sweep` log line. Shutdown stops it before its next
+  // action and gives the lead up. It kills a Sandbox a binding records by
+  // reclaiming the binding through the Runner's Sandbox Manager, as
+  // termination does. The lead is an advisory lock on a connection of its
+  // own, outside the Runner's pool, named after the Pod in pg_stat_activity.
   const sweeper = native && sandboxManager ? new SandboxSweeper({
     client: native.client, facts: native.lifecycle, bindings: deps.delegationStore, manager: sandboxManager,
     environment: native.environment, sandboxSignals: native.hints,
+    leadership: new PgAdvisoryLeadership(pgConfigFromEnv(), "sandbox_sweeper", `oma-sandbox-sweeper ${process.env.POD_NAME || hostname()}`),
   }) : undefined;
   sweeper?.start();
   return { router, ready: () => dispatch.ready, stop: async () => { platformSecrets.stop(); await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };
