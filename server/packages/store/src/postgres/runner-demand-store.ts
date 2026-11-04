@@ -6,14 +6,17 @@ import type { Pool } from "./connection.js";
  * held on, whatever is queued behind it.
  */
 export interface RunnerDemand {
-  /** `executing + ready`: the Turns that occupy, or wait for, a Runner slot. */
+  /** `executing + ready`: the Turns that occupy, or wait for, a place on a Runner. */
   demand: number;
   /** Heads under a live lease that are not in a synchronous wait, Child Sessions included. */
   executing: number;
   /**
    * Heads under a live lease whose Turn waits synchronously for a Delegation
    * Result. A Runner holds their claim but does not count them against its
-   * Runner Capacity, so neither does the demand.
+   * Runner Capacity, so neither does the demand. The database records no
+   * other in-flight call, so a Turn that also runs another tool beside its
+   * wait counts here though its Runner counts it as executing: a small
+   * under-count accepted for a demand read in one statement (ADR-0026).
    */
   syncWaiting: number;
   /** Heads no live lease holds, of Sessions not terminated: input waiting for a Runner. */

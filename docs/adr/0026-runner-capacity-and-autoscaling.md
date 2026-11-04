@@ -132,6 +132,11 @@ the Metrics API scaler, reading the API's internal demand endpoint:
   lease, Sessions with several inputs once, terminated Sessions not at all.
   *Sync waiting*, a live head with a `delegation_waits` row of status
   `waiting` for that input, is reported but is not demand: it holds no place.
+  The database does not record the Turn's other in-flight calls, so a Turn
+  that waits while it also runs another tool (bash beside an `Agent` call)
+  counts as sync waiting although its Runner counts it as executing: a small
+  under-count accepted for a demand read in one statement, which the place
+  between C and N absorbs.
   `sessions.status` is not used; it does not say whether a Turn is running.
 - **Target** C = 40 per Runner, below N = 50: the place between them absorbs
   claim skew and the children that bypass N. Replicas = ⌈D / C⌉, at least 2,
@@ -139,16 +144,20 @@ the Metrics API scaler, reading the API's internal demand endpoint:
 - **Scale-up** adds at most 10 Pods per 15 s, with no stabilization window.
 - **Scale-down** waits for a 600-second stabilization window and removes at
   most 2 Pods per minute.
-- **Fallback.** After 3 consecutive failed metric queries KEDA uses its
-  fallback with behaviour `currentReplicasIfHigher` and fallback replicas equal
-  to the minimum: an unreadable demand never scales the fleet in.
+- **Fallback.** With `failureThreshold: 3`, KEDA uses its fallback once more
+  than 3 consecutive metric queries have failed, with behaviour
+  `currentReplicasIfHigher` and fallback replicas equal to the minimum. Before
+  that the HPA has no metric and keeps the replicas it has, so an unreadable
+  demand never scales the fleet in.
 
 The endpoint is `GET /internal/runner-demand` on the API process, registered
 outside `API_BASE_PATH`. The public Ingress routes only `/api` to the API, so
 the endpoint is reachable only inside the cluster. It requires
 `Authorization: Bearer <RUNNER_DEMAND_TOKEN>` (Secret `oma-runner-demand`, key
 `token`; the Secret is shared with KEDA's TriggerAuthentication), and with no
-token configured it is not served. It answers
+token configured it is not served. The token is read trimmed of surrounding
+whitespace; one a Bearer header cannot carry is logged and not served, and
+the API starts regardless. It answers
 `{ demand, executing, syncWaiting, ready, observedAt }` from a query run for
 each request, never cached, with a 5-second database timeout. A failed query
 answers 503 and never 0: a 0 would read as no demand and scale the fleet to its

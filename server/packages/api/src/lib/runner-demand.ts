@@ -17,6 +17,7 @@ export interface RunnerDemandRoutesOptions {
   token: string | undefined;
   reader: { read(timeoutMs: number): Promise<RunnerDemand> };
   timeoutMs?: number;
+  log?: Pick<Console, "error">;
 }
 
 /**
@@ -27,13 +28,20 @@ export interface RunnerDemandRoutesOptions {
  * current replicas, where a 0 would scale the Runners down under load.
  *
  * Undefined without a token: an environment that has not provisioned the
- * Secret does not serve the demand at all.
+ * Secret does not serve the demand at all. Nor does one whose token no
+ * request can present, which would fail every scrape: it is logged, and the
+ * API starts regardless, since KEDA keeps the replicas it has when the demand
+ * is not served. A Secret's surrounding whitespace (a trailing newline) is
+ * not part of the token.
  */
 export function runnerDemandRoutes(options: RunnerDemandRoutesOptions): Hono | undefined {
-  const { token, reader, timeoutMs = RUNNER_DEMAND_TIMEOUT_MS } = options;
+  const { reader, timeoutMs = RUNNER_DEMAND_TIMEOUT_MS, log = console } = options;
+  const token = options.token?.trim();
   if (!token) return undefined;
-  // A token no request can present would fail every scrape as a 400.
-  if (!BEARER_TOKEN.test(token)) throw new Error("RUNNER_DEMAND_TOKEN must be a Bearer token: letters, digits and -._~+/ only");
+  if (!BEARER_TOKEN.test(token)) {
+    log.error("RUNNER_DEMAND_TOKEN is not a Bearer token (letters, digits and -._~+/ only): the Runner demand is not served");
+    return undefined;
+  }
   const app = new Hono();
   app.get(RUNNER_DEMAND_PATH, bearerAuth({ token }), async (c) => {
     try {

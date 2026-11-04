@@ -73,8 +73,22 @@ describe("GET /internal/runner-demand", () => {
     expect((await apiProcess(undefined).request(RUNNER_DEMAND_PATH, { headers: auth })).status).toBe(404);
   });
 
-  it("refuses at startup a token Bearer authentication cannot carry", () => {
-    expect(() => runnerDemandRoutes({ token: "two words", reader: reader() })).toThrow(/RUNNER_DEMAND_TOKEN/);
+  it("serves a token whose Secret ends in a newline, trimmed", async () => {
+    const app = apiProcess(runnerDemandRoutes({ token: `  ${token}\n`, reader: reader() }));
+    expect((await app.request(RUNNER_DEMAND_PATH, { headers: auth })).status).toBe(200);
+  });
+
+  it("does not serve, and does not stop the API, with a token Bearer authentication cannot carry", async () => {
+    const logged: unknown[][] = [];
+    const log = { error: (...args: unknown[]) => { logged.push(args); } };
+    for (const invalid of ["two words", "   ", "\n"]) {
+      expect(runnerDemandRoutes({ token: invalid, reader: reader(), log })).toBeUndefined();
+    }
+    // One line for each token that could not be served; the blank ones are unset.
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0][0])).toMatch(/RUNNER_DEMAND_TOKEN/);
+    delete process.env.API_BASE_PATH;
+    expect((await apiProcess(undefined).request(RUNNER_DEMAND_PATH, { headers: auth })).status).toBe(404);
   });
 
   it("is reachable only outside the public API prefix", async () => {
