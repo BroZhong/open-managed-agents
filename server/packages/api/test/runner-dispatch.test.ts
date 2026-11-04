@@ -17,7 +17,7 @@ class Signals implements SessionSignals {
 }
 
 describe("RunnerDispatch", () => {
-  it("logs one runner_capacity line a minute with the Turns the Router executes and its free slots (ADR-0026)", async () => {
+  it("logs one runner_capacity line a minute with the Turns the Router executes and its free places (ADR-0026)", async () => {
     vi.useFakeTimers();
     try {
       const router = {
@@ -83,6 +83,35 @@ describe("RunnerDispatch", () => {
     expect(router.handleNewEvent).toHaveBeenCalledTimes(1);
     // A hint costs this Runner no lookup: only the owner's Router acts on it.
     expect(sessions.getById).toHaveBeenCalledTimes(1);
+    await dispatch.stop();
+  });
+
+  it("hands the Router one more wake once a drain it started ends, for the wakes that arrived meanwhile: one of them may be input the drain's last claim missed", async () => {
+    const signals = new Signals();
+    let finish!: () => void;
+    const drains: Promise<void>[] = [new Promise<void>((resolve) => { finish = resolve; })];
+    const router = {
+      handleNewEvent: vi.fn(() => drains.shift() ?? Promise.resolve()),
+      checkNow: vi.fn(),
+      recoverPendingEvents: vi.fn(async () => ({ recovered: [], discarded: [], failed: [] })),
+    };
+    const sessions = { getById: vi.fn(async (id: string) => ({ id, status: "running", agent: {} })) };
+    const dispatch = new RunnerDispatch({
+      router: router as unknown as SessionRouter, sessions: sessions as unknown as SessionStore, signals, scanIntervalMs: 60_000,
+    });
+    await dispatch.start();
+    signals.publish({ sessionId: "sess_1", kind: "wake" });
+    await vi.waitFor(() => expect(router.handleNewEvent).toHaveBeenCalledTimes(1));
+    signals.publish({ sessionId: "sess_1", kind: "wake" });
+    signals.publish({ sessionId: "sess_1", kind: "wake" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(router.handleNewEvent).toHaveBeenCalledTimes(1);
+
+    finish();
+    await vi.waitFor(() => expect(router.handleNewEvent).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Coalesced: the two wakes it held back become one.
+    expect(router.handleNewEvent).toHaveBeenCalledTimes(2);
     await dispatch.stop();
   });
 

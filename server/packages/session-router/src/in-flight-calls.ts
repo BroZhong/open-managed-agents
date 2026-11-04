@@ -5,13 +5,13 @@ import { presentEvent } from "@oma-server/store";
  * and which of them hold a durable delegation wait (#330, ADR-0026).
  *
  * A Turn whose every such call waits on a Child Session executes nothing
- * itself: it gives up its slot of the Runner Capacity, and a Runner that
+ * itself: it gives up its place in the Runner Capacity, and a Runner that
  * shuts down hands it over at once, since the next owner resumes each wait
  * from its record. The judgement is of committed state, not of what still
  * runs: Pi commits the results of parallel calls together once the last
  * one ends, so a call that finished beside a wait is uncommitted until the
  * wait ends too, and a takeover would report it as of unknown outcome. Such
- * a Turn keeps its slot and hands over at its next model request.
+ * a Turn keeps its place and hands over at its next model request.
  */
 export class InFlightCalls {
   /** By call id: whether the call holds a durable wait. */

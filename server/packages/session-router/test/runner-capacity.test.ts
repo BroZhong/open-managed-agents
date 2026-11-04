@@ -10,7 +10,7 @@ import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js"
 /**
  * Runner Capacity (#328, ADR-0026): a Runner claims a top-level Session's
  * input only while fewer than N Turns execute on it, always claims a Child
- * Session's, and fills a freed slot with the oldest top-level head it left
+ * Session's, and fills a freed place with the oldest top-level head it left
  * at once, not at the next pending scan.
  */
 
@@ -68,7 +68,7 @@ async function harness(options: { sandboxed?: boolean } = {}) {
 }
 
 describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
-  it("N=3 and ten top-level Sessions at once: never more than three execute, and the rest run in the order they arrived, each as a slot frees, without a pending scan", async () => {
+  it("N=3 and ten top-level Sessions at once: never more than three execute, and the rest run in the order they arrived, each as a place frees, without a pending scan", async () => {
     const h = await harness();
     const sessions = [];
     for (let i = 0; i < 10; i++) sessions.push(await h.createSession());
@@ -102,7 +102,7 @@ describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
     expect(h.errors).toEqual([]);
   });
 
-  it("a full Runner ignores the wake of a top-level Session, and claims it the moment a slot frees, not at the next pending scan", async () => {
+  it("a full Runner ignores the wake of a top-level Session, and claims it the moment a place frees, not at the next pending scan", async () => {
     const h = await harness();
     const [busy, waiting] = [await h.createSession(), await h.createSession()];
     const release = gate();
@@ -161,7 +161,7 @@ describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
     await h.enqueue(parent.id, "delegate");
     void router.handleNewEvent(parent.id, h.agent, parent);
     await until(() => ran.includes("child"));
-    // The parent holds the only slot while its child runs beyond it.
+    // The parent holds the only place while its child runs beyond it.
     await h.enqueue(other.id);
     void router.handleNewEvent(other.id, h.agent, other);
     await until(() => h.idle(parent.id));
@@ -205,7 +205,7 @@ describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
     expect(h.errors).toEqual([]);
   });
 
-  it("N=1: a parent that only waits on its child frees its slot for another top-level Session, and continues beyond N once its wait ends (#330)", async () => {
+  it("N=1: a parent that only waits on its child frees its place for another top-level Session, and continues beyond N once its wait ends (#330)", async () => {
     const h = await harness({ sandboxed: true });
     const parent = await h.createSession();
     const other = await h.createSession();
@@ -264,6 +264,120 @@ describe("Runner Capacity admits top-level Sessions below N (#328)", () => {
     otherDone.open();
     await until(() => h.idle(other.id));
     expect(a.capacityReport()).toEqual({ capacity: 1, executing: 0, syncWaiting: 0, free: 1 });
+    expect(h.scans).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("N=1: a Session's next input is admitted again, so a resumed waiter beyond N keeps this Runner from claiming it until the Runner is below N", async () => {
+    const h = await harness({ sandboxed: true });
+    const parent = await h.createSession();
+    const other = await h.createSession();
+    const delegateNow = gate();
+    const childAnswer = gate();
+    const parentDone = gate();
+    const otherDone = gate();
+    const ran: string[] = [];
+    const adapter: Adapter = {
+      async run(input) {
+        const write = journalWriter(input);
+        if (input.execution?.isChild) {
+          await childAnswer.opened;
+          await answer(input, "child answer");
+          return "finished";
+        }
+        if (input.sessionId === other.id) {
+          ran.push(`other-${ran.filter((name) => name.startsWith("other")).length + 1}`);
+          if (ran.length < 4) await otherDone.opened;
+          await answer(input);
+          return "finished";
+        }
+        ran.push("parent");
+        await delegateNow.opened;
+        await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
+        await write(event("agent.tool_use", { toolUseId: "call_agent", name: "Agent", input: { prompt: "child" } }));
+        const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "call_agent" });
+        await write(event("agent.tool_result", { toolUseId: "call_agent", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }));
+        await parentDone.opened;
+        await answer(input, "parent answer");
+        return "finished";
+      },
+    };
+    // The child runs on another Runner; this Runner's wakes for the other
+    // Session are recorded, not delivered, so only this Runner can claim it.
+    const b = h.start(adapter, { pendingClaimOwnerId: "runner-b", wakeSession: () => {} });
+    const wakes: string[] = [];
+    const a = h.start(adapter, { capacity: 1, wakeSession: (sessionId) => {
+      wakes.push(sessionId);
+      if (sessionId !== other.id) void h.stores.sessionStore.getById(sessionId).then((session) => session && b.handleNewEvent(sessionId, session.agent, session));
+    } });
+    await h.enqueue(parent.id, "delegate");
+    void a.handleNewEvent(parent.id, h.agent, parent);
+    await until(() => ran.includes("parent"));
+    await h.enqueue(other.id, "first");
+    await h.enqueue(other.id, "second");
+    // Full: refused while the parent runs.
+    await a.handleNewEvent(other.id, h.agent, other);
+    expect(ran).toEqual(["parent"]);
+    delegateNow.open();
+    // The parent only waits, so the other Session takes its place.
+    await until(() => ran.includes("other-1"));
+    childAnswer.open();
+    // The parent resumes beyond N: two execute on N=1.
+    await until(() => a.capacityReport().executing === 2);
+    otherDone.open();
+    await until(() => wakes.includes(other.id));
+    await sleep(50);
+    // The other Session's second input is refused while the parent runs, and
+    // left to the other Runners with a wake.
+    expect(ran).toEqual(["parent", "other-1"]);
+    expect(a.capacityReport()).toEqual({ capacity: 1, executing: 1, syncWaiting: 0, free: 0 });
+    parentDone.open();
+    // The parent's place, freed, goes to it at once.
+    await until(() => h.idle(other.id));
+    expect(ran).toEqual(["parent", "other-1", "other-2"]);
+    expect(h.scans).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("a freed place passes over a head whose claim takes nothing to the next one at once, and tries each head once a pass", async () => {
+    const h = await harness();
+    const [busy, lost, locked, next] = [await h.createSession(), await h.createSession(), await h.createSession(), await h.createSession()];
+    const release = gate();
+    const started: string[] = [];
+    const router = h.start({
+      async run(input) {
+        started.push(input.sessionId);
+        if (input.sessionId === busy.id) await release.opened;
+        await answer(input);
+        return "finished";
+      },
+    }, { capacity: 1 });
+    await h.enqueue(busy.id);
+    void router.handleNewEvent(busy.id, h.agent, busy);
+    await until(() => started.length === 1);
+    for (const session of [lost, locked, next]) await h.enqueue(session.id);
+    for (const session of [lost, locked, next]) await router.handleNewEvent(session.id, h.agent, session);
+    expect(started).toEqual([busy.id]);
+
+    // Listed as claimable, the first head is taken by another Runner as this
+    // one claims it, and the second is held by another transaction throughout.
+    const claims: string[] = [];
+    const claim = h.stores.pendingEventStore.claim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.claim = async (sessionId, owner, leaseMs) => {
+      claims.push(sessionId);
+      if (sessionId === locked.id) return null;
+      if (sessionId === lost.id && owner === "runner-a") await claim(sessionId, "runner-z", 60_000);
+      return claim(sessionId, owner, leaseMs);
+    };
+    release.open();
+    await until(() => h.idle(next.id));
+    // Long enough for claim retries, had any been scheduled.
+    await sleep(100);
+    expect(started).toEqual([busy.id, next.id]);
+    // The busy Session's last, empty claim; one claim of each head in
+    // arrival order; the next head's Turn and its empty claim. The head
+    // another transaction holds is not claimed again.
+    expect(claims).toEqual([busy.id, lost.id, locked.id, next.id, next.id]);
     expect(h.scans).toEqual([]);
     expect(h.errors).toEqual([]);
   });

@@ -2,7 +2,7 @@ import type { SessionRouter } from "@oma-server/session-router";
 import type { SessionStore } from "@oma-server/store";
 import type { SessionSignals } from "@oma-server/redis";
 
-/** How often a Runner logs its executing Turns and free slots (ADR-0026). */
+/** How often a Runner logs its executing Turns and free places (ADR-0026). */
 const CAPACITY_LOG_INTERVAL_MS = 60_000;
 
 /** Notifications accelerate work; the independent PG scan guarantees discovery. */
@@ -14,6 +14,8 @@ export class RunnerDispatch {
   private cleaning?: Promise<void>;
   private lastScan = 0;
   private readonly waking = new Set<string>();
+  /** Sessions woken again while a drain a wake started still ran. */
+  private readonly rewake = new Set<string>();
   constructor(private readonly deps: {
     router: SessionRouter; sessions: SessionStore; signals: SessionSignals;
     scanIntervalMs?: number; cleanup?: () => Promise<void>;
@@ -40,7 +42,7 @@ export class RunnerDispatch {
     this.timer = setInterval(() => { void this.scan(); }, this.interval);
     this.timer.unref?.();
     // One `runner_capacity` line a minute: the Turns this Runner executes and
-    // the slots it has left below its Runner Capacity.
+    // the places it has left below its Runner Capacity.
     this.capacityTimer = setInterval(() => this.logCapacity(), this.deps.capacityLogIntervalMs ?? CAPACITY_LOG_INTERVAL_MS);
     this.capacityTimer.unref?.();
   }
@@ -48,15 +50,24 @@ export class RunnerDispatch {
     (this.deps.logger ?? console).info(JSON.stringify({ msg: "runner_capacity",
       ...(this.deps.owner ? { owner: this.deps.owner } : {}), ...this.deps.router.capacityReport() }));
   }
+  /**
+   * A drain a wake started holds its Session here for its whole Turn, so
+   * wakes for the Session meanwhile cost no read each. They are not dropped:
+   * one of them may be for input that arrived after the drain's last claim,
+   * so the drain's end is followed by one more wake for all of them.
+   */
   private wake(sessionId: string): void {
-    if (this.waking.has(sessionId)) return;
+    if (this.waking.has(sessionId)) { this.rewake.add(sessionId); return; }
     this.waking.add(sessionId);
     void this.deps.sessions.getById(sessionId).then(async session => {
       if (session && session.status !== "terminated") await this.deps.router.handleNewEvent(sessionId, session.agent, session);
       // Termination is discovered by durable cleanup scanning, while PG fences
       // the active owner's heartbeat independently of Redis availability.
     }).catch(error => console.error("Runner wake failed:", error))
-      .finally(() => this.waking.delete(sessionId));
+      .finally(() => {
+        this.waking.delete(sessionId);
+        if (this.rewake.delete(sessionId) && !this.stopped) this.wake(sessionId);
+      });
   }
   private scan(): Promise<void> {
     if (this.scanning) return this.scanning;

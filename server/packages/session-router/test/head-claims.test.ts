@@ -68,6 +68,30 @@ describe("a Router's claims of Session heads (#325)", () => {
     expect(h.errors).toEqual([]);
   });
 
+  it("a drain that emptied its queue reads its head once more, so input that arrived after its last claim, with no wake, runs without the scan", async () => {
+    const h = await harness();
+    const session = await h.createSession();
+    await h.enqueue(session.id);
+    // The input arrives the moment the drain's last claim found the queue
+    // empty, and its wake is lost.
+    let claims = 0;
+    const claim = h.stores.pendingEventStore.claim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.claim = async (sessionId, owner, leaseMs) => {
+      const claimed = await claim(sessionId, owner, leaseMs);
+      if (++claims === 2) await h.enqueue(sessionId);
+      return claimed;
+    };
+    const reads: string[] = [];
+    const headClaimable = h.stores.pendingEventStore.headClaimable.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.headClaimable = async (sessionId) => { reads.push(sessionId); return headClaimable(sessionId); };
+
+    await h.router.handleNewEvent(session.id, h.agent);
+    await until(() => h.ran.length === 2 && h.idle(session.id));
+    expect(h.ran).toEqual([session.id, session.id]);
+    expect(reads.length).toBeGreaterThanOrEqual(1);
+    expect(h.errors).toEqual([]);
+  });
+
   it("the pending scan claims the Sessions' heads in the order they arrived", async () => {
     const h = await harness();
     const sessions = [];
