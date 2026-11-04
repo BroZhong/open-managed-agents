@@ -4,7 +4,7 @@ import type { SessionStore } from "./interfaces/session-store.js";
 import type { PendingEventStore, PendingEventFence } from "./interfaces/pending-event-store.js";
 import type { EventLogStoreAppendInput } from "./interfaces/event-log-store.js";
 import type { Session, StoredEvent } from "./types.js";
-import { PendingEventClaimLostError } from "./errors.js";
+import { DelegationLimitReached, PendingEventClaimLostError } from "./errors.js";
 
 export type DelegationTable = "executions" | "waits" | "commands" | "resource_uses";
 export type DelegationRecord = DelegationExecution | DelegationWait | DelegationCommand | ResourceUseLease;
@@ -117,6 +117,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     if (!input.prompt.trim() || !Number.isInteger(input.maxSteps) || input.maxSteps < 1 || input.maxSteps > 1000) throw new Error("Invalid delegation prompt or step budget");
     if (input.mode !== "sync" && input.mode !== "async") throw new Error("Invalid delegation mode");
     if (typeof input.parentModel !== "string" || !input.parentModel.trim()) throw new Error("Resolved parent model is required");
+    if (!Number.isInteger(input.maxConcurrent) || input.maxConcurrent < 1) throw new Error("Invalid delegation concurrency limit");
     return this.transaction(async (tx) => {
       await tx.assertFence(input.callerSessionId, fence);
       const parent = await tx.sessions.getById(input.callerSessionId);
@@ -124,6 +125,16 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       if (parent.delegation) throw new Error("Nested delegation is not supported");
       const existing = (await tx.read<DelegationExecution>("executions", callerFilter(input)))[0];
       if (existing) return existing;
+      // Admission (ADR-0027): the parent's unfinished executions, queued or
+      // running, are counted under the coordination lock, so concurrent calls
+      // cannot both take the last place. A running one whose owner was lost
+      // still counts: its takeover continues it. Beyond the limit the call is
+      // refused, not queued, and creates nothing.
+      let unfinished = 0;
+      for (const status of ["queued", "running"]) {
+        unfinished += (await tx.read<DelegationExecution>("executions", { tenantId: input.tenantId, callerSessionId: input.callerSessionId, status })).length;
+      }
+      if (unfinished >= input.maxConcurrent) throw new DelegationLimitReached(input.maxConcurrent);
       let child;
       if (input.resume) {
         if (!await this.accessible(tx, input.tenantId, input.callerSessionId, input.resume)) throw new Error("Child Session not found or not accessible");
@@ -172,8 +183,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
   }
   getByPendingEventId(pendingEventId: string) { return this.transaction(async (tx) => (await tx.read<DelegationExecution>("executions", { pendingEventId }))[0] ?? null); }
   list(tenantId: string, callerSessionId: string) { return this.listExecutions(tenantId, { callerSessionId, limit: 500 }); }
-  startExecution(executionId: string, fence: PendingEventFence, turnId: string, effectiveConfig: Record<string, unknown>, maxConcurrent: number) {
-    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) throw new Error("Invalid delegation concurrency quota");
+  startExecution(executionId: string, fence: PendingEventFence, turnId: string, effectiveConfig: Record<string, unknown>) {
     return this.transaction(async (tx) => {
       const execution = await this.execution(tx, executionId);
       await tx.assertFence(execution.childId, fence);
@@ -183,17 +193,15 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         if (execution.ownerId === fence.ownerId && execution.generation === fence.generation) return execution;
         // The fence holds, so the owner recorded here is gone: lost (its lease
         // expired) or handed over (it released the claim). This claim
-        // continues its Turn in the slot it already occupies (ADR-0021).
+        // continues its Turn (ADR-0021).
         // Committed work is not run again; the log says where it stopped.
         await this.putResourceUse(tx, execution, fence);
         Object.assign(execution, { turnId, ownerId: fence.ownerId, generation: fence.generation, updatedAt: new Date().toISOString() });
         await tx.put("executions", execution.id, execution);
         return execution;
       }
-      // A running sibling holds its slot until it ends, also while its owner
-      // is lost: its own Session's takeover continues it.
-      const running = await tx.read<DelegationExecution>("executions", { tenantId: execution.tenantId, callerSessionId: execution.callerSessionId, status: "running" });
-      if (running.length >= maxConcurrent) return null;
+      // Admitted at acceptance (ADR-0027): a claimed queued execution starts,
+      // whatever its siblings run.
       await this.putResourceUse(tx, execution, fence);
       const { maxModelSteps: _legacySteps, ...configuration } = effectiveConfig;
       Object.assign(execution, { status: "running", turnId, effectiveConfig: { ...configuration, maxSteps: execution.maxSteps }, ownerId: fence.ownerId, generation: fence.generation, updatedAt: new Date().toISOString() });
@@ -372,7 +380,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         await tx.remove("resource_uses", use.pendingEventId);
       }
       // A queued accepted child still depends on the same Sandbox (e.g.
-      // parent-created /tmp inputs), even before it can obtain an execution slot.
+      // parent-created /tmp inputs), even before its input is claimed.
       for (const execution of await tx.read<DelegationExecution>("executions", { status: "queued" })) {
         const child = await tx.sessions.getById(execution.childId);
         if (child?.status !== "terminated" && child?.delegation?.sandboxSessionId === sandboxSessionId) return true;

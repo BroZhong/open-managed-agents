@@ -1,5 +1,5 @@
 import { describe, beforeEach, afterAll, it, expect } from "vitest";
-import { createPgStores, PgDelegationStore, type DelegationAcceptInput, type PendingEventFence, type DelegationExecution, type PgStores } from "../src/index.js";
+import { createPgStores, PgDelegationStore, DelegationLimitReached, type DelegationAcceptInput, type PendingEventFence, type DelegationExecution, type PgStores } from "../src/index.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
 describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real PostgreSQL", () => {
@@ -15,13 +15,13 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
     const claim = (await stores.pendingEventStore.claim(parent.id, "parent", 60000))!;
     parentFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
-    caller = { tenantId: "tenant", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool", mode: "async", prompt: "task", parentModel: "provider/parent-model", maxSteps: 30, sandboxSessionId: parent.id };
+    caller = { tenantId: "tenant", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool", mode: "async", prompt: "task", parentModel: "provider/parent-model", maxSteps: 30, maxConcurrent: 4, sandboxSessionId: parent.id };
   });
   afterAll(async () => { await harness?.close(); });
   async function start(child: DelegationExecution) {
     const claim = (await stores.pendingEventStore.claim(child.childId, "child", 60000))!;
     const fence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
-    await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
+    await stores.delegationStore.startExecution(child.id, fence, "child-turn", {});
     return fence;
   }
   const outcome = (child: DelegationExecution) => ({ status: "completed" as const, reason: "finished", output: "done", trace: { sessionId: child.childId, turnId: "child-turn" } });
@@ -45,18 +45,20 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
       expect(await stores.delegationStore.list(caller.tenantId, caller.callerSessionId)).toEqual([]);
     } finally { await deletion.query("ROLLBACK"); deletion.release(); }
   });
-  it("serializes acceptance across independent store instances and admits only quota slots", async () => {
+  it("serializes acceptance across independent store instances and admits only the parent's limit (ADR-0027)", async () => {
     const other = new PgDelegationStore(harness.pool);
     const accepted = await Promise.all([stores.delegationStore.accept(caller, parentFence), other.accept(caller, parentFence), other.accept(caller, parentFence)]);
     expect(new Set(accepted.map((row) => row.id)).size).toBe(1);
     expect((await stores.sessionStore.list("tenant", { limit: 100 })).data).toHaveLength(2);
-    const two = await other.accept({ ...caller, callerToolUseId: "second" }, parentFence);
-    const claims = await Promise.all([accepted[0], two].map(async (child) => {
-      const claim = (await stores.pendingEventStore.claim(child.childId, "owner", 60000))!;
-      return { child, fence: { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation } };
-    }));
-    const started = await Promise.all(claims.map(({ child, fence }) => other.startExecution(child.id, fence, "turn", {}, 1)));
-    expect(started.filter(Boolean)).toHaveLength(1);
+    // Eight different calls race for the three places left of four.
+    const calls = Array.from({ length: 8 }, (_, index) => (index % 2 ? other : stores.delegationStore)
+      .accept({ ...caller, callerToolUseId: `call-${index}`, mode: index % 3 ? "async" : "sync" }, parentFence)
+      .then((execution) => execution.id, (error: Error) => error));
+    const outcomes = await Promise.all(calls);
+    expect(outcomes.filter((outcome) => typeof outcome === "string")).toHaveLength(3);
+    expect(outcomes.filter((outcome) => outcome instanceof DelegationLimitReached)).toHaveLength(5);
+    expect(await stores.delegationStore.list("tenant", caller.callerSessionId)).toHaveLength(4);
+    expect((await stores.sessionStore.list("tenant", { limit: 100 })).data).toHaveLength(5);
   });
   it("rolls back terminal plus parent event when pending callback insert fails", async () => {
     const child = await stores.delegationStore.accept(caller, parentFence); const fence = await start(child);
@@ -82,18 +84,16 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     const claim = (await stores.pendingEventStore.claim(child.childId, "new-owner", 60000))!;
     const newFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
     await expect(stores.delegationStore.finishExecution(child.id, oldFence, outcome(child))).rejects.toThrow();
-    expect(await stores.delegationStore.startExecution(child.id, newFence, "child-turn", {}, 4))
+    expect(await stores.delegationStore.startExecution(child.id, newFence, "child-turn", {}))
       .toMatchObject({ status: "running", turnId: "child-turn", ownerId: "new-owner", generation: newFence.generation });
     expect((await stores.pendingEventStore.listUnclaimed(caller.callerSessionId, 10)).filter((event) => event.type === "subagent.result")).toEqual([]);
     expect((await stores.delegationStore.finishExecution(child.id, newFence, outcome(child))).status).toBe("completed");
     expect((await stores.pendingEventStore.listUnclaimed(caller.callerSessionId, 10)).filter((event) => event.type === "subagent.result")).toHaveLength(1);
   });
-  it("C10 keeps a sibling with an expired owner in its slot, without ending it", async () => {
-    const lost = await stores.delegationStore.accept(caller, parentFence); await start(lost);
+  it("C10 counts a sibling with an expired owner against the limit, without ending it", async () => {
+    const lost = await stores.delegationStore.accept({ ...caller, maxConcurrent: 1 }, parentFence); await start(lost);
     await harness.pool.query("UPDATE pending_events SET claim_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1", [lost.pendingEventId]);
-    const queued = await stores.delegationStore.accept({ ...caller, callerToolUseId: "second" }, parentFence);
-    const claim = (await stores.pendingEventStore.claim(queued.childId, "child", 60000))!;
-    expect(await stores.delegationStore.startExecution(queued.id, { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation }, "turn", {}, 1)).toBeNull();
+    await expect(stores.delegationStore.accept({ ...caller, maxConcurrent: 1, callerToolUseId: "second" }, parentFence)).rejects.toThrow(DelegationLimitReached);
     expect((await stores.delegationStore.getExecution("tenant", lost.id))?.status).toBe("running");
     expect((await stores.eventLogStore.getEvents(caller.callerSessionId)).data).toEqual([]);
   });

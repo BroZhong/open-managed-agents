@@ -31,6 +31,11 @@ interface CoordinatorDeps {
   /** The owner of the Session's running Turn should re-read its durable state now. */
   check(sessionId: string): void;
   maxSteps: number;
+  /**
+   * The parent's limit of unfinished Delegation Executions: a call beyond it
+   * is refused with a tool error, never queued (ADR-0027).
+   */
+  maxConcurrent: number;
   /** Fallback poll of a synchronous wait, for a lost child-completion hint. */
   pollMs?: number;
 }
@@ -54,16 +59,6 @@ export class DelegationCoordinator {
   /** Re-read the executions a Session's running Turn waits on now. */
   recheckWaits(sessionId: string): void {
     for (const wakeup of this.waits.get(sessionId) ?? []) wakeup.notify();
-  }
-
-  /**
-   * An ended execution frees a slot of its parent's concurrency limit. Its
-   * queued siblings do not poll for one: wake them now.
-   */
-  async wakeChildrenWaitingForSlot(ended: DelegationExecution): Promise<void> {
-    for (const execution of await this.deps.store.list(ended.tenantId, ended.callerSessionId)) {
-      if (execution.status === "queued") this.deps.wake(execution.childId);
-    }
   }
 
   private caller(run: DelegationRun, toolUseId: string): DelegationCaller {
@@ -108,6 +103,9 @@ export class DelegationCoordinator {
           parentModel,
           thinking: input.thinking,
           maxSteps,
+          // Beyond it the store refuses the call; the tool error tells the
+          // model to wait for a child to finish (ADR-0027).
+          maxConcurrent: this.deps.maxConcurrent,
           apiKeyId: run.apiKeyId,
           sandboxSessionId: run.session.id,
           parentThinking: waitConfig(run).thinking,

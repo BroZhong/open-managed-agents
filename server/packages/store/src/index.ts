@@ -86,7 +86,7 @@ export type {
   PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
-export { PendingEventClaimLostError, SandboxBindingChanged } from "./errors.js";
+export { PendingEventClaimLostError, SandboxBindingChanged, DelegationLimitReached } from "./errors.js";
 
 export type {
   ApiKeyStore,

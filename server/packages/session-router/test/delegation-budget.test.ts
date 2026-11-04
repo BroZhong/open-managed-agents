@@ -14,7 +14,7 @@ describe("Host delegation budget", () => {
     const coordinator = new DelegationCoordinator({
       store: stores.delegationStore, pending: stores.pendingEventStore,
       sessions: stores.sessionStore,
-      wake() {}, check() {}, maxSteps: maximum,
+      wake() {}, check() {}, maxSteps: maximum, maxConcurrent: 4,
     });
     // Background delegations record nothing in the parent's journal.
     const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal,

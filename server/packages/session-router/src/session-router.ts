@@ -86,12 +86,6 @@ interface ActiveSessionRun {
    * Turn over as it stands: the handoff deadline of a shutdown (#254).
    */
   detach?: (reason: unknown) => void;
-  /**
-   * The drain released its input because its Child execution waits for a
-   * slot of the parent's concurrency limit. The sibling that frees one wakes
-   * it; the pending scan covers a lost wake.
-   */
-  waitingForSlot?: boolean;
 }
 
 class PendingLeaseLostError extends Error {
@@ -136,6 +130,10 @@ export interface SessionRouterDeps {
    */
   checkSession?: (sessionId: string) => void;
   delegationStore?: DelegationStore;
+  /**
+   * A parent's limit of unfinished Delegation Executions (default 4): the
+   * `Agent` call beyond it gets a tool error instead of a queued child (ADR-0027).
+   */
   maxConcurrentSubagents?: number;
   maxSubagentModelSteps?: number;
   eventLogStore: EventLogStore;
@@ -272,7 +270,6 @@ export class SessionRouter {
    * resolver answers is reported as of unknown outcome.
    */
   private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>>;
-  private readonly maxConcurrentSubagents: number;
   private readonly checkSession: (sessionId: string) => void;
   private readonly wakeSession?: (sessionId: string) => void;
   /**
@@ -284,15 +281,15 @@ export class SessionRouter {
 
   constructor(deps: SessionRouterDeps) {
     this.delegationStore = deps.delegationStore;
-    this.maxConcurrentSubagents = deps.maxConcurrentSubagents ?? 4;
-    if (!Number.isInteger(this.maxConcurrentSubagents) || this.maxConcurrentSubagents < 1 || this.maxConcurrentSubagents > 64) {
+    const maxConcurrent = deps.maxConcurrentSubagents ?? 4;
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 64) {
       throw new RangeError("maxConcurrentSubagents must be between 1 and 64");
     }
     const maxSteps = deps.maxSubagentModelSteps ?? 500;
     if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000) throw new RangeError("maxSubagentModelSteps must be between 1 and 1000");
     if (deps.delegationStore) this.delegations = new DelegationCoordinator({
       store: deps.delegationStore, pending: deps.pendingEventStore,
-      sessions: deps.sessionStore, maxSteps,
+      sessions: deps.sessionStore, maxSteps, maxConcurrent,
       check: (sessionId) => this.checkSession(sessionId),
       wake: (sessionId) => {
         if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
@@ -620,23 +617,20 @@ export class SessionRouter {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
       }
-      const wokenWhileActive = this.wakeRequested.delete(sessionId);
+      this.wakeRequested.delete(sessionId);
 
       // Always inspect the durable queue at handoff. This covers the original
       // empty→unlock lost wake, a preloaded tail after user interrupt, and a
       // claim/PG failure that must retry without waiting for a new request.
       // A head under a live claim is not retried: its owner drains the queue,
-      // and the pending scan finds it once a lost owner's lease expires. Nor is
-      // a child waiting for a slot, unless the wake of a freed slot arrived
-      // while this drain was still releasing its claim.
+      // and the pending scan finds it once a lost owner's lease expires.
       try {
         if (this.handingOff) {
           // What the drain left claimable, a Turn it handed over or the input
           // queued behind a Turn it completed, goes to the other Runners now
           // instead of at their next pending scan.
           if (await this.pendingEventStore.headClaimable(sessionId)) this.wakeSession?.(sessionId);
-        } else if (failed || ((!activeRun.waitingForSlot || wokenWhileActive) &&
-          await this.pendingEventStore.headClaimable(sessionId))) {
+        } else if (failed || await this.pendingEventStore.headClaimable(sessionId)) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
           this.resetClaimRetry(sessionId);
@@ -1054,8 +1048,6 @@ export class SessionRouter {
       // A synchronous wait on another Runner reads the result on the hint;
       // the local drain delivers an asynchronous result.
       this.checkSession(finished.callerSessionId);
-      void this.delegations?.wakeChildrenWaitingForSlot(finished)
-        .catch((error) => this.reportDrainError(finished.callerSessionId, error));
       const parent = await this.sessionStore.getById(finished.callerSessionId);
       if (parent && parent.status !== "terminated") {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
@@ -1311,13 +1303,7 @@ export class SessionRouter {
           { model: currentAgent.model, thinking: delegationExecution.thinking,
             runtime: currentAgent.runtime, maxModelSteps: delegationExecution.maxSteps,
             modelSource: delegationExecution.modelSource ?? (delegationExecution.model ? "override" : "agent") },
-          this.maxConcurrentSubagents,
         );
-        if (!started) {
-          await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
-          activeRun.waitingForSlot = true;
-          return;
-        }
         delegationExecution = started;
         heartbeat.execution = started;
         // Starting the execution is how this claim learns its state. One that

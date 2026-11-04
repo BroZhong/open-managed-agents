@@ -325,7 +325,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
       await activities.begin(activity);
       const child = await stores.delegationStore.accept({ tenantId: "test", callerSessionId: retained.id,
         callerTurnId: "parent-turn", callerToolUseId: "shared", prompt: "shared resource", mode: "async",
-        parentModel: "mock", maxSteps: 500, sandboxSessionId: retained.id }, activity.fence);
+        parentModel: "mock", maxSteps: 500, maxConcurrent: 4, sandboxSessionId: retained.id }, activity.fence);
       const childClaim = (await stores.pendingEventStore.claim(child.childId, "child-owner", 30_000))!;
       const childActivity = { bindingId: retained.id, sessionId: child.childId,
         fence: { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation } };

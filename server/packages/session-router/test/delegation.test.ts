@@ -8,7 +8,7 @@ import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
 import type { TurnJournal } from "../src/turn-journal.js";
-import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
+import { DelegationLimitReached, PendingEventClaimLostError, presentEvent } from "@oma-server/store";
 import { acceptInterrupt } from "./accept-interrupt.js";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
@@ -239,7 +239,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const child = (await h.stores.sessionStore.getById(childId))!;
     const coordinator = new DelegationCoordinator({ store: h.stores.delegationStore,
       pending: h.stores.pendingEventStore, sessions: h.stores.sessionStore,
-      wake() {}, check() {}, maxSteps: 30 });
+      wake() {}, check() {}, maxSteps: 30, maxConcurrent: 4 });
     expect(() => coordinator.capability({ session: child, turnId: "direct-child-turn",
       fence: { eventId: "not-issued", ownerId: "host", generation: 1 }, signal: new AbortController().signal, journal: {} as TurnJournal,
     })).toThrow("Child Sessions cannot receive delegation capabilities");
@@ -422,65 +422,101 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(h.errors).toEqual([]);
   });
 
-  it("bounds child concurrency while a queued child waited on by the parent can obtain a slot", async () => {
-    const firstGate = gate(); let active = 0; let maximum = 0; let parentTurns = 0;
-    const h = await harness({ async run(input) {
-      const write = journalWriter(input);
-      if (input.execution?.isChild) {
-        maximum = Math.max(maximum, ++active);
-        if (input.message.content[0].type === "text" && input.message.content[0].text === "first") await firstGate.promise;
-        await write(text("child done")); active--; return "finished";
-      }
-      if (++parentTurns > 1) { await write(text("callback")); return "finished"; }
-      const first = tool("first"); await write(first);
-      const accepted = await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first" });
-      const firstResult = result("first", accepted); await write(firstResult);
-      const second = tool("second"); await write(second);
-      const done = await input.subagents!.delegate({ prompt: "second", runInBackground: false }, { toolUseId: "second" });
-      await write(result("second", done)); await write(text("parent done"));
-      return "finished";
-    } }, { quota: 1 });
-    await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
-    await until(async () => (await h.stores.delegationStore.list("tenant", h.parent.id)).length === 2);
-    expect((await h.stores.delegationStore.list("tenant", h.parent.id)).map((e) => e.status).sort()).toEqual(["queued", "running"]);
-    firstGate.release(); await running; expect(await h.router.waitForIdle(4000)).toBe(true);
-    expect(maximum).toBe(1);
-    expect((await h.stores.delegationStore.list("tenant", h.parent.id)).every((e) => e.status === "completed")).toBe(true);
-    expect(h.errors).toEqual([]);
-  });
-  it("starts a queued synchronous child as soon as a sibling frees its slot, without polling for one", async () => {
-    const firstGate = gate(); let secondStartedAt = 0;
-    const h = await harness({ async run(input) {
-      const write = journalWriter(input);
-      if (input.execution?.isChild) {
-        const prompt = input.message.content[0].type === "text" ? input.message.content[0].text : "";
-        if (prompt === "first") await firstGate.promise;
-        else secondStartedAt = Date.now();
-        await write(text("child done")); return "finished";
-      }
-      if (input.message.source === "subagent_result") return "finished";
-      const first = tool("first"); await write(first);
-      await write(result("first", await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first" })));
-      const second = tool("second"); await write(second);
-      await write(result("second", await input.subagents!.delegate({ prompt: "second", runInBackground: false }, { toolUseId: "second" })));
-      return "finished";
-    } }, { quota: 1 });
-    // The production claim retry backoff: 100 ms doubling up to 5 s.
-    const router = h.makeRouter({ pendingClaimRetryMinMs: 100, pendingClaimRetryMaxMs: 5_000 });
-    await h.enqueue(); void router.handleNewEvent(h.parent.id, h.agent);
-    await until(async () => (await h.stores.delegationStore.list("tenant", h.parent.id)).map((e) => e.status).sort().join() === "queued,running");
-    // Each attempt claims, promotes and tries startExecution under the global
-    // delegation lock; a child waiting for a slot makes none until one frees.
-    const starts = vi.spyOn(h.stores.delegationStore, "startExecution");
-    await sleep(1_600);
-    expect(starts).not.toHaveBeenCalled();
+  describe("the parent's limit of unfinished subagents (ADR-0027)", () => {
+    /** A capability error, as the Pi tool returns it to the model. */
+    const refusal = (id: string, error: unknown) => event("agent.tool_result", { toolUseId: id,
+      content: [{ type: "text", text: (error as Error).message }], isError: true });
 
-    const releasedAt = Date.now();
-    firstGate.release();
-    await until(async () => secondStartedAt > 0);
-    expect(secondStartedAt - releasedAt).toBeLessThan(500);
-    expect(await router.waitForIdle(4000)).toBe(true);
-    expect(h.errors).toEqual([]);
+    it("refuses a fifth concurrent call with a tool error while the parent Turn and the other four run on", async () => {
+      const children = gate(); let running = 0; let mostRunning = 0;
+      const refused: unknown[] = [];
+      const ids = ["one", "two", "three", "four", "five"];
+      const h = await harness({ async run(input) {
+        const write = journalWriter(input);
+        if (input.execution?.isChild) {
+          mostRunning = Math.max(mostRunning, ++running);
+          await children.promise;
+          await write(text("child done")); running--; return "finished";
+        }
+        for (const id of ids) await write(tool(id));
+        const outcomes = await Promise.allSettled(ids.map((id) => input.subagents!.delegate({ prompt: id, runInBackground: false }, { toolUseId: id })
+          .catch((error: unknown) => { refused.push(error); throw error; })));
+        for (const [index, outcome] of outcomes.entries()) {
+          await write(outcome.status === "fulfilled" ? result(ids[index], outcome.value) : refusal(ids[index], outcome.reason));
+        }
+        await write(text("parent done"));
+        return "finished";
+      } });
+      await h.enqueue(); const parentTurn = h.router.handleNewEvent(h.parent.id, h.agent);
+      await until(async () => refused.length === 1 && running === 4);
+      expect(refused[0]).toBeInstanceOf(DelegationLimitReached);
+      expect((refused[0] as Error).message).toContain("4 unfinished subagents");
+      children.release(); await parentTurn; expect(await h.router.waitForIdle(4000)).toBe(true);
+      expect(mostRunning).toBe(4);
+      const executions = await h.stores.delegationStore.list("tenant", h.parent.id);
+      expect(executions.map((execution) => execution.status)).toEqual(Array(4).fill("completed"));
+      const log = await h.log();
+      const errors = log.filter((stored) => stored.type === "agent.tool_result" && (stored.data as { isError?: boolean }).isError);
+      expect(errors.map((stored) => (stored.data as { toolUseId: string }).toolUseId)).toEqual(ids.filter((id) => !executions.some((execution) => execution.callerToolUseId === id)));
+      expect(log.filter((stored) => stored.type === "session.turn_completed")).toHaveLength(1);
+      expect(log.some((stored) => stored.type === "agent.message" && JSON.stringify(stored.data).includes("parent done"))).toBe(true);
+      expect(h.errors).toEqual([]);
+    });
+
+    it("refuses background calls and resumes alike, and accepts again once a child has ended", async () => {
+      const childGate = gate(); const refused: unknown[] = [];
+      const h = await harness({ async run(input) {
+        const write = journalWriter(input);
+        if (input.execution?.isChild) { await childGate.promise; await write(text("child done")); return "finished"; }
+        if (input.message.source === "subagent_result") return "finished";
+        const refuse = async (id: string, call: Promise<unknown>) => {
+          await write(tool(id));
+          await write(await call.then((value) => result(id, value), (error: unknown) => { refused.push(error); return refusal(id, error); }));
+        };
+        await write(tool("first"));
+        const first = await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first" });
+        await write(result("first", first));
+        await refuse("second", input.subagents!.delegate({ prompt: "second", runInBackground: true }, { toolUseId: "second" }));
+        await refuse("resume", input.subagents!.delegate({ prompt: "again", resume: first.childId as string, runInBackground: true }, { toolUseId: "resume" }));
+        await refuse("sync", input.subagents!.delegate({ prompt: "third", runInBackground: false }, { toolUseId: "sync" }));
+        childGate.release();
+        // As the refusal advises: wait for the child to finish, then delegate again.
+        await write(tool("wait"));
+        await write(result("wait", await input.subagents!.getResult({ childId: first.childId as string, wait: true }, { toolUseId: "wait" })));
+        await write(tool("resume-2"));
+        await write(result("resume-2", await input.subagents!.delegate({ prompt: "again", resume: first.childId as string, runInBackground: false }, { toolUseId: "resume-2" })));
+        await write(text("parent done"));
+        return "finished";
+      } }, { quota: 1 });
+      await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+      expect(await h.router.waitForIdle(4000)).toBe(true);
+      expect(refused).toHaveLength(3);
+      for (const error of refused) expect(error).toBeInstanceOf(DelegationLimitReached);
+      const executions = await h.stores.delegationStore.list("tenant", h.parent.id);
+      expect(executions.map((execution) => [execution.callerToolUseId, execution.status]).sort()).toEqual([["first", "completed"], ["resume-2", "completed"]]);
+      expect(new Set(executions.map((execution) => execution.childId)).size).toBe(1);
+      expect(h.errors).toEqual([]);
+    });
+
+    it("starts every claimed queued child at once, also beyond the limit (input queued before ADR-0027)", async () => {
+      const children = gate(); let running = 0;
+      const h = await harness({ async run(input) {
+        running++; await children.promise; await journalWriter(input)(text("child done")); return "finished";
+      } }, { quota: 1 });
+      const pending = await h.enqueue();
+      const claim = (await h.stores.pendingEventStore.claim(h.parent.id, "parent-host", 30000))!;
+      const fence = { eventId: pending.id, ownerId: claim.ownerId, generation: claim.generation };
+      const queued = [];
+      for (const callerToolUseId of ["one", "two"]) queued.push(await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id,
+        callerTurnId: "turn", callerToolUseId, prompt: "child", mode: "async", parentModel: "test",
+        maxSteps: 30, maxConcurrent: 4, sandboxSessionId: h.parent.id }, fence));
+      for (const execution of queued) void h.router.handleNewEvent(execution.childId, h.agent);
+      await until(async () => running === 2);
+      expect((await h.stores.delegationStore.list("tenant", h.parent.id)).map((execution) => execution.status)).toEqual(["running", "running"]);
+      children.release();
+      await until(async () => (await h.stores.delegationStore.list("tenant", h.parent.id)).every((execution) => execution.status === "completed"));
+      expect(h.errors).toEqual([]);
+    });
   });
 
   it("finishes the parent first, keeps the shared Sandbox usable, and processes one durable asynchronous result", async () => {
@@ -689,7 +725,7 @@ describe("Host-owned delegation through the Session Router", () => {
       sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pending.id}`, pendingFence: fence });
     const execution = await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id,
       callerTurnId: `turn_${promoted.seq}_a1`, callerToolUseId: "call", prompt: "child", mode: "sync", parentModel: "test",
-      maxSteps: 30, sandboxSessionId: h.parent.id }, fence);
+      maxSteps: 30, maxConcurrent: 4, sandboxSessionId: h.parent.id }, fence);
     // An earlier Turn of the Child Session ended in an error; it is not this execution's.
     await h.stores.eventLogStore.append(execution.childId, { type: "session.error",
       data: { turnId: "earlier-turn", error: { code: "adapter_error", message: "an earlier Turn failed" } }, sessionThreadId: "sthr_primary" });
@@ -700,7 +736,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const input = (await h.stores.pendingEventStore.peek(execution.childId))!;
     await h.stores.eventLogStore.append(execution.childId, { type: input.type, data: input.data,
       sessionThreadId: "sthr_primary", idempotencyKey: `pending:${input.id}`, pendingFence: lostFence });
-    await h.stores.delegationStore.startExecution(execution.id, lostFence, "child-turn", {}, 4);
+    await h.stores.delegationStore.startExecution(execution.id, lostFence, "child-turn", {});
     await h.stores.eventLogStore.append(execution.childId, { type: "agent.context_start",
       data: { ...event("agent.context_start", { sdk: "pi@0.83.0" }), turnId: "child-turn" }, sessionThreadId: "sthr_primary", pendingFence: lostFence });
     await h.stores.pendingEventStore.releaseClaim(execution.childId, execution.pendingEventId, lostFence);
@@ -728,11 +764,11 @@ describe("Host-owned delegation through the Session Router", () => {
     const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
     const call = tool("finished-call");
     const caller = { tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "finished-call" };
-    const child = await h.stores.delegationStore.accept({ ...caller, prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30,
+    const child = await h.stores.delegationStore.accept({ ...caller, prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, maxConcurrent: 4,
       sandboxSessionId: h.parent.id }, fence);
     const childClaim = (await h.stores.pendingEventStore.claim(child.childId, "dead-host", 30000))!;
     const childFence = { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation };
-    await h.stores.delegationStore.startExecution(child.id, childFence, "child-turn", {}, 4);
+    await h.stores.delegationStore.startExecution(child.id, childFence, "child-turn", {});
     await h.stores.delegationStore.finishExecution(child.id, childFence, { status: "completed", output: "done", reason: "finished", trace: { sessionId: child.childId, turnId: "child-turn" } });
     await h.stores.pendingEventStore.ack(child.childId, child.pendingEventId, childFence);
     await h.stores.delegationStore.consumeResult(child.id, caller, fence, { type: "agent.tool_result",

@@ -62,6 +62,12 @@ export interface DelegationAcceptInput extends DelegationCaller {
   parentThinking?: string;
   thinking?: string;
   maxSteps: number;
+  /**
+   * The parent's limit of unfinished (queued or running) executions. A new
+   * call or resume beyond it is refused with {@link DelegationLimitReached}
+   * (ADR-0027); a repeated call is the execution it already accepted.
+   */
+  maxConcurrent: number;
   sandboxSessionId: string;
 }
 /**
@@ -239,8 +245,12 @@ export interface DelegationStore {
   get(tenantId: string, callerSessionId: string, childId: string, executionId?: string): Promise<DelegationExecution | null>;
   getByPendingEventId(pendingEventId: string): Promise<DelegationExecution | null>;
   list(tenantId: string, callerSessionId: string): Promise<DelegationExecution[]>;
-  /** Fenced + parent quota serialized. false means a durable queued input must wait. */
-  startExecution(executionId: string, fence: PendingEventFence, turnId: string, effectiveConfig: Record<string, unknown>, maxConcurrent: number): Promise<DelegationExecution | null>;
+  /**
+   * Fenced. A claimed queued execution always starts: admission happened at
+   * acceptance (ADR-0027). A running one is continued by the claim that took
+   * its input over; an ended one is returned as it ended.
+   */
+  startExecution(executionId: string, fence: PendingEventFence, turnId: string, effectiveConfig: Record<string, unknown>): Promise<DelegationExecution>;
   /** Merge the runtime-resolved model configuration under the live execution fence. */
   updateEffectiveConfig(executionId: string, fence: PendingEventFence, config: Record<string, unknown>): Promise<void>;
   /** Child terminal + parent notification event + async pending input commit together. */

@@ -36,10 +36,10 @@ async function lostWhileDelegating(calls: (child: { childId: string; executionId
 
   // A background delegation its Agent call made, running on a live Runner.
   const execution = await stores.delegationStore.accept({ ...caller("call_agent"), prompt: CHILD_TASK, mode: "async",
-    parentModel: "test", maxSteps: 30, sandboxSessionId: parent.id }, fence);
+    parentModel: "test", maxSteps: 30, maxConcurrent: 4, sandboxSessionId: parent.id }, fence);
   const childClaim = (await stores.pendingEventStore.claim(execution.childId, "live-runner", 600_000))!;
   const running = (await stores.delegationStore.startExecution(execution.id,
-    { eventId: execution.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation }, "child-turn", {}, 4))!;
+    { eventId: execution.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation }, "child-turn", {}))!;
   const child = { childId: execution.childId, executionId: execution.id };
 
   // Pi commits the message requesting the calls before it runs them.

@@ -165,8 +165,8 @@ export const PG_COSTS: Record<string, Cost> = {
   "delegationStore.releaseResourceUse": fixed(delegationTx(0, seq("SELECT", "delegation_resource_uses"), pk("DELETE", "delegation_resource_uses"))),
   // + per resource use and per queued execution of the binding
   "delegationStore.hasResourceUsers": fixed(delegationTx(0, seq("SELECT", "delegation_resource_uses"), ix("SELECT", "delegation_executions"))),
-  // + one ownsClaim per running sibling
-  "delegationStore.startExecution": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, ix("SELECT", "delegation_executions"),
+  // Admitted at acceptance (ADR-0027): no sibling read.
+  "delegationStore.startExecution": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE,
     ...TX_SESSION, st("INSERT ON CONFLICT", "delegation_resource_uses"), st("INSERT ON CONFLICT", "delegation_executions"))),
   "delegationStore.updateEffectiveConfig": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_executions"))),
   "delegationStore.finishExecution": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, ...TX_SESSION, ...TX_APPEND,
@@ -183,7 +183,10 @@ export const PG_COSTS: Record<string, Cost> = {
   "delegationStore.applyCommand": fixed(delegationTx(1, pk("SELECT", "delegation_commands"), EXECUTION_BY_ID, ...ASSERT_FENCE, ...TX_APPEND,
     st("INSERT ON CONFLICT", "delegation_commands"))),
   // The child's sequence read filters childId alone; its index leads with tenantId.
+  // The two caller reads after the identity read count the parent's queued
+  // and running executions against its limit (ADR-0027).
   "delegationStore.accept": fixed(delegationTx(1, ...ASSERT_FENCE, ...TX_SESSION, ix("SELECT", "delegation_executions"),
+    ix("SELECT", "delegation_executions"), ix("SELECT", "delegation_executions"),
     pk("SELECT FOR UPDATE", "workspaces"), st("INSERT", "sessions"), seq("SELECT", "delegation_executions"), st("INSERT", "pending_events"),
     st("INSERT ON CONFLICT", "delegation_executions"), st("INSERT ON CONFLICT", "delegation_waits"))),
 
