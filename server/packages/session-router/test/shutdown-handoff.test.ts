@@ -470,7 +470,7 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
     expect((await h.ofType("session.turn_resumed")).map((stored) => dataOf(stored).reason)).toEqual(["released"]);
   });
 
-  it("F4 shut down while a parent waits on a synchronous delegation: the wait is detached at the deadline and resumed by the other Runner with the child's real result", async () => {
+  it("F4 shut down while a parent waits on a synchronous delegation: the wait is handed over at once, not at the deadline, and resumed by the other Runner with the child's real result (#330)", async () => {
     const childStarted = gate();
     const childAnswer = gate();
     const parents: Array<{ turnId: string; resumed: boolean }> = [];
@@ -506,8 +506,11 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
     await childStarted.opened;
     const [execution] = await h.stores.delegationStore.list("tenant", h.session.id);
 
-    // The child's Turn is in its model request and the parent waits on it.
-    expect(await h.shutDown("runner-a", 30)).toBe(false);
+    // The child's Turn is in its model request and the parent waits on it:
+    // the parent goes now, long before the grace period ends.
+    const shutdownStarted = Date.now();
+    expect(await h.shutDown("runner-a", 10_000)).toBe(true);
+    expect(Date.now() - shutdownStarted).toBeLessThan(1_000);
     childAnswer.open();
     await until(() => h.idle());
     await until(() => h.idle(execution.childId));
@@ -525,6 +528,171 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
     expect((await h.ofType("session.turn_completed")).map((stored) => dataOf(stored).turnId)).toEqual([turnId]);
     expect(await h.ofType("session.error")).toEqual([]);
     expect(await h.ofType("session.error", execution.childId)).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+});
+
+/**
+ * #330: a Turn whose every call in flight waits on a subagent executes
+ * nothing on its Runner, so a shutdown hands it over at once instead of at
+ * the deadline; any other Turn still hands over at its next model request.
+ */
+describe("a Runner that shuts down hands a Turn that only waits on subagents over at once (#330)", () => {
+  /** The parent's Turn: an `Agent` call alone, or beside a bash call whose results Pi commits together. */
+  function delegating(options: { childStarted: ReturnType<typeof gate>; childAnswer: ReturnType<typeof gate>;
+    beforeCall?: () => Promise<void>; bash?: () => Promise<string> }): Adapter {
+    return {
+      async run(input) {
+        const write = journalWriter(input);
+        if (input.execution?.isChild) {
+          options.childStarted.open();
+          await options.childAnswer.opened;
+          await write(event("agent.message", { content: [{ type: "text", text: "child answer" }] }));
+          return "finished";
+        }
+        if (input.resume) {
+          await write(event("agent.message", { content: [{ type: "text", text: "parent answer" }] }));
+          return "finished";
+        }
+        await options.beforeCall?.();
+        await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
+        await write(event("agent.tool_use", { toolUseId: "call_agent", name: "Agent", input: { prompt: "child" } }));
+        if (options.bash) await write(event("agent.tool_use", { toolUseId: "call_bash", name: "bash", input: { command: "build" } }));
+        const [agentOutput, bashOutput] = await Promise.all([
+          input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "call_agent" }),
+          options.bash?.(),
+        ]);
+        await write(event("agent.tool_result", { toolUseId: "call_agent", content: [{ type: "text", text: JSON.stringify(agentOutput) }], isError: false }));
+        if (options.bash) await write(event("agent.tool_result", { toolUseId: "call_bash", content: [{ type: "text", text: bashOutput! }], isError: false }));
+        // The next model request: a requested stop takes effect here.
+        if (input.stopRequest?.aborted) return "stopped";
+        await write(event("agent.message", { content: [{ type: "text", text: "parent answer" }] }));
+        return "finished";
+      },
+    };
+  }
+
+  it("only the Turn that waits goes at once: a Turn whose tool runs on the same Runner hands over at its next request, and the new owner of each continues it with real results", async () => {
+    const childStarted = gate();
+    const childAnswer = gate();
+    const toolRunning = gate();
+    const toolDone = gate<string>();
+    const parentAdapter = delegating({ childStarted, childAnswer });
+    let busyId = "";
+    const adapter: Adapter = {
+      async run(input) {
+        if (input.sessionId !== busyId) return parentAdapter.run(input);
+        const write = journalWriter(input);
+        if (!input.resume) {
+          await write(event("agent.tool_use", { toolUseId: "call_bash", name: "bash", input: { command: "build" } }));
+          toolRunning.open();
+          await write(event("agent.tool_result", { toolUseId: "call_bash", content: [{ type: "text", text: await toolDone.opened }], isError: false }));
+          if (input.stopRequest?.aborted) return "stopped";
+        }
+        await write(event("agent.message", { content: [{ type: "text", text: "busy answer" }] }));
+        return "finished";
+      },
+    };
+    const h = await harness({ adapter });
+    const busy = await h.createSession();
+    busyId = busy.id;
+    await h.enqueue("delegate");
+    await h.enqueue("work", busy.id);
+    const b = h.start("runner-b");
+    const a = h.start("runner-a", { wakeSession: (sessionId) => void b.handleNewEvent(sessionId, h.agent) });
+    void a.handleNewEvent(h.session.id, h.agent);
+    void a.handleNewEvent(busy.id, h.agent);
+    await childStarted.opened;
+    await toolRunning.opened;
+    const [execution] = await h.stores.delegationStore.list("tenant", h.session.id);
+
+    const handingOff = h.shutDown("runner-a", 10_000);
+    // The waiting parent moves to Runner B, which resumes its wait, while the
+    // other Turn's tool still runs on A.
+    await until(async () => (await h.ofType("session.turn_resumed")).length === 1);
+    expect(await h.ofType("session.turn_resumed", busy.id)).toEqual([]);
+    toolDone.open("built");
+    expect(await handingOff).toBe(true);
+    childAnswer.open();
+    await until(() => h.idle());
+    await until(() => h.idle(busy.id));
+    await until(() => h.idle(execution.childId));
+
+    const parentResults = (await h.ofType("agent.tool_result")).map(dataOf);
+    expect(parentResults.map((data) => [data.toolUseId, data.isError])).toEqual([["call_agent", false]]);
+    expect(JSON.stringify(parentResults[0].content)).toContain("child answer");
+    expect((await h.ofType("session.turn_resumed")).map((stored) => dataOf(stored).reason)).toEqual(["released"]);
+    const busyResults = (await h.ofType("agent.tool_result", busy.id)).map(dataOf);
+    expect(busyResults.map((data) => [data.toolUseId, data.isError, data.content])).toEqual([["call_bash", false, [{ type: "text", text: "built" }]]]);
+    expect((await h.ofType("session.turn_resumed", busy.id)).map(dataOf)).toEqual([expect.objectContaining({ reason: "released", danglingToolUseIds: [] })]);
+    for (const sessionId of [h.session.id, busy.id]) expect(JSON.stringify(await h.log(sessionId))).not.toContain(OUTCOME_UNKNOWN);
+    expect(await h.ofType("session.error")).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("a wait beside a bash call is not handed over early: once both results are committed the Turn stops at its next request, and the bash result is its real one", async () => {
+    const childStarted = gate();
+    const childAnswer = gate();
+    const bashRunning = gate();
+    const bashDone = gate<string>();
+    const h = await harness({ adapter: delegating({ childStarted, childAnswer, bash: () => { bashRunning.open(); return bashDone.opened; } }) });
+    await h.enqueue("delegate and build");
+    const b = h.start("runner-b");
+    const a = h.start("runner-a", { wakeSession: (sessionId) => void b.handleNewEvent(sessionId, h.agent) });
+    void a.handleNewEvent(h.session.id, h.agent);
+    await childStarted.opened;
+    await bashRunning.opened;
+    const [execution] = await h.stores.delegationStore.list("tenant", h.session.id);
+
+    const handingOff = h.shutDown("runner-a", 10_000);
+    await sleep(100);
+    // The bash call finishes; its result waits for the Agent call's, as Pi commits a batch.
+    bashDone.open("built");
+    await sleep(100);
+    const parentOn = () => h.inputs.filter(({ input }) => input.sessionId === h.session.id).map(({ router }) => router);
+    expect(parentOn()).toEqual(["runner-a"]);
+    childAnswer.open();
+    expect(await handingOff).toBe(true);
+    await until(() => h.idle());
+    await until(() => h.idle(execution.childId));
+
+    expect(parentOn()).toEqual(["runner-a", "runner-b"]);
+    const results = (await h.ofType("agent.tool_result")).map(dataOf);
+    expect(results.map((data) => [data.toolUseId, data.isError])).toEqual([["call_agent", false], ["call_bash", false]]);
+    expect(results[1].content).toEqual([{ type: "text", text: "built" }]);
+    expect((await h.ofType("session.turn_resumed")).map(dataOf)).toEqual([expect.objectContaining({ reason: "released", danglingToolUseIds: [] })]);
+    expect(JSON.stringify(await h.log())).not.toContain(OUTCOME_UNKNOWN);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("a Turn that starts waiting after the shutdown began, from the answer the model was giving, is handed over as it starts", async () => {
+    const childStarted = gate();
+    const childAnswer = gate();
+    const answering = gate();
+    const answer = gate();
+    const h = await harness({ adapter: delegating({ childStarted, childAnswer, beforeCall: async () => { answering.open(); await answer.opened; } }) });
+    await h.enqueue("delegate");
+    const b = h.start("runner-b");
+    const a = h.start("runner-a", { wakeSession: (sessionId) => void b.handleNewEvent(sessionId, h.agent) });
+    void a.handleNewEvent(h.session.id, h.agent);
+    await answering.opened;
+
+    const handingOff = h.shutDown("runner-a", 10_000);
+    // The answer in flight calls Agent: its wait starts, and the Turn goes.
+    answer.open();
+    await childStarted.opened;
+    const shutdownStarted = Date.now();
+    expect(await handingOff).toBe(true);
+    expect(Date.now() - shutdownStarted).toBeLessThan(1_000);
+    const [execution] = await h.stores.delegationStore.list("tenant", h.session.id);
+    childAnswer.open();
+    await until(() => h.idle());
+    await until(() => h.idle(execution.childId));
+
+    const results = (await h.ofType("agent.tool_result")).map(dataOf);
+    expect(results.map((data) => [data.toolUseId, data.isError])).toEqual([["call_agent", false]]);
+    expect(JSON.stringify(results[0].content)).toContain("child answer");
+    expect((await h.ofType("session.turn_resumed")).map(dataOf)).toEqual([expect.objectContaining({ reason: "released", danglingToolUseIds: ["call_agent"] })]);
     expect(h.errors).toEqual([]);
   });
 });

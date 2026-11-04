@@ -134,13 +134,15 @@ export async function createPgTestHarness(options?: {
   /**
    * Let pg-mem ignore unsupported planner-only clauses such as SKIP LOCKED.
    * The same test must still be run against real PostgreSQL for concurrency.
+   * On by default: every pending-event claim locks its head with SKIP LOCKED
+   * (#325), so a pg-mem store that claims needs it.
    */
   allowUnsupportedLockSyntax?: boolean;
 }): Promise<PgTestHarness> {
   if (REAL_PG_URL) {
     return createRealPgHarness(REAL_PG_URL);
   }
-  const harness = createMemHarness(options?.allowUnsupportedLockSyntax);
+  const harness = createMemHarness(options?.allowUnsupportedLockSyntax ?? true);
   await harness.reset();
   return harness;
 }

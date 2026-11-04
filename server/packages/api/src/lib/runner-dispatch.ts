@@ -2,9 +2,13 @@ import type { SessionRouter } from "@oma-server/session-router";
 import type { SessionStore } from "@oma-server/store";
 import type { SessionSignals } from "@oma-server/redis";
 
+/** How often a Runner logs its executing Turns and free slots (ADR-0026). */
+const CAPACITY_LOG_INTERVAL_MS = 60_000;
+
 /** Notifications accelerate work; the independent PG scan guarantees discovery. */
 export class RunnerDispatch {
   private timer?: ReturnType<typeof setInterval>;
+  private capacityTimer?: ReturnType<typeof setInterval>;
   private stopped = false;
   private scanning?: Promise<void>;
   private cleaning?: Promise<void>;
@@ -13,6 +17,10 @@ export class RunnerDispatch {
   constructor(private readonly deps: {
     router: SessionRouter; sessions: SessionStore; signals: SessionSignals;
     scanIntervalMs?: number; cleanup?: () => Promise<void>;
+    /** The owner id the Router claims as, named in the capacity line. */
+    owner?: string;
+    capacityLogIntervalMs?: number;
+    logger?: Pick<Console, "info">;
   }) {
     const ms = this.interval;
     if (!Number.isFinite(ms) || ms < 1) throw new RangeError("Pending scan interval must be positive");
@@ -31,12 +39,20 @@ export class RunnerDispatch {
     await this.scan();
     this.timer = setInterval(() => { void this.scan(); }, this.interval);
     this.timer.unref?.();
+    // One `runner_capacity` line a minute: the Turns this Runner executes and
+    // the slots it has left below its Runner Capacity.
+    this.capacityTimer = setInterval(() => this.logCapacity(), this.deps.capacityLogIntervalMs ?? CAPACITY_LOG_INTERVAL_MS);
+    this.capacityTimer.unref?.();
+  }
+  private logCapacity(): void {
+    (this.deps.logger ?? console).info(JSON.stringify({ msg: "runner_capacity",
+      ...(this.deps.owner ? { owner: this.deps.owner } : {}), ...this.deps.router.capacityReport() }));
   }
   private wake(sessionId: string): void {
     if (this.waking.has(sessionId)) return;
     this.waking.add(sessionId);
     void this.deps.sessions.getById(sessionId).then(async session => {
-      if (session && session.status !== "terminated") await this.deps.router.handleNewEvent(sessionId, session.agent);
+      if (session && session.status !== "terminated") await this.deps.router.handleNewEvent(sessionId, session.agent, session);
       // Termination is discovered by durable cleanup scanning, while PG fences
       // the active owner's heartbeat independently of Redis availability.
     }).catch(error => console.error("Runner wake failed:", error))
@@ -61,6 +77,7 @@ export class RunnerDispatch {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.capacityTimer) clearInterval(this.capacityTimer);
     await this.scanning;
     await this.cleaning;
   }

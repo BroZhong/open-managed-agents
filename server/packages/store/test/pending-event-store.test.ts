@@ -355,10 +355,10 @@ describe("PgPendingEventStore", () => {
     await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
 
-    expect(await store.listClaimableSessionIds()).toEqual(["sess_1", "sess_2"]);
+    expect(await store.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual(["sess_2", "sess_1"]);
     await store.clear("sess_1");
     expect(await store.count("sess_1")).toBe(0);
-    expect(await store.listClaimableSessionIds()).toEqual(["sess_2"]);
+    expect(await store.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual(["sess_2"]);
   });
 
   it("lists only Sessions whose head no live claim holds: the owner drains the rest of its queue", async () => {
@@ -373,7 +373,7 @@ describe("PgPendingEventStore", () => {
     await harness.pool.query(`UPDATE pending_events SET claim_expires_at = $2 WHERE id = $1`,
       [expired.event.id, new Date(Date.now() - 1_000)]);
 
-    expect(await store.listClaimableSessionIds()).toEqual(["expired", "released", "unclaimed"]);
+    expect(await store.listClaimableSessionIds({ topLevel: 100, child: 100 })).toEqual(["released", "expired", "unclaimed"]);
     expect(await store.headClaimable("live")).toBe(false);
     for (const id of ["released", "expired", "unclaimed"]) expect(await store.headClaimable(id)).toBe(true);
     expect(await store.headClaimable("empty")).toBe(false);

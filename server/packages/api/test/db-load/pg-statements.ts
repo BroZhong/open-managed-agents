@@ -89,9 +89,11 @@ export const PG_COSTS: Record<string, Cost> = {
   "pendingEventStore.enqueueBatchIfSessionActive": (facts) => tx(pk("SELECT FOR UPDATE", "sessions"),
     ...((facts.args[1] as unknown[]) ?? []).map(() => st("INSERT", "pending_events"))),
   "pendingEventStore.peek": fixed([ix("SELECT", "pending_events")]),
+  // The head by pending_events_session_idx, locked by id without waiting
+  // (#325); a head another transaction holds counts as empty: no UPDATE.
   "pendingEventStore.claim": (facts) => facts.claimOutcome === "empty"
-    ? tx(ix("SELECT FOR UPDATE", "pending_events"))
-    : tx(ix("SELECT FOR UPDATE", "pending_events"), pk("UPDATE", "pending_events")),
+    ? tx(ix("SELECT FOR UPDATE SKIP LOCKED", "pending_events"))
+    : tx(ix("SELECT FOR UPDATE SKIP LOCKED", "pending_events"), pk("UPDATE", "pending_events")),
   // The UPDATE also returns the generation's Interrupt marker.
   "pendingEventStore.renewClaim": fixed(tx(pk("SELECT FOR UPDATE", "pending_events"), pk("UPDATE", "pending_events"))),
   "pendingEventStore.releaseClaim": fixed([pk("UPDATE", "pending_events")]),
@@ -105,7 +107,8 @@ export const PG_COSTS: Record<string, Cost> = {
     if (!result.idleEvent) return tx(...gate, ...removal);
     return tx(...gate, ...removal, pk("UPDATE", "sessions"), ...appendCore(true, true));
   },
-  // Every Session's head by pending_events_session_idx, then the claim predicate.
+  // Every Session's head by pending_events_session_idx, then the claim
+  // predicate; the oldest heads first, up to the scan's limit (#325).
   "pendingEventStore.listClaimableSessionIds": fixed([st("SELECT DISTINCT ON", "pending_events", "full")]),
   "pendingEventStore.headClaimable": fixed([ix("SELECT", "pending_events")]),
   "pendingEventStore.clear": fixed([ix("DELETE", "pending_events")]),

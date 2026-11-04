@@ -35,6 +35,7 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
+import { InFlightCalls } from "./in-flight-calls.js";
 import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts, type Takeover } from "./plan-resume.js";
 import { repairResult, type DanglingCallResolver, type RepairCause } from "./dangling-call-results.js";
 import { INSTALL_ATTEMPT_STOPPED, SkillInstallSpans, skillInstallKey, unendedSkillInstalls, type SkillInstallEndData } from "./skill-install-spans.js";
@@ -50,6 +51,8 @@ const SESSION_INTERRUPTED_MESSAGE = "Session interrupted";
 const SESSION_TERMINATED_MESSAGE = "Session terminated";
 const RUNNER_SHUTDOWN_MESSAGE = "Runner shutting down";
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
+/** N of ADR-0026 when none is configured. */
+const DEFAULT_RUNNER_CAPACITY = 50;
 
 /** How an Adapter's run() settled. */
 type AdapterOutcome = { result: AdapterRunResult } | { error: unknown };
@@ -66,6 +69,8 @@ interface AttemptWrites {
   delegationRun?: DelegationRun;
   /** Durable form and idempotency key of an Adapter event, set before the Adapter runs. */
   fromAdapter?(event: DurableEvent): { event: JournalEvent; key: string };
+  /** Hears every event the journal committed, the Router's own and the Adapter's. */
+  committed?(event: JournalEvent): void;
 }
 
 /** The claim heartbeat of one Turn attempt. */
@@ -83,9 +88,28 @@ interface ActiveSessionRun {
   stopAttempt?: (reason: unknown) => void;
   /**
    * Stops the running Turn attempt, if any, on the same path and hands its
-   * Turn over as it stands: the handoff deadline of a shutdown (#254).
+   * Turn over as it stands: the handoff deadline of a shutdown (#254), and
+   * a shutdown's start for a Turn that only waits on subagents (#330).
    */
   detach?: (reason: unknown) => void;
+  /** The running attempt's tool calls whose results are not committed (#330). */
+  calls?: InFlightCalls;
+  /**
+   * The drain ended because its claim took nothing: the queue was empty, its
+   * head was under another live claim, or another transaction held it
+   * (#325), or it claimed nothing because the Runner was full (#328).
+   * Whoever holds the head handles it, so nothing is retried.
+   */
+  claimedNothing?: boolean;
+  /** Whether the Session is a Child Session, once known: it is admitted beyond the Runner Capacity. */
+  child?: boolean;
+  /**
+   * The drain holds one of the Runner's executing slots (#328), except while
+   * its Turn only waits on subagents (#330).
+   */
+  slot?: boolean;
+  /** The drain claimed an input: the slot it releases served a Turn. */
+  claimed?: boolean;
 }
 
 class PendingLeaseLostError extends Error {
@@ -130,6 +154,12 @@ export interface SessionRouterDeps {
    */
   checkSession?: (sessionId: string) => void;
   delegationStore?: DelegationStore;
+  /**
+   * N, the Runner Capacity (ADR-0026, default 50): the executing Turns below
+   * which the Runner claims a top-level Session's input. A Child Session's
+   * input is always claimed, and its Turn counts.
+   */
+  capacity?: number;
   /**
    * A parent's limit of unfinished Delegation Executions (default 4): the
    * `Agent` call beyond it gets a tool error instead of a queued child (ADR-0027).
@@ -270,6 +300,19 @@ export class SessionRouter {
    * resolver answers is reported as of unknown outcome.
    */
   private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>>;
+  private readonly capacity: number;
+  /** Executing slots the drains hold (#328): one per drain past admission. */
+  private executing = 0;
+  /** Turns that only wait on subagents and so hold no slot (#330). */
+  private syncWaiting = 0;
+  /**
+   * Since its last fill this Runner, being full, left a top-level Session's
+   * claimable head to others: a freed slot then claims the oldest such head
+   * at once instead of at the next pending scan (#328).
+   */
+  private admissionRefused = false;
+  private filling?: Promise<void>;
+  private fillAgain = false;
   private readonly checkSession: (sessionId: string) => void;
   private readonly wakeSession?: (sessionId: string) => void;
   /**
@@ -281,6 +324,8 @@ export class SessionRouter {
 
   constructor(deps: SessionRouterDeps) {
     this.delegationStore = deps.delegationStore;
+    this.capacity = deps.capacity ?? DEFAULT_RUNNER_CAPACITY;
+    if (!Number.isInteger(this.capacity) || this.capacity < 1) throw new RangeError("Runner capacity must be a positive integer");
     const maxConcurrent = deps.maxConcurrentSubagents ?? 4;
     if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 64) {
       throw new RangeError("maxConcurrentSubagents must be between 1 and 64");
@@ -294,7 +339,7 @@ export class SessionRouter {
       wake: (sessionId) => {
         if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
         void deps.sessionStore.getById(sessionId).then((session) => {
-          if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent);
+          if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent, session);
         }).catch((error) => this.reportDrainError(sessionId, error));
       },
     });
@@ -460,9 +505,12 @@ export class SessionRouter {
    * Hand this Runner's running Turns to the other Runners as it shuts down
    * (#254). It claims no more input and cancels its claim retries. Each
    * running Adapter is asked to stop before its next model request; tools it
-   * runs are not cancelled, so their results are committed. A Turn still
-   * running after `timeoutMs` is detached on the one stop path: its write
-   * entry is revoked and what it runs in the Sandbox keeps running. Every
+   * runs are not cancelled, so their results are committed. A Turn whose
+   * every call in flight waits on a subagent is detached at once, now or as
+   * it starts waiting: its next owner resumes the same waits from their
+   * records (#330, ADR-0026). A Turn still running after `timeoutMs` is
+   * detached on the one stop path: its write entry is revoked and what it
+   * runs in the Sandbox keeps running. Every
    * claim this leaves is released without a terminal event, and the other
    * Runners are woken to take the Turn over at once; a Turn that completes
    * meanwhile leaves the input queued behind it to them the same way.
@@ -479,6 +527,11 @@ export class SessionRouter {
     for (const sessionId of [...this.claimRetryTimers.keys()]) {
       this.resetClaimRetry(sessionId);
       this.wakeSession?.(sessionId);
+    }
+    // A Turn that only waits on subagents goes now: its next owner resumes
+    // the same waits from their records (#330).
+    for (const activeRun of this.activeSessions.values()) {
+      if (activeRun.calls?.waitingOnly) activeRun.detach?.(new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError"));
     }
     if (await this.waitForIdle(timeoutMs)) return true;
     const reason = new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError");
@@ -590,7 +643,14 @@ export class SessionRouter {
     this.delegations?.recheckWaits(sessionId);
   }
 
-  async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
+  /**
+   * Drain a Session's input on this Runner: claim its head, run the Turn,
+   * and claim the next, until its queue is empty or another holder has it.
+   * A top-level Session is claimed only below the Runner Capacity (#328);
+   * `session`, when the caller has read it, says whether it is a Child
+   * Session, so a full Runner refuses a top-level one without reading it.
+   */
+  async handleNewEvent(sessionId: string, agentConfig: Agent, session?: Pick<Session, "delegation">): Promise<void> {
     // A Runner handing its Turns over takes none (#254).
     if (this.handingOff) return;
     // Usually the active loop will pick up newly queued input itself. Remember
@@ -604,7 +664,8 @@ export class SessionRouter {
     // A direct request/recovery trigger supersedes a slower scheduled retry.
     this.clearClaimRetry(sessionId);
 
-    const activeRun: ActiveSessionRun = { controller: new AbortController() };
+    const activeRun: ActiveSessionRun = { controller: new AbortController(),
+      ...(session ? { child: Boolean(session.delegation) } : {}) };
     this.activeSessions.set(sessionId, activeRun);
 
     let failed = false;
@@ -617,20 +678,28 @@ export class SessionRouter {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
       }
-      this.wakeRequested.delete(sessionId);
+      const wokenWhileActive = this.wakeRequested.delete(sessionId);
+      // A slot that served a Turn goes to the oldest top-level head this
+      // full Runner left, now rather than at the next pending scan. One a
+      // claim that took nothing held does not: a lost race is not repeated.
+      if (this.releaseSlot(activeRun) && activeRun.claimed && this.admissionRefused) this.fill();
 
       // Always inspect the durable queue at handoff. This covers the original
       // empty→unlock lost wake, a preloaded tail after user interrupt, and a
       // claim/PG failure that must retry without waiting for a new request.
       // A head under a live claim is not retried: its owner drains the queue,
-      // and the pending scan finds it once a lost owner's lease expires.
+      // and the pending scan finds it once a lost owner's lease expires. A
+      // drain that ended at a claim that took nothing reads nothing more
+      // (#325): the holder of a head it skipped handles it, and only a wake
+      // that arrived meanwhile, for input its claim may have missed, is retried.
       try {
         if (this.handingOff) {
           // What the drain left claimable, a Turn it handed over or the input
           // queued behind a Turn it completed, goes to the other Runners now
           // instead of at their next pending scan.
           if (await this.pendingEventStore.headClaimable(sessionId)) this.wakeSession?.(sessionId);
-        } else if (failed || await this.pendingEventStore.headClaimable(sessionId)) {
+        } else if (failed || (activeRun.claimedNothing ? wokenWhileActive
+          : await this.pendingEventStore.headClaimable(sessionId))) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
           this.resetClaimRetry(sessionId);
@@ -640,6 +709,109 @@ export class SessionRouter {
         this.scheduleClaimRetry(sessionId, agentConfig);
       }
       this.notifyIdleIfSettled();
+    }
+  }
+
+  /**
+   * The executing Turns, the Turns that only wait on subagents and so count
+   * as none, and the free slots below the Runner Capacity (ADR-0026).
+   */
+  capacityReport(): { capacity: number; executing: number; syncWaiting: number; free: number } {
+    return { capacity: this.capacity, executing: this.executing, syncWaiting: this.syncWaiting,
+      free: Math.max(0, this.capacity - this.executing) };
+  }
+
+  /**
+   * The attempt's Turn starts or stops only waiting on subagents (#330,
+   * ADR-0026). Waiting, it frees its slot, which the oldest top-level head
+   * this Runner left may take; a Runner shutting down hands it over now, for
+   * the next owner resumes its waits. Done waiting, it takes a slot back at
+   * once, beyond the Runner Capacity if it must: a Turn under way is never
+   * refused.
+   */
+  private waitingOnlyChanged(activeRun: ActiveSessionRun, waitingOnly: boolean): void {
+    if (waitingOnly) {
+      this.syncWaiting++;
+      if (this.releaseSlot(activeRun) && this.admissionRefused) this.fill();
+      if (this.handingOff) activeRun.detach?.(new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError"));
+      return;
+    }
+    this.syncWaiting--;
+    if (!activeRun.slot) { activeRun.slot = true; this.executing++; }
+  }
+
+  /**
+   * Admit a drain's next claim (#328, ADR-0026): a top-level Session takes a
+   * slot below the Runner Capacity, a Child Session takes one always, so a
+   * parent waiting on its child never waits for a slot. The slot is taken
+   * synchronously before the claim, so concurrent wakes cannot overshoot N;
+   * only a full Runner that does not know the Session's kind reads it first.
+   * Refused, the head is left to the other Runners and to this one's next
+   * freed slot.
+   */
+  private async admit(sessionId: string, activeRun: ActiveSessionRun): Promise<boolean> {
+    if (this.executing >= this.capacity && activeRun.child === undefined) {
+      activeRun.child = Boolean((await this.sessionStore.getById(sessionId))?.delegation);
+    }
+    return this.takeSlot(activeRun);
+  }
+
+  private takeSlot(activeRun: ActiveSessionRun): boolean {
+    if (this.executing >= this.capacity && !activeRun.child) {
+      this.admissionRefused = true;
+      return false;
+    }
+    activeRun.slot = true;
+    this.executing++;
+    return true;
+  }
+
+  /** Free the drain's slot; true when it held one. */
+  private releaseSlot(activeRun: ActiveSessionRun): boolean {
+    if (!activeRun.slot) return false;
+    activeRun.slot = false;
+    this.executing--;
+    return true;
+  }
+
+  /**
+   * Claim the oldest claimable top-level heads into the free slots, at most
+   * one more than there are: refused, it tells the next freed slot to fill
+   * again. Child Sessions' heads are claimed on their wake and by the scan.
+   */
+  private fill(): void {
+    if (this.handingOff) return;
+    if (this.filling) { this.fillAgain = true; return; }
+    this.admissionRefused = false;
+    const free = this.capacity - this.executing;
+    this.filling = (async () => {
+      if (free <= 0) { this.admissionRefused = true; return; }
+      for (const sessionId of await this.pendingEventStore.listClaimableSessionIds({ topLevel: free + 1, child: 0 })) {
+        if (this.handingOff) return;
+        if (this.activeSessions.has(sessionId)) continue;
+        const session = await this.sessionStore.getById(sessionId);
+        // The pending scan discards the queue of a missing or terminated Session.
+        if (!session || session.status === "terminated") continue;
+        void this.handleNewEvent(sessionId, session.agent, session).catch((error) => this.reportDrainError(sessionId, error));
+      }
+    // A failed read leaves the next freed slot to fill again, and the scan.
+    })().catch((error) => { this.admissionRefused = true; this.reportDrainError("", error); })
+      .finally(() => {
+        this.filling = undefined;
+        if (this.fillAgain) { this.fillAgain = false; this.fill(); }
+      });
+  }
+
+  /**
+   * Hand a Session's claimable input to this Runner if it would admit it,
+   * else to every Runner: a full Runner's own trigger, unlike a wake every
+   * Runner received, would otherwise leave it to the next pending scan.
+   */
+  private runOrWake(session: Session): void {
+    if (this.executing < this.capacity || session.delegation || !this.wakeSession) {
+      void this.handleNewEvent(session.id, session.agent, session).catch((error) => this.reportDrainError(session.id, error));
+    } else {
+      this.wakeSession(session.id);
     }
   }
 
@@ -664,7 +836,11 @@ export class SessionRouter {
     // child results even when a Host died before the local cleanup callback.
     this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions() ?? []);
     // Only heads no live claim holds: a Runner never contends with an owner.
-    const sessionIds = new Set(await this.pendingEventStore.listClaimableSessionIds());
+    // The oldest first (#325): top-level heads up to one more than the free
+    // slots, so a full Runner learns of the one it refuses (#328), and
+    // Child Sessions' heads, which it always claims, up to a Runner's worth.
+    const free = Math.max(0, this.capacity - this.executing);
+    const sessionIds = new Set(await this.pendingEventStore.listClaimableSessionIds({ topLevel: free + 1, child: this.capacity }));
 
     for (const sessionId of sessionIds) {
       try {
@@ -679,7 +855,7 @@ export class SessionRouter {
         // turn here: a slow LLM/tool/video turn must not block HTTP readiness or
         // serialize recovery of unrelated Sessions. handleNewEvent's local gate
         // makes repeated scans for this Session join the same drainer.
-        void this.handleNewEvent(sessionId, session.agent).catch((error) => {
+        void this.handleNewEvent(sessionId, session.agent, session).catch((error) => {
           onBackgroundError?.({ sessionId, error });
         });
         summary.recovered.push(sessionId);
@@ -728,9 +904,7 @@ export class SessionRouter {
     this.checkReconciled(reconciled);
     for (const execution of reconciled) {
       const parent = await this.sessionStore.getById(execution.callerSessionId);
-      if (parent && parent.status !== "terminated") {
-        void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
-      }
+      if (parent && parent.status !== "terminated") this.runOrWake(parent);
     }
     // A failed reclamation throws: a later DELETE or the cleanup sweep retries it.
     const session = await this.sessionStore.getById(sessionId);
@@ -858,7 +1032,7 @@ export class SessionRouter {
       append: async (event, key) => {
         const consumed = attempt.delegationRun &&
           await this.delegations?.consumeResult(attempt.delegationRun, event);
-        return consumed ?? this.eventLogStore.append(sessionId, {
+        const stored = consumed ?? await this.eventLogStore.append(sessionId, {
           type: event.type,
           data: event.data,
           sessionThreadId: event.sessionThreadId ?? "sthr_primary",
@@ -866,6 +1040,8 @@ export class SessionRouter {
           idempotencyKey: key,
           pendingFence,
         });
+        attempt.committed?.(event);
+        return stored;
       },
       publish: (stored) => this.eventStreamHub.publish(sessionId, {
         type: stored.type,
@@ -1049,9 +1225,7 @@ export class SessionRouter {
       // the local drain delivers an asynchronous result.
       this.checkSession(finished.callerSessionId);
       const parent = await this.sessionStore.getById(finished.callerSessionId);
-      if (parent && parent.status !== "terminated") {
-        void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
-      }
+      if (parent && parent.status !== "terminated") this.runOrWake(parent);
     }
     const pending = await this.pendingEventStore.peek(sessionId);
     if (pending?.id === pendingEventId && pending.type === "subagent.result" && this.delegationStore) {
@@ -1119,10 +1293,14 @@ export class SessionRouter {
     let lastOwnedTurn: ActiveTurnWriter | undefined;
     // A Runner handing its Turns over claims no next input (#254).
     while (!signal.aborted && !this.handingOff) {
+      // A full Runner claims no top-level Session's input (#328). A drain
+      // with room claims at once, in the same tick it was started in.
+      const admitted = activeRun.slot || (this.executing < this.capacity ? this.takeSlot(activeRun) : await this.admit(sessionId, activeRun));
+      if (!admitted) { activeRun.claimedNothing = true; break; }
       const claim = await this.claimPendingHead(sessionId);
-      // An empty or owned head ends the drain; handleNewEvent decides at
-      // handoff whether to retry.
-      if (!claim) break;
+      // An empty, owned or locked head ends the drain (#325).
+      if (!claim) { activeRun.claimedNothing = true; break; }
+      activeRun.claimed = true;
       this.resetClaimRetry(sessionId);
       const pendingEvent = claim.event;
       const pendingFence = this.fenceFor(claim);
@@ -1130,6 +1308,7 @@ export class SessionRouter {
       // Enqueue and execution race with termination. Re-read only after claim;
       // a missing/terminated Session can never be revived by status_running.
       const claimedSession = await this.sessionStore.getById(sessionId);
+      activeRun.child = Boolean(claimedSession?.delegation);
       if (!claimedSession || claimedSession.status === "terminated") {
         await this.pendingEventStore.clear(sessionId);
         break;
@@ -1175,6 +1354,12 @@ export class SessionRouter {
       let sandboxPrepares: SandboxPrepareSpans | undefined;
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
+      // The attempt's calls in flight, from what it commits and the waits it starts (#330).
+      const calls: InFlightCalls = new InFlightCalls((waitingOnly) => {
+        if (activeRun.calls === calls) this.waitingOnlyChanged(activeRun, waitingOnly);
+      });
+      activeRun.calls = calls;
+      attemptWrites.committed = (event) => calls.committed(event);
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
       const heartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
       const stopHeartbeat = heartbeat.stop;
@@ -1423,7 +1608,7 @@ export class SessionRouter {
       }
       const delegationRun: DelegationRun = { session, turnId, fence: pendingFence,
         signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId,
-        effectiveConfig: { model: currentAgent.model }, journal };
+        effectiveConfig: { model: currentAgent.model }, journal, onWait: (toolUseId) => calls.waits(toolUseId) };
       attemptWrites.delegationRun = delegationRun;
       // Sandbox commands are fenced by ownership of this Turn, not by its
       // signal. An Interrupt aborts the Turn while this attempt still owns it,
@@ -1492,6 +1677,9 @@ export class SessionRouter {
       let adapterInput: AdapterInput;
       try {
         if (plan.waits.length && this.delegations) {
+          // Each of them holds its wait from the start, not only once its
+          // turn to be awaited comes.
+          for (const wait of plan.waits) if (wait.status === "waiting") calls.waits(wait.callerToolUseId);
           await this.delegations.recoverWaits(delegationRun, plan.waits);
           // Consuming the last result records the running transition, written
           // by the next flush: the history handed to the Adapter includes it.
@@ -1698,6 +1886,12 @@ export class SessionRouter {
           signal.removeEventListener("abort", forwardOuterAbort);
           if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
           if (activeRun.detach === detach) activeRun.detach = undefined;
+          // An attempt that ends while it only waits leaves the drain no slot:
+          // a next claim is admitted again.
+          if (activeRun.calls === calls) {
+            activeRun.calls = undefined;
+            if (calls.waitingOnly) this.syncWaiting--;
+          }
           if (failure) await this.reportAttemptFailure(sessionId, failure.error);
           // Released, not left to expire: the next claim learns the Turn was
           // handed over, which no takeover limit counts, and need not wait.

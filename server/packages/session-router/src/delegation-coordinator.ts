@@ -20,6 +20,11 @@ export interface DelegationRun {
   effectiveConfig?: Record<string, unknown>;
   /** The attempt's write entry; wait transitions and recovered results are recorded there. */
   journal: TurnJournal;
+  /**
+   * The call now waits on its durable wait, which a next owner resumes: the
+   * Router counts a Turn that only waits as executing nothing (#330).
+   */
+  onWait?(toolUseId: string): void;
 }
 
 interface CoordinatorDeps {
@@ -217,6 +222,7 @@ export class DelegationCoordinator {
   async waitForResult(run: DelegationRun, execution: DelegationExecution, toolUseId: string): Promise<Record<string, unknown>> {
     await this.recordStatus(run, "waiting", toolUseId);
     await run.journal.flush();
+    run.onWait?.(toolUseId);
     // Registered before the first read, so a hint that arrives during a read
     // makes the next wait return at once.
     const wakeup = new WaitWakeup();
