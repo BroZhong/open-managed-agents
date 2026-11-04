@@ -188,6 +188,10 @@ Change the Runner count only through the ScaledObject:
 
 - Bounds: edit `minReplicaCount` / `maxReplicaCount` in the overlay and apply.
   A `kubectl patch` takes effect at once; the next apply restores the overlay.
+  Lowering `minReplicaCount` scales in at once, 2 Runners a minute: the
+  600 s window holds back only the demand's recommendations, not the bound
+  (measured on oma-test, 2026-11-05). Each Runner removed hands its Turns
+  over; to hold the count meanwhile, add `paused-scale-in` first.
 - Hold a count: `kubectl -n oma-test annotate scaledobject oma-runner
   autoscaling.keda.sh/paused-replicas=<n> --overwrite` scales to n and stops
   autoscaling; `0` stops every Runner, e.g. for a migration.
