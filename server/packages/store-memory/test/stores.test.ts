@@ -455,9 +455,9 @@ describe("createMemoryStores", () => {
       await stores.pendingEventStore.enqueue("s2", { type: "a", data: {}, sessionThreadId: "th1" });
       await stores.pendingEventStore.enqueue("s1", { type: "a", data: {}, sessionThreadId: "th1" });
 
-      expect(await stores.pendingEventStore.listClaimableSessionIds()).toEqual(["s1", "s2"]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds(100)).toEqual(["s2", "s1"]);
       await stores.pendingEventStore.clear("s1");
-      expect(await stores.pendingEventStore.listClaimableSessionIds()).toEqual(["s2"]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds(100)).toEqual(["s2"]);
     });
 
     it("lists only Sessions whose head no live claim holds: the owner drains the rest of its queue", async () => {
@@ -472,7 +472,7 @@ describe("createMemoryStores", () => {
       await pending.claim("expired", "host_a", 1);
       await new Promise((resolve) => setTimeout(resolve, 5));
 
-      expect(await pending.listClaimableSessionIds()).toEqual(["expired", "released", "unclaimed"]);
+      expect(await pending.listClaimableSessionIds(100)).toEqual(["released", "expired", "unclaimed"]);
       expect(await pending.headClaimable("live")).toBe(false);
       for (const id of ["released", "expired", "unclaimed"]) expect(await pending.headClaimable(id)).toBe(true);
       expect(await pending.headClaimable("empty")).toBe(false);

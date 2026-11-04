@@ -50,6 +50,8 @@ const SESSION_INTERRUPTED_MESSAGE = "Session interrupted";
 const SESSION_TERMINATED_MESSAGE = "Session terminated";
 const RUNNER_SHUTDOWN_MESSAGE = "Runner shutting down";
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
+/** The claimable heads one pending scan reads at most, the oldest first (#325). */
+const PENDING_SCAN_HEADS = 1_000;
 
 /** How an Adapter's run() settled. */
 type AdapterOutcome = { result: AdapterRunResult } | { error: unknown };
@@ -92,6 +94,12 @@ interface ActiveSessionRun {
    * it; the pending scan covers a lost wake.
    */
   waitingForSlot?: boolean;
+  /**
+   * The drain ended because its claim took nothing: the queue was empty, its
+   * head was under another live claim, or another transaction held it
+   * (#325). Whoever holds the head handles it, so nothing is retried.
+   */
+  claimedNothing?: boolean;
 }
 
 class PendingLeaseLostError extends Error {
@@ -628,14 +636,17 @@ export class SessionRouter {
       // A head under a live claim is not retried: its owner drains the queue,
       // and the pending scan finds it once a lost owner's lease expires. Nor is
       // a child waiting for a slot, unless the wake of a freed slot arrived
-      // while this drain was still releasing its claim.
+      // while this drain was still releasing its claim. A drain that ended at
+      // a claim that took nothing reads nothing more (#325): the holder of a
+      // head it skipped handles it, and only a wake that arrived meanwhile,
+      // for input its claim may have missed, is retried.
       try {
         if (this.handingOff) {
           // What the drain left claimable, a Turn it handed over or the input
           // queued behind a Turn it completed, goes to the other Runners now
           // instead of at their next pending scan.
           if (await this.pendingEventStore.headClaimable(sessionId)) this.wakeSession?.(sessionId);
-        } else if (failed || ((!activeRun.waitingForSlot || wokenWhileActive) &&
+        } else if (failed || (activeRun.claimedNothing ? wokenWhileActive : (!activeRun.waitingForSlot || wokenWhileActive) &&
           await this.pendingEventStore.headClaimable(sessionId))) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
@@ -670,7 +681,8 @@ export class SessionRouter {
     // child results even when a Host died before the local cleanup callback.
     this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions() ?? []);
     // Only heads no live claim holds: a Runner never contends with an owner.
-    const sessionIds = new Set(await this.pendingEventStore.listClaimableSessionIds());
+    // The oldest first, at most a scan's worth of them (#325).
+    const sessionIds = new Set(await this.pendingEventStore.listClaimableSessionIds(PENDING_SCAN_HEADS));
 
     for (const sessionId of sessionIds) {
       try {
@@ -1128,9 +1140,8 @@ export class SessionRouter {
     // A Runner handing its Turns over claims no next input (#254).
     while (!signal.aborted && !this.handingOff) {
       const claim = await this.claimPendingHead(sessionId);
-      // An empty or owned head ends the drain; handleNewEvent decides at
-      // handoff whether to retry.
-      if (!claim) break;
+      // An empty, owned or locked head ends the drain (#325).
+      if (!claim) { activeRun.claimedNothing = true; break; }
       this.resetClaimRetry(sessionId);
       const pendingEvent = claim.event;
       const pendingFence = this.fenceFor(claim);

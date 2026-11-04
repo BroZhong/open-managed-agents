@@ -208,8 +208,12 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       current.generation === claim.generation && current.expiresAtMs > Date.now());
   }
 
-  async listClaimableSessionIds(): Promise<string[]> {
-    return [...this.queues.keys()].filter((sessionId) => this.isHeadClaimable(sessionId)).sort();
+  async listClaimableSessionIds(limit: number): Promise<string[]> {
+    if (!Number.isInteger(limit) || limit < 0) throw new RangeError("claimable head limit must be a non-negative integer");
+    // The oldest heads first, as their ids were enqueued.
+    return [...this.queues.keys()].filter((sessionId) => this.isHeadClaimable(sessionId))
+      .sort((a, b) => enqueueOrder(this.queues.get(a)![0].id) - enqueueOrder(this.queues.get(b)![0].id))
+      .slice(0, limit);
   }
 
   async headClaimable(sessionId: string): Promise<boolean> {

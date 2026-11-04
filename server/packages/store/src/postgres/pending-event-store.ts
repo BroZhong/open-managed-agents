@@ -152,17 +152,20 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // Acquire the row lock without any time predicate. PostgreSQL may evaluate
-      // WHERE/SET expressions before a lock wait, so all lease-clock checks must
-      // happen in the following statement, after this SELECT has returned. The
-      // locked row is the version the UPDATE replaces, so its owner tells how
-      // the previous claim ended: release clears it, expiry leaves it.
+      // Lock the head without waiting and without any time predicate (#325,
+      // ADR-0026). A head another transaction holds is not waited for: that
+      // transaction handles it. The current owner owns its head, a handoff
+      // that releases it wakes the Runners, and the pending scan finds one a
+      // rolled-back claim left. The lock names the head's id, so SKIP LOCKED
+      // passes over the head alone and never takes the input queued behind
+      // it. The lease clock is read in the following statement, once the
+      // lock is held. The locked row is the version the UPDATE replaces, so
+      // its owner tells how the previous claim ended: release clears it,
+      // expiry leaves it.
       const head = await client.query<{ id: string; claim_owner: string | null; claim_generation: string | number }>(
         `SELECT id, claim_owner, claim_generation FROM pending_events
-         WHERE session_id = $1
-         ORDER BY seq ASC
-         LIMIT 1
-         FOR UPDATE`,
+         WHERE id = (SELECT id FROM pending_events WHERE session_id = $1 ORDER BY seq ASC LIMIT 1)
+         FOR UPDATE SKIP LOCKED`,
         [sessionId],
       );
       if (!head.rows[0]) {
@@ -392,18 +395,21 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     }
   }
 
-  async listClaimableSessionIds(): Promise<string[]> {
+  async listClaimableSessionIds(limit: number): Promise<string[]> {
+    if (!Number.isInteger(limit) || limit < 0) throw new RangeError("claimable head limit must be a non-negative integer");
     // Each Session's head by pending_events_session_idx, then the claim
     // predicate of `claim`. A Runner's scan thus never contends for a head
-    // whose owner holds a live lease.
+    // whose owner holds a live lease. The oldest heads first (#325).
     const { rows } = await this.pool.query<{ session_id: string }>(
       `SELECT session_id FROM (
-         SELECT DISTINCT ON (session_id) session_id, claim_owner, claim_expires_at
+         SELECT DISTINCT ON (session_id) session_id, seq, claim_owner, claim_expires_at
          FROM pending_events
          ORDER BY session_id, seq
        ) head
        WHERE claim_owner IS NULL OR claim_expires_at <= clock_timestamp()
-       ORDER BY session_id ASC`,
+       ORDER BY seq ASC
+       LIMIT $1`,
+      [limit],
     );
     return rows.map((row) => row.session_id);
   }

@@ -44,7 +44,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("leases are judged by PostgreSQL's clo
 
     skew(HOUR);
     expect(await pending.claim("sess_1", "runner-b", 30_000)).toBeNull();
-    expect(await pending.listClaimableSessionIds()).not.toContain("sess_1");
+    expect(await pending.listClaimableSessionIds(100)).not.toContain("sess_1");
     expect(await pending.headClaimable("sess_1")).toBe(false);
 
     skew(-HOUR);
@@ -59,7 +59,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("leases are judged by PostgreSQL's clo
     await harness.pool.query(`UPDATE pending_events SET claim_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1`, [input.id]);
 
     skew(-HOUR);
-    expect(await pending.listClaimableSessionIds()).toContain("sess_1");
+    expect(await pending.listClaimableSessionIds(100)).toContain("sess_1");
     const takeover = await pending.claim("sess_1", "runner-b", 30_000);
     expect(takeover).toMatchObject({ ownerId: "runner-b", generation: lost.generation + 1, previous: "expired" });
 

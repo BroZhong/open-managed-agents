@@ -77,7 +77,10 @@ export interface PendingEventStore {
   peek(sessionId: string): Promise<PendingEvent | null>;
   /**
    * Atomically claim the FIFO head. A competing live claim returns null. An
-   * expired claim starts a new monotonically fenced generation.
+   * expired claim starts a new monotonically fenced generation. A head
+   * another transaction holds returns null at once, never waiting for it and
+   * never claiming the input behind it: that transaction handles the head
+   * (#325, ADR-0026). Null therefore says only that nothing was claimed.
    */
   claim(sessionId: string, ownerId: string, leaseMs: number): Promise<PendingEventClaim | null>;
   /**
@@ -121,9 +124,10 @@ export interface PendingEventStore {
    * Session ids whose FIFO head {@link claim} would take now: no live claim
    * holds it (never claimed, released, or its lease expired). A head under a
    * live claim is not listed: its owner drains the rest of its queue, and the
-   * head is listed again once the owner's lease expires.
+   * head is listed again once the owner's lease expires. The oldest heads
+   * first, at most `limit` of them (#325).
    */
-  listClaimableSessionIds(): Promise<string[]>;
+  listClaimableSessionIds(limit: number): Promise<string[]>;
   /** Whether the Session has a FIFO head that {@link claim} would take now. */
   headClaimable(sessionId: string): Promise<boolean>;
   /** Discard every pending event for one Session (missing/terminated cleanup). */

@@ -324,8 +324,8 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     await enqueueUser(pendingEventStore, terminated.id, "discard terminated");
     await enqueueUser(pendingEventStore, "sess_missing", "discard missing");
     const listClaimableSessionIds = pendingEventStore.listClaimableSessionIds.bind(pendingEventStore);
-    vi.spyOn(pendingEventStore, "listClaimableSessionIds").mockImplementation(async () => {
-      const ids = await listClaimableSessionIds();
+    vi.spyOn(pendingEventStore, "listClaimableSessionIds").mockImplementation(async (limit) => {
+      const ids = await listClaimableSessionIds(limit);
       return [...ids, ...ids];
     });
 
