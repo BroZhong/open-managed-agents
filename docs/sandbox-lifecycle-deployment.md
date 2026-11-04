@@ -3,7 +3,7 @@
 ADR-0019 and #217–#222, as ADR-0025 revised them, define the only maintained
 policy: 24 hours running, then platform deletion; nothing is paused. Confirmed
 shared idle shortens the running deadline to 15 minutes. Pi stays in the Runner.
-Every Runner runs ADR-0023's sweeper; see Sweeper.
+One Runner at a time runs ADR-0023's sweeper (ADR-0026); see Sweeper.
 
 ## Release prerequisites
 
@@ -196,9 +196,15 @@ binding) is killed by the sweeper within one period.
 
 ## Sweeper
 
-Every Runner, and never the API, runs one round of ADR-0023's sweeper every 10
-minutes, give or take up to 2, the first at a random point of its first 10
-minutes; graceful shutdown stops it before its next action. A round lists every
+Of the Runners, and never the API, one runs ADR-0023's sweeper: the one that
+leads (ADR-0026). Every Runner asks for the lead every 10 minutes, give or take
+up to 2, the first time at a random point of its first 10 minutes, and the
+leader runs one round each time it asks; graceful shutdown stops the round
+before its next action and gives the lead up, which another Runner takes at its
+next period. The lead is a session-level advisory lock, keyed by the schema and
+`sandbox_sweeper`, on a connection of the Runner's own outside its pool: a
+Runner that vanishes releases it with its connection, within about a minute
+(server-side TCP keepalives). A round lists every
 running Sandbox of the Runner's gateway API key (every page), reads
 their bindings and Sessions from the Runner's schema in one query and selects
 by ADR-0023's table. A Sandbox labelled with another `oma.dev/environment` is
@@ -216,8 +222,9 @@ unused Sandbox's deadline to 15 minutes, then reads the binding once
 more and sets 24 hours back if a Turn began using it meanwhile. Unused means no
 queued input of a live Session of the binding; a resource use left by an
 acknowledged input does not count. At most 50 kills a round; the rest wait for
-the next. Runners do not coordinate, and two may both kill one Sandbox, which
-is harmless.
+the next. Rounds still take no lock between them: a leader whose lock
+connection dropped in the middle of a round may finish it while the next leader
+starts one, and both may kill one Sandbox, which is harmless.
 
 Each round also reads up to 50 bindings of the schema that no Turn settles,
 whatever the gateway lists: it completes a reclamation left claimed (a kill that
@@ -227,7 +234,8 @@ deadline that the listing showed no Sandbox for (an aborted wait, a resumed
 Turn that never called a tool, a row migration 0024 left Creating since
 `epoch`): Cold, or the Sandbox the gateway lists for the binding adopted.
 
-Each round writes one JSON line to the Runner's stdout:
+Each round writes one JSON line to the leader's stdout; a Runner that does not
+lead writes none:
 
 ```json
 {"msg":"sandbox_sweep","env":"production","listed":707,"orphans":11,"unresolved":0,"unusedRunning":3,"noDeadline":1,"expired":2,"killed":12,"adopted":0,"cleared":2,"shortened":3,"restored":0,"reclaimed":0,"deferred":0,"skipped":0,"failed":0,"ms":412}
@@ -244,17 +252,31 @@ Turn, a reclamation still retained), `deferred` (over the 50-kill cap) and
 `failed` (with `failures`, the first ten failed actions by Sandbox or binding,
 action and error name only). `error` says the list or a read failed and nothing
 was done; `aborted` that shutdown stopped the round. `ms` is its duration.
-Recent lines of one environment:
+A Runner also writes `{"msg":"sandbox_sweeper_lead","env":"test","lead":true}`
+when it takes the lead, `"lead":false` when it gives it up or loses it, and
+`"lead":false` with `error` (the error name) for each period it could not tell
+whether it leads; it does not sweep then. Recent lines of one environment:
 
 ```sh
-kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-test logs -l app=oma-runner -c runner --since=30m | grep sandbox_sweep
+kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-test logs -l app=oma-runner -c runner --since=30m | grep -e sandbox_sweep -e sandbox_sweeper_lead
+```
+
+The leading Runner, by its lock session's `application_name`
+(`oma-sandbox-sweeper <Pod name>`); run it as the environment's role, or one that
+sees the role's sessions, with the environment's schema (`oma` or `oma_test`):
+
+```sql
+SELECT a.application_name, a.client_addr, a.backend_start FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
+  AND l.classid = hashtext('oma_test')::oid AND l.objid = hashtext('sandbox_sweeper')::oid;
 ```
 
 Alerting is configured on the log service, not in the application: match the
 Runner containers' lines carrying `"msg":"sandbox_sweep"` and alert, per `env`,
-when no line arrived for 30 minutes (each Runner sweeps at least every 12
-minutes, so the sweeper is not running), when `error` is set or `failed` is above
-0 in consecutive rounds of a Runner (the gateway or PostgreSQL fails it), and
+when no line arrived for 30 minutes (the leader sweeps at least every 12
+minutes, and a lead given up or lost is taken within one period, so the sweeper
+is not running), when `error` is set or `failed` is above 0 in consecutive
+rounds (the gateway or PostgreSQL fails it), and
 when `deferred` stays above 0 or `orphans`, `unresolved` or `expired` stay high
 over several rounds (orphans or lost creation intents appear faster than they are
 swept; look for the creates behind them).

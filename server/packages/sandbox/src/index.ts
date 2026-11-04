@@ -42,7 +42,7 @@ export {
 
 export { killSandboxes, killBindingSandboxes, type SandboxKills } from "./sandbox-kill.js";
 
-export { SandboxSweeper, SWEEP_INTERVAL_MS, SWEEP_JITTER_MS, type SandboxSweeperDeps, type SweepRound } from "./sandbox-sweeper.js";
+export { SandboxSweeper, SWEEP_INTERVAL_MS, SWEEP_JITTER_MS, type SandboxSweeperDeps, type SweepRound, type SweeperLead } from "./sandbox-sweeper.js";
 
 export {
   E2BSandboxClient,
