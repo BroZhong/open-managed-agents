@@ -58,6 +58,18 @@ API Pods have no Pi config mount or Sandbox service account. The legacy
 `oma-server` Service is not declared; the production overlay routes `/api` to it
 as the live Ingress does.
 
+The API serves the Runner demand KEDA scales the Runners on (ADR-0026) at
+`GET /internal/runner-demand`, outside `API_BASE_PATH`: the public Ingress routes
+only `/api` to the API, so only the in-cluster Service `oma-api:3000` reaches it.
+It requires `Authorization: Bearer $RUNNER_DEMAND_TOKEN` (Secret
+`oma-runner-demand`, key `token`); without the variable the path is not served.
+The response is `{demand, executing, syncWaiting, ready, observedAt}`:
+`executing` counts Sessions whose head input is under a live claim and not in a
+synchronous delegation wait (Child Sessions included), `syncWaiting` those in
+such a wait, `ready` the unclaimed heads of Sessions not terminated, and
+`demand = executing + ready`. Each request reads PostgreSQL afresh with a 5 s
+timeout; a failure answers 503, never 0, so KEDA keeps the current replicas.
+
 Tenant model-provider configuration requires migration `0016_model_providers.sql`
 and the same `OMA_PROVIDER_ENCRYPTION_KEY` Secret reference in API and Runner.
 API lazily loads Pi only for an authenticated provider discovery/test request;
