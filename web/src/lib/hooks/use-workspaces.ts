@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
 /**
@@ -11,11 +11,15 @@ export interface Workspace {
   tenantId: string;
   name?: string;
   createdAt: string;
+  /** Agent-scoped latest visible Session modification time. */
+  updatedAt?: string;
   hasRunningSessions?: boolean;
 }
 
-interface WorkspacesResponse {
+export interface WorkspacesResponse {
   data: Workspace[];
+  has_more?: boolean;
+  next_cursor?: string;
 }
 
 /** List the tenant's Workspaces (GET /v1/workspaces, added in #55). */
@@ -27,15 +31,28 @@ export function useWorkspaces() {
   });
 }
 
-/** Discover every project independently of how many Sessions have been loaded. */
+/** Workspace discovery has its own cursor, independent of Session pages. */
 export function useAgentWorkspaces(agentId: string) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["workspaces", "byAgent", agentId],
-    queryFn: ({ signal }) =>
-      apiFetch<WorkspacesResponse>(`/v1/workspaces?agent_id=${encodeURIComponent(agentId)}`, { signal }).then((r) => r.data),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ agent_id: agentId, limit: pageParam ? "20" : "15" });
+      if (pageParam) params.set("cursor", pageParam);
+      return apiFetch<WorkspacesResponse>(`/v1/workspaces?${params}`, { signal });
+    },
+    getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.next_cursor : undefined,
     enabled: Boolean(agentId),
     refetchInterval: 15_000,
   });
+  // Activity can move a row across a previously loaded cursor boundary.
+  const unique = new Map<string, Workspace>();
+  for (const page of query.data?.pages ?? []) {
+    for (const workspace of page.data) {
+      if (!unique.has(workspace.id)) unique.set(workspace.id, workspace);
+    }
+  }
+  return { ...query, data: query.data ? [...unique.values()] : undefined };
 }
 
 /**

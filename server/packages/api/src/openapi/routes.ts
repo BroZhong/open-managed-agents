@@ -861,15 +861,17 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/workspaces",
     operationId: "listWorkspaces",
     summary: "List Workspaces",
-    description: "Returns all live Workspaces owned by the Tenant, ordered by creation time ascending. With agent_id, returns only named Workspaces with at least one visible non-Loop, non-delegated Session owned by that Agent. Workspace discovery is independent of Session pagination. This endpoint is not paginated.",
+    description: "Returns all live Workspaces owned by the Tenant, ordered by creation time ascending. With agent_id, returns only named Workspaces with at least one visible non-Loop, non-delegated Session owned by that Agent, ordered by the latest Session updatedAt descending, then Workspace ID descending. Agent-scoped discovery uses cursor pagination independently of Session pagination (default 50, maximum 100). Pass next_cursor with the same agent_id to continue. Without agent_id the tenant inventory remains unpaginated.",
     tags: ["Workspaces"],
     request: {
       query: z.object({
+        limit: z.coerce.number().int().min(1).max(100).optional(),
+        cursor: z.string().min(1).max(1024).optional(),
         agent_id: z.string().min(1).optional().openapi({
           param: { name: "agent_id", in: "query" },
           description: "Limit to named Workspaces used by this Agent's visible, non-Loop, non-delegated Sessions.",
         }),
-      }),
+      }).refine((query) => query.agent_id !== undefined || (query.limit === undefined && query.cursor === undefined), { message: "Workspace pagination requires agent_id" }),
     },
     responses: {
       200: jsonResponse(WorkspaceListSchema, "Tenant Workspaces"),

@@ -1,4 +1,9 @@
+import { encodeWorkspaceUpdatedAtCursor, decodeWorkspaceUpdatedAtCursor } from "@oma-server/store";
 import type {
+  AgentWorkspace,
+  AgentWorkspaceListOptions,
+  AgentWorkspaceListResult,
+  SessionStore,
   Workspace,
   WorkspaceMetadataStore,
   WorkspaceMetadataStoreCreateInput,
@@ -14,6 +19,8 @@ import type {
 export class InMemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
   private workspaces = new Map<string, Workspace>();
   private nextId = 1;
+
+  constructor(private readonly sessions?: Pick<SessionStore, "list">) {}
 
   private key(tenantId: string, id: string): string {
     return `${tenantId}\u0000${id}`;
@@ -46,6 +53,28 @@ export class InMemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
     return [...this.workspaces.values()]
       .filter((w) => w.tenantId === tenantId && (includeDeleted || !w.deletedAt))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async listByAgent(tenantId: string, agentId: string, opts: AgentWorkspaceListOptions): Promise<AgentWorkspaceListResult> {
+    const cursor = opts.cursor ? decodeWorkspaceUpdatedAtCursor(opts.cursor) : null;
+    if (opts.cursor && !cursor) return { data: [], hasMore: false };
+    if (!this.sessions) throw new Error("Session discovery is unavailable");
+    const matches: AgentWorkspace[] = [];
+    for (const workspace of await this.list(tenantId)) {
+      if (!workspace.name) continue;
+      const filters = { agentId, workspaceId: workspace.id, withoutLoop: true, excludeDelegated: true, order: "updated_at" as const, limit: 1 };
+      const latest = (await this.sessions.list(tenantId, filters)).data[0];
+      if (!latest) continue;
+      const active = await Promise.all((["running", "waiting"] as const).map((status) => this.sessions!.list(tenantId, { ...filters, status })));
+      matches.push({ ...workspace, updatedAt: latest.updatedAt, hasRunningSessions: active.some((page) => page.data.length > 0) });
+    }
+    const sorted = matches.filter((workspace) => !cursor || workspace.updatedAt.getTime() < Date.parse(cursor.updatedAt)
+      || (workspace.updatedAt.getTime() === Date.parse(cursor.updatedAt) && workspace.id < cursor.id))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    const data = sorted.slice(0, opts.limit);
+    const hasMore = sorted.length > opts.limit;
+    const last = data.at(-1);
+    return { data, hasMore, ...(hasMore && last ? { nextCursor: encodeWorkspaceUpdatedAtCursor(last.updatedAt.toISOString(), last.id) } : {}) };
   }
 
   async softDelete(tenantId: string, id: string): Promise<Workspace | null> {

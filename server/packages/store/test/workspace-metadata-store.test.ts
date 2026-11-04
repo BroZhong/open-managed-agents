@@ -52,6 +52,43 @@ describe("PgWorkspaceMetadataStore", () => {
     expect(await store.softDelete("other", hidden.id)).toBeNull();
   });
 
+  it("paginates Agent Workspace summaries after filtering and aggregates activity beyond the latest Session", async () => {
+    const sessions = new PgSessionStore(harness.pool);
+    const create = async (id: string, date: string, extra = {}) => {
+      await store.create({ tenantId: "tenant1", id, name: id });
+      const session = await sessions.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: id, ...extra });
+      await harness.pool.query("UPDATE sessions SET updated_at = $2 WHERE id = $1", [session.id, date]);
+      return session;
+    };
+    const active = await create("a", "2026-11-01T00:00:00Z");
+    await sessions.updateStatus(active.id, "waiting");
+    await harness.pool.query("UPDATE sessions SET updated_at = $2 WHERE id = $1", [active.id, "2026-11-01T00:00:00Z"]);
+    await create("a", "2026-11-03T00:00:00Z");
+    await create("b", "2026-11-02T00:00:00Z");
+    await create("c", "2026-11-02T00:00:00Z");
+    await create("loop", "2026-11-04T00:00:00Z", { loopId: "loop" });
+    await create("other", "2026-11-04T00:00:00Z", { agentId: "other" });
+    await create("child", "2026-11-04T00:00:00Z", { delegation: { parentSessionId: active.id, parentTurnId: "turn", parentToolUseId: "tool", sandboxSessionId: active.id } });
+    const removed = await create("deleted_session", "2026-11-04T00:00:00Z");
+    await sessions.softDelete(removed.id);
+    await create("deleted_workspace", "2026-11-04T00:00:00Z");
+    await store.softDelete("tenant1", "deleted_workspace");
+    await create("unnamed", "2026-11-04T00:00:00Z");
+    await store.update("tenant1", "unnamed", { name: "" });
+    await store.create({ tenantId: "tenant2", id: "a", name: "Foreign" });
+    const first = await store.listByAgent("tenant1", mockAgent.id, { limit: 2 });
+    expect(first.data.map((w) => w.id)).toEqual(["a", "c"]);
+    expect(first.data[0]).toMatchObject({ hasRunningSessions: true, updatedAt: new Date("2026-11-03T00:00:00Z") });
+    expect(first.data[1].hasRunningSessions).toBe(false);
+    expect(first.hasMore).toBe(true);
+    await store.softDelete("tenant1", "c");
+    const second = await store.listByAgent("tenant1", mockAgent.id, { limit: 2, cursor: first.nextCursor });
+    expect(second.data.map((w) => w.id)).toEqual(["b"]);
+    expect(second.hasMore).toBe(false);
+    expect(second.nextCursor).toBeUndefined();
+    expect((await store.listByAgent("tenant2", mockAgent.id, { limit: 5 })).data).toEqual([]);
+  });
+
   it("auto-creates a Workspace with ws_ prefix when no id is supplied", async () => {
     const ws = await store.create({ tenantId: "tenant1" });
     expect(ws.id).toMatch(/^ws_/);

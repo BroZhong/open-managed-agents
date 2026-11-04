@@ -20,6 +20,22 @@ export interface WorkspaceMetadataStoreUpdateInput {
   name?: string;
 }
 
+export interface AgentWorkspace extends Workspace {
+  updatedAt: Date;
+  hasRunningSessions: boolean;
+}
+
+export interface AgentWorkspaceListOptions {
+  limit: number;
+  cursor?: string;
+}
+
+export interface AgentWorkspaceListResult {
+  data: AgentWorkspace[];
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
 export interface WorkspaceMetadataStore {
   /**
    * Create a Workspace, or return the existing one if a Workspace with the
@@ -43,12 +59,9 @@ export interface WorkspaceMetadataStore {
     id: string,
     input: WorkspaceMetadataStoreUpdateInput,
   ): Promise<Workspace | null>;
-  /**
-   * List a tenant's Workspaces ordered by `createdAt` ascending. Returns a
-   * plain array (not a PaginatedResult): Workspaces are few per tenant, so
-   * cursor pagination is unnecessary — kept intentionally simpler than the
-   * agent/session list surfaces.
-   */
+  /** Unfiltered tenant inventory, ordered by creation time ascending. */
   list(tenantId: string, includeDeleted?: boolean): Promise<Workspace[]>;
+  /** Visible named Workspaces ordered by this Agent's latest Session update, then ID, descending. */
+  listByAgent(tenantId: string, agentId: string, opts: AgentWorkspaceListOptions): Promise<AgentWorkspaceListResult>;
   softDelete(tenantId: string, id: string): Promise<Workspace | null>;
 }

@@ -91,7 +91,7 @@ export function createMemoryStores(options: MemoryStoresOptions = {}): MemorySto
     },
   );
   const agentStore = new InMemoryAgentStore();
-  const workspaceStore = new InMemoryWorkspaceMetadataStore();
+  const workspaceStore = new InMemoryWorkspaceMetadataStore(sessionStore);
   const loopStore = new InMemoryLoopStore(
     agentStore,
     sessionStore,

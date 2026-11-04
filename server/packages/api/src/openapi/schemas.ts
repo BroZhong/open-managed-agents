@@ -265,10 +265,13 @@ export const WorkspaceSchema = z
 
 export const WorkspaceListSchema = z
   .object({ data: z.array(WorkspaceSchema.extend({
+    updatedAt: DateTimeSchema.optional().openapi({
+      description: "Present with agent_id: latest updatedAt among this Agent's visible non-Loop, non-delegated Sessions in the Workspace. Results are ordered by this timestamp descending, then Workspace ID descending.",
+    }),
     hasRunningSessions: z.boolean().optional().openapi({
       description: "Present with agent_id: whether a visible non-Loop, non-delegated Session for this Agent is running or waiting, independent of pagination.",
     }),
-  })) })
+  })), has_more: z.boolean().optional(), next_cursor: z.string().optional() })
   .openapi("WorkspaceList");
 
 export const SessionStatusSchema = z

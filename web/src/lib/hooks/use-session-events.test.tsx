@@ -650,7 +650,7 @@ describe("useSessionEvents history replay", () => {
       ["sessions", "byAgent", session.agentId, "parents"],
     ];
     if (scope === "workspace") {
-      queryClient.setQueryData(["workspaces", "byAgent", session.agentId], [{ id: session.workspaceId, name: "Project" }]);
+      queryClient.setQueryData(["workspaces", "byAgent", session.agentId], { pages: [{ data: [{ id: session.workspaceId, name: "Project" }], has_more: false }], pageParams: [undefined] });
       unrelatedKeys.push(["sessions", "byAgent", session.agentId, "loose", "parents"]);
     }
     for (const unrelatedKey of unrelatedKeys) queryClient.setQueryData(unrelatedKey, sessionPages([older]));

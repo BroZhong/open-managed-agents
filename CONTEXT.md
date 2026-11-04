@@ -264,6 +264,13 @@ Deleted Workspace IDs cannot be reused to create new Sessions.
 ## Console Session navigation
 
 The Agent sidebar discovers its named Workspaces independently of Session pages.
+Workspaces are ordered by their latest visible non-Loop, non-delegated Session's
+`updatedAt` for that Agent, descending, with descending Workspace ID as a stable
+tie-breaker. This includes Session status changes in collapsed Workspaces.
+The Workspace list initially loads fifteen rows and Show more appends twenty at a
+time with its own cursor. The store groups visible Sessions and sorts Workspaces
+before pagination; it does not load every Workspace into the API. Refreshes
+revalidate loaded pages, and a failed next-page request retains the existing rows.
 Each expanded Workspace initially loads five top-level, non-Loop Sessions;
 Sessions are ordered by most recent modification (`updatedAt` descending),
 including live Turn status changes, with descending ID as a stable tie-breaker.
