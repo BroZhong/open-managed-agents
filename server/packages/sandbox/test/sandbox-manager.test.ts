@@ -1,3 +1,4 @@
+import { WorkspaceMountUnavailable } from "../src/workspace-mount.js";
 import { describe, it, expect, vi } from "vitest";
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import {
@@ -765,6 +766,21 @@ describe("the binding keeps the last Sandbox unavailability for the Session API 
     const recovered = await sandbox();
     expect(recovered).toMatchObject({ state: "ready", lastError: null });
     expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(first.lastError!.at.getTime());
+  });
+
+  it("retains getInfo diagnostics as unreachable and retries the same Sandbox", async () => {
+    const { client, manager } = makeManager();
+    const { binding, sandbox } = storeBinding();
+    const diagnostic = { stage: "get_info", category: "timeout", durationMs: 20000 } as const;
+    vi.spyOn(client, "verifyWorkspaceMount").mockRejectedValueOnce(new WorkspaceMountUnavailable(diagnostic));
+    await expect(manager.open(specFor(), binding).writeFile("a.txt", "x")).rejects.toMatchObject({
+      reason: "unreachable", diagnostic, details: { reason: "unreachable", stage: "get_info", category: "timeout", durationMs: "20000" },
+    });
+    await settle();
+    expect(await sandbox()).toMatchObject({ state: "unavailable", lastError: { reason: "unreachable" } });
+    await manager.open(specFor(), binding).writeFile("a.txt", "x");
+    expect(client.created).toHaveLength(1);
+    expect(await sandbox()).toMatchObject({ state: "ready", lastError: null });
   });
 
   it("records a failed mount of a Sandbox it just created against that Sandbox", async () => {

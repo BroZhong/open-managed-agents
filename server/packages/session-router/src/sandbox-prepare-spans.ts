@@ -100,7 +100,7 @@ export class SandboxPrepareSpans implements SandboxPrepareObserver {
   }
 }
 
-type EndFields = Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs">;
+type EndFields = Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs" | "diagnostic">;
 
 /** An end's own fields; the start's Environment and image carry over unless a ready end names its Sandbox's (ADR-0024). */
 function endOf(outcome: SandboxPrepareOutcome): EndFields {
@@ -112,7 +112,8 @@ function endOf(outcome: SandboxPrepareOutcome): EndFields {
         ...(claim ? { ...(claim.swapped === undefined ? {} : { swapped: claim.swapped }), claimMs: claim.claimMs } : {}) };
     }
     case "deferred": return { outcome: "deferred" };
-    case "failed": return { outcome: "failed", code: outcome.error.code, reason: outcome.error.reason };
+    case "failed": return { outcome: "failed", code: outcome.error.code, reason: outcome.error.reason,
+      ...(outcome.error.diagnostic ? { diagnostic: outcome.error.diagnostic } : {}) };
     case "aborted": return { outcome: "aborted", reason: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason) };
   }
 }

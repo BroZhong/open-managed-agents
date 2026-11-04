@@ -6,6 +6,7 @@ import {
 import {
   WorkspaceMountUnavailable,
   type WorkspaceMountTarget,
+  type WorkspaceMountDiagnostic,
 } from "./workspace-mount.js";
 import { ExecAbortedBeforeStartError, SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -272,10 +273,23 @@ export class E2BSandboxClient implements SandboxClient {
     id: string,
     target: WorkspaceMountTarget,
   ): Promise<void> {
-    try {
-      const sandbox = this.require(id);
-      const requested = this.creationMetadata.get(id) ?? {};
-      const info = await sandbox.getInfo({ requestTimeoutMs: CONTROL_REQUEST_MS.getInfo });
+    const stage = async <T>(
+      name: WorkspaceMountDiagnostic["stage"], work: () => Promise<T>,
+    ): Promise<T> => {
+      const started = this.clock();
+      try {
+        return await work();
+      } catch (error) {
+        throw new WorkspaceMountUnavailable({
+          stage: name, category: mountFailureCategory(error),
+          durationMs: Math.max(0, Math.round(this.clock() - started)),
+        });
+      }
+    };
+    const sandbox = this.require(id);
+    const requested = this.creationMetadata.get(id) ?? {};
+    const info = await stage("get_info", () => sandbox.getInfo({ requestTimeoutMs: CONTROL_REQUEST_MS.getInfo }));
+    await stage("metadata", async () => {
       const volume = JSON.parse(
         requested["e2b.agents.kruise.io/csi-volume-config"] ?? "null",
       )?.[0];
@@ -298,6 +312,8 @@ export class E2BSandboxClient implements SandboxClient {
       ) {
         throw new WorkspaceMountUnavailable();
       }
+    });
+    const probe = await stage("probe", async () => {
       const result = await this.observeRemote(id, () => sandbox.commands.run(
         ["python3", "-c", WORKSPACE_MOUNT_PROBE, target.mountPath]
           .map(shellQuote)
@@ -312,31 +328,39 @@ export class E2BSandboxClient implements SandboxClient {
         !/^\/run\/csi\/mount-root\/oss\/[a-f0-9]{32}$/.test(probe.realPath)
       )
         throw new WorkspaceMountUnavailable();
+      return probe;
+    });
+    // Preserve the first failed stage if cleanup fails too; neither error carries raw diagnostics.
+    let readbackFailure: unknown;
+    try {
+      await stage("readback", () => this.verifyWorkspaceProbe(target, probe.probeName, probe.content));
+    } catch (error) {
+      readbackFailure = error;
+      throw error;
+    } finally {
       try {
-        await this.verifyWorkspaceProbe(target, probe.probeName, probe.content);
-      } finally {
-        const cleanup = await this.observeRemote(id, () => sandbox.commands.run(
-          [
-            "python3",
-            "-c",
-            WORKSPACE_MOUNT_PROBE_CLEANUP,
-            probe.realPath,
-            probe.probeName,
-          ]
-            .map(shellQuote)
-            .join(" "),
-          { user: "user", cwd: "/home/user", timeoutMs: 20_000 },
-        ));
-        if (
-          cleanup.exitCode !== 0 ||
-          cleanup.stdout.trim() !== "OMA_WORKSPACE_PROBE_REMOVED"
-        )
-          throw new WorkspaceMountUnavailable();
+        await stage("cleanup", async () => {
+          const cleanup = await this.observeRemote(id, () => sandbox.commands.run(
+            [
+              "python3",
+              "-c",
+              WORKSPACE_MOUNT_PROBE_CLEANUP,
+              probe.realPath,
+              probe.probeName,
+            ]
+              .map(shellQuote)
+              .join(" "),
+            { user: "user", cwd: "/home/user", timeoutMs: 20_000 },
+          ));
+          if (
+            cleanup.exitCode !== 0 ||
+            cleanup.stdout.trim() !== "OMA_WORKSPACE_PROBE_REMOVED"
+          )
+            throw new WorkspaceMountUnavailable();
+        });
+      } catch (error) {
+        if (!readbackFailure) throw error;
       }
-    } catch {
-      // SDK/provider errors can contain sensitive diagnostics. Keep the error
-      // stable and safe for the Agent, Turn stream and application logs.
-      throw new WorkspaceMountUnavailable();
     }
   }
 
@@ -819,3 +843,24 @@ function createFailed(error: unknown): never {
 /** Default factory over the real e2b SDK. */
 const defaultCreateSandbox: CreateSandboxFn = (template, opts) =>
   Sandbox.create(template, opts) as unknown as Promise<E2BSandbox>;
+
+/** Whitelist error types/codes, including fetch's nested cause, without copying messages or stacks. */
+function mountFailureCategory(error: unknown): WorkspaceMountDiagnostic["category"] {
+  if (error instanceof WorkspaceMountUnavailable) return "verification_failed";
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 4 && error && typeof error === "object" && !seen.has(error); depth++) {
+    seen.add(error);
+    const { name, code, cause } = error as { name?: unknown; code?: unknown; cause?: unknown };
+    if (name === "TimeoutError" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" ||
+      code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_BODY_TIMEOUT") return "timeout";
+    if (name === "AbortError" || code === "ABORT_ERR") return "aborted";
+    if (name === "AuthenticationError") return "authentication";
+    if (name === "SandboxNotFoundError" || name === "NotFoundError") return "not_found";
+    if (name === "RateLimitError") return "rate_limit";
+    if (name === "SyntaxError") return "invalid_response";
+    if (code === "ECONNRESET" || code === "ECONNREFUSED" || code === "EPIPE" || code === "ENOTFOUND" ||
+      code === "EAI_AGAIN" || code === "UND_ERR_SOCKET") return "network";
+    error = cause;
+  }
+  return "unknown";
+}

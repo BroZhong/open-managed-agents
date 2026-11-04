@@ -406,6 +406,8 @@ export interface SpanSandboxPrepareEndEvent extends BaseEvent {
   /** `failed` only: `sandbox_unavailable` or `sandbox_creating`. */
   code?: string;
   reason?: string;
+  /** Safe preparation failure classification; never raw provider diagnostics. */
+  diagnostic?: { stage: string; category: string; durationMs: number };
   /**
    * As the start's (ADR-0024); for `ready`, what `sandboxId` was created
    * with: the claim's Environment and image, or for a Sandbox it reused the
