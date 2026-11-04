@@ -405,8 +405,10 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         await tx.remove("resource_uses", use.pendingEventId);
       }
       // A queued accepted child still depends on the same Sandbox (e.g.
-      // parent-created /tmp inputs), even before its input is claimed.
-      for (const execution of await tx.read<DelegationExecution>("executions", { status: "queued" })) {
+      // parent-created /tmp inputs), even before its input is claimed. The
+      // binding is its root's, so these are the root's own executions: the
+      // read stays within the family, and locks no other family's Sessions.
+      for (const execution of await tx.read<DelegationExecution>("executions", { callerSessionId: sandboxSessionId, status: "queued" })) {
         const child = await tx.sessions.getById(execution.childId);
         if (child?.status !== "terminated" && child?.delegation?.sandboxSessionId === sandboxSessionId) return true;
       }

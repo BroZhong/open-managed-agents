@@ -104,6 +104,23 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
       expect(await sameFamily).toBe(true);
     } finally { await blocker.query("ROLLBACK").catch(() => {}); blocker.release(); }
   });
+  it("judges a Sandbox's reclaimability from its own family's rows alone, while another family's Child Session row is held (ADR-0027)", async () => {
+    const other = await family("other");
+    // The other family has a queued child, whose Session row a transaction
+    // outside the store holds, as a starting claim's fence check would.
+    const otherChild = await stores.delegationStore.accept(other.caller, other.fence);
+    const blocker = await harness.pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM sessions WHERE id = $1 FOR UPDATE", [otherChild.childId]);
+      expect(await within(stores.delegationStore.hasResourceUsers(caller.callerSessionId))).toBe("settled");
+      expect(await stores.delegationStore.hasResourceUsers(caller.callerSessionId)).toBe(false);
+      // Its own queued child still keeps the Sandbox in use.
+      await stores.delegationStore.accept(caller, parentFence);
+      expect(await within(stores.delegationStore.hasResourceUsers(caller.callerSessionId))).toBe("settled");
+      expect(await stores.delegationStore.hasResourceUsers(caller.callerSessionId)).toBe(true);
+    } finally { await blocker.query("ROLLBACK").catch(() => {}); blocker.release(); }
+  });
   it("publishes before it consumes, once, while many families finish and consume at once", async () => {
     const families = await Promise.all(Array.from({ length: 6 }, (_, index) => family(`parent-${index}`)));
     const runs = await Promise.all(families.map(async ({ caller: own, fence }) => {
