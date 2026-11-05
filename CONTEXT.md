@@ -62,12 +62,16 @@ A durable task prompt accepted by `Agent`, either for a new Child Session or for
 _Avoid_: new Agent configuration, user message (its origin is delegation)
 
 **Delegation Execution**:
-The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; the Host assigns 500 steps by default to each execution, including resume. The parent cannot override the budget; budget exhaustion returns a status for the parent to decide whether to resume. Its child Turn resumes on another Runner like any **Resumed Turn**, keeping its step count and its slot of the parent's concurrency limit.
+The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; the Host assigns 500 steps by default to each execution, including resume. The parent cannot override the budget; budget exhaustion returns a status for the parent to decide whether to resume. Its child Turn resumes on another Runner like any **Resumed Turn**, keeping its step count. An execution is unfinished from its acceptance until it ends, also while its owner is lost. A parent has at most four unfinished executions, counted when `Agent` accepts the input: a fifth `Agent` call, background or `resume` alike, returns a tool error and the parent's Turn continues. An accepted execution starts as soon as a Runner claims its input (ADR-0027).
 _Avoid_: childId (the Child Session can contain multiple executions)
 
 **Delegation Result**:
 A durable outcome for one Delegation Execution, with terminal reason, output and child trace reference. Asynchronous results appear in parent history immediately and become model input only when claimed. Synchronous results finish the waiting tool in the original Turn. A result reports execution facts and does not certify that generated artifacts satisfy the task.
 _Avoid_: user message, completed artifact, callback Promise
+
+**Delegation Family**:
+A parent Session and its **Child Sessions**. Nested delegation is unsupported, so the parent is the family's root; its Session ID names the family, as it names the **Sandbox Binding** they share. Delegation coordination is serialized within one family and never across families. See ADR-0027.
+_Avoid_: session tree, delegation group, lineage
 
 **Loop**:
 An Agent-owned recurring instruction. On each due interval the Host creates a fresh **Workspace** and **Session**, links the Session to the Loop, durably records the Loop's prompt as the Session's first pending input, and then starts its first **Turn**. Every scheduled occurrence creates a new Session; a Loop does not reuse a previous Session or Workspace. Missed intervals coalesce into one occurrence when scheduling resumes, and a manual run does not move the recurring cadence. The console nests the Sessions created by a Loop beneath that Loop on the Agent page.
@@ -90,7 +94,7 @@ A user's demand that the **Session**'s currently running **Turn** stop now. An I
 _Avoid_: cancel, stop the session, kill (an Interrupt ends a Turn, not a Session)
 
 **Queued Input**:
-A user message, Delegation Input, or Delegation Result that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history with its actual input source; so a given input is either queued or executing, never both.
+A user message, Delegation Input, or Delegation Result that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history with its actual input source; so a given input is either queued or executing, never both. A Delegation Input never waits for room under its parent's limit: the limit is checked when it is accepted, and the first Runner to claim it starts it.
 _Avoid_: pending message, optimistic message, draft, backlog
 
 **Interrupted Turn**:
@@ -337,6 +341,10 @@ Unknown Sandbox execution suppresses idle conversion for its generation; native
 finite deadlines still apply. Explicit cleanup preserves legitimate shared users
 and retries confirmed deletion through the existing outbox. See ADR-0019.
 See ADR-0018 and `docs/api-runner-operations.md`.
+
+**Runner Capacity**:
+The number of **Turns** one Runner executes at once, at most N (`RUNNER_CAPACITY`, default 50). Only executing Turns count: a Turn whose in-flight tool calls are all synchronous delegation waits gives its place back until its wait ends, and then continues even above N. A Runner claims a top-level Session's input only below N; a **Child Session**'s input is always claimed, because its waiting parent depends on it, and counts. A full Runner ignores wakes for top-level input and claims the next as soon as a place frees. KEDA sizes the Runner fleet to about 40 executing or ready Sessions per Runner, and a Runner removed by a scale-down hands its Turns over. See ADR-0026.
+_Avoid_: concurrency limit, slots, quota (the parent's limit on unfinished Delegation Executions is a different thing)
 
 ## User-owned model providers
 

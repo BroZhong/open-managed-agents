@@ -9,7 +9,7 @@ await usePiSettings();
  * A Child Session's Turn continues on another Runner like any other Turn
  * (#252): the claim that takes its input over takes its Delegation Execution
  * over, the parent's synchronous wait receives the child's real result, the
- * step budget continues from the log, a running sibling keeps its slot of the
+ * step budget continues from the log, a running sibling counts against the
  * parent's limit until it ends, and an Interrupt the parent asked for before
  * the child's Runner was lost ends the child's Turn as an Interrupted Turn.
  */
@@ -285,9 +285,10 @@ describe("C9 the child's steering instruction is the last thing its log holds wh
   });
 });
 
-describe("C10 siblings whose owner was lost keep their slot", () => {
-  it("C10 one slot, two synchronous children, the running one's Runner is lost: it resumes in its slot, the other waits for it, none ends recovery_required", async () => {
+describe("C10 a sibling whose owner was lost counts against the parent's limit", () => {
+  it("C10 a limit of one, two synchronous calls, the accepted child's Runner is lost: the other call is refused, the child resumes, a call after it ended is accepted, none ends recovery_required", async () => {
     const tasks: Record<string, string> = { call_api: "inspect the api", call_web: "inspect the web" };
+    const refusedOf = (request: ModelRequest) => Object.keys(tasks).filter((id) => request.results.get(id)?.text.includes("unfinished subagents"));
     let mostRunning = 0;
     const scenario: Scenario = {
       inputs: [PARENT_INPUT],
@@ -301,8 +302,10 @@ describe("C10 siblings whose owner was lost keep their slot", () => {
           const id = `bash_${task.split(" ").at(-1)}`;
           return request.results.has(id) ? answer(`${task}: green`) : use(bash(id, "make check"));
         }
-        return Object.keys(tasks).every((id) => request.results.has(id)) ? answer("both are green")
-          : use(text("delegating"), ...Object.entries(tasks).map(([id, task]) => agent(id, task)));
+        if (!request.results.size) return use(text("delegating"), ...Object.entries(tasks).map(([id, task]) => agent(id, task)));
+        // The refused call is made again once the first child has ended (ADR-0027).
+        const retries = refusedOf(request).map((id) => agent(`${id}_again`, tasks[id]));
+        return retries.every((retry) => request.results.has(retry.id)) ? answer("both are green") : use(...retries);
       },
       // The first child to run loses its Runner while its bash runs.
       tool: (_call, run) => {
@@ -318,15 +321,18 @@ describe("C10 siblings whose owner was lost keep their slot", () => {
     const [lost] = outcome.losses;
     const first = outcome.executions.find((execution) => execution.childId === lost.sessionId)!;
     const second = outcome.executions.find((execution) => execution !== first)!;
-    // The lost child kept running in its slot until its takeover finished it; only then did its sibling start.
+    const refused = Object.keys(tasks).find((id) => id !== first.callerToolUseId)!;
+    expect(second.callerToolUseId).toBe(`${refused}_again`);
+    // The lost child kept running until its takeover finished it; only then was the refused task delegated again.
     expect(markers(outcome.sessions.find((session) => session.id === first.childId)!.log))
       .toEqual([expect.objectContaining({ reason: "expired", danglingToolUseIds: [`bash_${first.prompt.split(" ").at(-1)}`] })]);
     const [firstCompleted] = typesOf(outcome.sessions.find((session) => session.id === first.childId)!.log, "session.turn_completed");
     const [secondRunning] = typesOf(outcome.sessions.find((session) => session.id === second.childId)!.log, "session.status_running");
     expect(secondRunning.ts.getTime()).toBeGreaterThanOrEqual(firstCompleted.ts.getTime());
-    for (const [id, task] of Object.entries(tasks)) {
-      expect(resultOf(parentAnswered(outcome), id)).toMatchObject({ status: "completed", result: { output: `${task}: green` } });
-    }
+    const answered = parentAnswered(outcome);
+    expect(answered.results.get(refused)?.text).toContain("1 unfinished subagents");
+    expect(resultOf(answered, first.callerToolUseId)).toMatchObject({ status: "completed", result: { output: `${tasks[first.callerToolUseId]}: green` } });
+    expect(resultOf(answered, second.callerToolUseId)).toMatchObject({ status: "completed", result: { output: `${tasks[refused]}: green` } });
   });
 });
 

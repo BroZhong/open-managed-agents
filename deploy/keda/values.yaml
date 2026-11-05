@@ -1,0 +1,29 @@
+# Values for the ACK App Catalog chart ack-keda 2.21.0 (KEDA 2.21.0) on the
+# agent-platform cluster, installed as release ack-keda in kube-system. See
+# deploy/keda/README.md for install, verification and rollback.
+
+# The console substitutes __ACK_REGION_ID__; a Helm CLI install must set it.
+image:
+  keda:
+    registry: registry-cn-shanghai-vpc.ack.aliyuncs.com
+  metricsApiServer:
+    registry: registry-cn-shanghai-vpc.ack.aliyuncs.com
+  webhooks:
+    registry: registry-cn-shanghai-vpc.ack.aliyuncs.com
+crd:
+  image:
+    repository: registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/kubectl
+
+clusterName: agent-platform
+
+# Only the OMA environments are scaled; KEDA ignores objects elsewhere.
+watchNamespace: oma-test,oma-infra
+
+# Every Pod of this cluster runs on ACS, like the OMA workloads.
+podLabels:
+  keda:
+    alibabacloud.com/acs: 'true'
+  metricsAdapter:
+    alibabacloud.com/acs: 'true'
+  webhooks:
+    alibabacloud.com/acs: 'true'

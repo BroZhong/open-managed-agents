@@ -37,26 +37,41 @@ Stopping a Runner (rollout, scale-down, `kubectl delete pod`) hands its running
 Turns to the other Runners (ADR-0021). On SIGTERM it stops scanning and claiming
 and asks each running Turn to stop before its next model request: a tool that is
 running finishes and keeps its result. A Turn still in a tool when
-`SHUTDOWN_GRACE_MS` (20 s) runs out is detached; its Sandbox process is not
-stopped, and the next owner tells the Agent that call's outcome is unknown. Each
-claim is released and another Runner takes the Turn over at once on the `wake`
-signal, or within one scan without Redis; the trace shows a `session.turn_resumed`
-with reason `released`. Releasing the claims may take up to 5 s after the grace
-period, so keep the Pod's termination grace period at the Kubernetes default of
-30 s or more. A handoff needs another Runner to continue the Turn: with a single
+`SHUTDOWN_GRACE_MS` (45 minutes, ADR-0026) runs out is detached; its Sandbox
+process is not stopped, and the next owner tells the Agent that call's outcome is
+unknown. Each claim is released and another Runner takes the Turn over at once on
+the `wake` signal, or within one scan without Redis; the trace shows a
+`session.turn_resumed` with reason `released`. Releasing the claims may take up
+to 5 s after the grace period, so the Pod's termination grace period is
+`SHUTDOWN_GRACE_MS` plus 60 s (2760 s). ACS honours it, and stops the liveness
+probe once the Pod is deleted (measured 2026-11-04). A handoff needs another Runner to continue the Turn: with a single
 Runner, the Turn continues when the replacement Pod is ready. On the test
 cluster's virtual kubelet, `kubectl delete pod --force --grace-period=0` still
 delivers SIGTERM, so it tests the handoff; to test a lost Runner (lease expiry,
 reason `expired`), kill the process with SIGKILL inside the container.
 
-Each environment runs one API and two Runners (2 CPU / 8 GiB each). A rolling
-update starts a new Runner before an old one receives SIGTERM, which then hands
-its running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
+Each environment runs one API and 2 CPU / 8 GiB Runners: on test KEDA scales
+them between 2 and 50 on their demand, production runs five (ADR-0026,
+`deploy/README.md` "Runner autoscaling"). A rolling
+update starts new Runners, a quarter of them at a time, before old ones receive
+SIGTERM, which then hand their running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
 provides separate ConfigMaps, Deployments, readiness probes and internal Services;
 `deploy/environments/` adds each environment's namespace and configuration.
 API Pods have no Pi config mount or Sandbox service account. The legacy
 `oma-server` Service is not declared; the production overlay routes `/api` to it
 as the live Ingress does.
+
+The API serves the Runner demand KEDA scales the Runners on (ADR-0026) at
+`GET /internal/runner-demand`, outside `API_BASE_PATH`: the public Ingress routes
+only `/api` to the API, so only the in-cluster Service `oma-api:3000` reaches it.
+It requires `Authorization: Bearer $RUNNER_DEMAND_TOKEN` (Secret
+`oma-runner-demand`, key `token`); without the variable the path is not served.
+The response is `{demand, executing, syncWaiting, ready, observedAt}`:
+`executing` counts Sessions whose head input is under a live claim and not in a
+synchronous delegation wait (Child Sessions included), `syncWaiting` those in
+such a wait, `ready` the unclaimed heads of Sessions not terminated, and
+`demand = executing + ready`. Each request reads PostgreSQL afresh with a 5 s
+timeout; a failure answers 503, never 0, so KEDA keeps the current replicas.
 
 Tenant model-provider configuration requires migration `0016_model_providers.sql`
 and the same `OMA_PROVIDER_ENCRYPTION_KEY` Secret reference in API and Runner.
@@ -134,7 +149,9 @@ explicitly. The following commands are for the separately authorized release:
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra rollout status deployment/oma-runner
    ```
 
-5. On staging (the `oma-test` environment in `deploy/README.md`) first, scale to two APIs and two Runners. Submit to one API while
+5. On staging (the `oma-test` environment in `deploy/README.md`) first, run two APIs and at least two Runners: KEDA owns the
+   test Runner count (ADR-0026), so raise it through the ScaledObject's `minReplicaCount` or the
+   `autoscaling.keda.sh/paused-replicas` annotation, never `kubectl scale`. Submit to one API while
    streaming from both; reconnect through the other API. Verify one promoted input,
    increasing unique durable sequences, complete final output and idle status.
    Delete one API Pod during a long Turn; its Runner must continue. Stop Redis and
@@ -162,7 +179,9 @@ explicitly. The following commands are for the separately authorized release:
    its additive termination-event handling lets open pages reflect remote deletion.
 9. Record cleanup retries (`session_cleanup`), unknown activity retention
    (`sandbox_activities`), PG scan failures and the real image-pair evidence.
-   Return production to its configured counts (one API, two Runners) after staging scale tests.
+   Return staging to its configured counts after its scale tests: one API, and the Runners to the ScaledObject's own
+   bounds (remove the pause annotation or restore `minReplicaCount`). Production runs one API and the five Runners its
+   overlay pins until its ScaledObject (ADR-0026 phase 3); it is not scaled for these tests.
 
 ## Rollback and recovery
 

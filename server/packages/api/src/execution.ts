@@ -1,7 +1,7 @@
 import { SessionRouter } from "@oma-server/session-router";
 import { DefaultSandboxManager, DefaultTurnSandboxes, E2BSandboxClient, SandboxSweeper, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
-import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
+import { PgAdvisoryLeadership, PgSessionCleanupStore, pgConfigFromEnv, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
 import { runtimeAdapters } from "./lib/runtime-adapters.js";
@@ -11,6 +11,7 @@ import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
 import { sandboxSignals } from "./lib/sandbox-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
+import { runnerCapacityFromEnv, runnerClaimOwnerId, runnerPodName } from "./lib/runner-capacity.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
@@ -21,6 +22,9 @@ export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
   skillBundleStore: SkillBundleStore; eventStreamHub: EventStreamHub; turnStreamStore: TurnStreamStore;
 }, execution?: { resolveAdapter(runtime: string): Adapter | undefined; sandboxManager: SandboxManager; workspaceMount: Omit<WorkspaceMountSpec, "prefix"> }) {
+  // A Runner with an invalid capacity refuses to start (ADR-0026).
+  const capacity = runnerCapacityFromEnv(process.env);
+  const owner = runnerClaimOwnerId(process.env);
   const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
   if (proxyUrl && !deps.local) {
     const { ProxyAgent, setGlobalDispatcher } = await import("undici");
@@ -72,27 +76,32 @@ export async function startExecution(deps: PgStores & {
       runtimeAdapters(deps.local ? { mock: mockAdapter } : { "pi-agent": piAgentAdapter, mock: mockAdapter }),
     wakeSession: sessionId => deps.signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => deps.signals.publish({ sessionId, kind: "check" }),
+    capacity, pendingClaimOwnerId: owner,
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
     maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 500),
     onDrainError: reportDrainFailure,
   });
   const cleanup = new PgSessionCleanupStore(deps.pool);
   const dispatch = new RunnerDispatch({
-    router, sessions: deps.sessionStore, signals: deps.signals,
+    router, sessions: deps.sessionStore, signals: deps.signals, owner,
     scanIntervalMs: Number(process.env.PENDING_SCAN_INTERVAL_MS ?? 5000),
     cleanup: () => cleanup.sweep(id => router.cleanupTerminatedSession(id)),
   });
   await dispatch.start();
   const loops = new LoopScheduler({ loopStore: deps.loopStore, sessionRouter: router, pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000) });
   loops.start();
-  // Only Runners sweep their environment's Sandboxes (ADR-0023): a round every
-  // 10 minutes ± 2, the first at a random point, each written as one
-  // `sandbox_sweep` log line. Shutdown stops it before its next action. It
-  // kills a Sandbox a binding records by reclaiming the binding through the
-  // Runner's Sandbox Manager, as termination does.
+  // Only Runners sweep their environment's Sandboxes (ADR-0023), and of them
+  // the one that leads (ADR-0026): every 10 minutes ± 2, the first at a random
+  // point, each Runner asks for the lead, and the leader's rounds are each
+  // written as one `sandbox_sweep` log line. Shutdown stops it before its next
+  // action and gives the lead up. It kills a Sandbox a binding records by
+  // reclaiming the binding through the Runner's Sandbox Manager, as
+  // termination does. The lead is an advisory lock on a connection of its
+  // own, outside the Runner's pool, named after the Pod in pg_stat_activity.
   const sweeper = native && sandboxManager ? new SandboxSweeper({
     client: native.client, facts: native.lifecycle, bindings: deps.delegationStore, manager: sandboxManager,
     environment: native.environment, sandboxSignals: native.hints,
+    leadership: new PgAdvisoryLeadership(pgConfigFromEnv(), "sandbox_sweeper", `oma-sandbox-sweeper ${runnerPodName(process.env)}`),
   }) : undefined;
   sweeper?.start();
   return { router, ready: () => dispatch.ready, stop: async () => { platformSecrets.stop(); await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };

@@ -196,8 +196,8 @@ describe("database load of N Runners", () => {
         "waiting parent-seconds": round(waitSeconds, 0),
         "poll /s per waiting parent": round(poll / waitSeconds, 1),
         "wake fan-out /s per waiting parent": round(fanOut / waitSeconds, 1),
-        "global delegation_lock transactions per delegation": round(calls.filter((call) =>
-          call.statements.some((statement) => statement.table === "delegation_lock")).length / parents, 1),
+        "Delegation Family lock transactions per delegation": round(calls.filter((call) =>
+          call.statements.some((statement) => statement.table === "delegation_family")).length / parents, 1),
         "heartbeat listCommands (seq scan) /s per active child": round(commandPolls / waitSeconds),
       };
       summary.push(row);

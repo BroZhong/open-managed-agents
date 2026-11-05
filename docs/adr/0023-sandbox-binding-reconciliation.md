@@ -22,6 +22,13 @@ Sandboxes only; reconciliation keeps the earliest claimed one (not "a running
 one, else the earliest claimed"), the sweeper has no `paused` keep class, and
 an unused Ready Sandbox is shortened to 15 minutes and then deleted.
 
+Revised by [ADR-0026](0026-runner-capacity-and-autoscaling.md): one Runner per
+sweeper period runs the sweeper, the one holding a PG advisory lock keyed by
+the schema, which reopens the rejected alternative below for load at up to 50
+Runners. Its objection stays a constraint: the lock is never held on a
+connection the round's own queries wait behind. Each action is still decided
+under the binding's row lock.
+
 ## Context
 
 A binding (`delegation_environments`, one per root Session, shared by its Child

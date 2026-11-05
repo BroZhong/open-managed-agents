@@ -1,4 +1,6 @@
-import { createPgStores, PgDelegationStore, PgSandboxLifecycleStore, type Pool } from "@oma-server/store";
+import { describe, expect, it } from "vitest";
+import { createPgStores, PgAdvisoryLeadership, PgDelegationStore, PgSandboxLifecycleStore, type Pool } from "@oma-server/store";
+import { DefaultSandboxManager, FakeSandboxClient, SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, SandboxSweeper } from "@oma-server/sandbox";
 import { createPgTestHarness, type PgTestHarness } from "../../store/test/pg-harness.js";
 import { sandboxSweeperContract, type SweeperStores } from "../../sandbox/test/sandbox-sweeper-contract.js";
 
@@ -58,3 +60,56 @@ sandboxSweeperContract("the Sandbox sweeper over PostgreSQL", async () => {
   // On pg-mem, without row locks, two Runners' concurrent rounds are not
   // PostgreSQL's, and Turn admission and reclamation do not parse.
 }, { teardown: async () => { await harness?.close(); }, rowLocks: Boolean(process.env.PG_TEST_URL), reclamation: Boolean(process.env.PG_TEST_URL) });
+
+/**
+ * One Runner of an environment sweeps per period (ADR-0026, #326): the
+ * Runners share the schema and the gateway, and each asks for the lead at
+ * its own period. A period is driven here as each Runner's timer drives it.
+ */
+describe.skipIf(!process.env.PG_TEST_URL)("one Runner sweeps per period over PostgreSQL, the one holding the schema's advisory lock", () => {
+  async function environment() {
+    const harness = await createPgTestHarness();
+    const gateway = new FakeSandboxClient();
+    const runner = () => {
+      const lifecycle = new PgSandboxLifecycleStore(harness.pool);
+      const rounds: unknown[] = [];
+      const sweeper = new SandboxSweeper({ client: gateway, facts: lifecycle, bindings: new PgDelegationStore(harness.pool),
+        manager: new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle }), environment: "test",
+        leadership: new PgAdvisoryLeadership({ connectionString: process.env.PG_TEST_URL, schema: harness.schema }, "sandbox_sweeper", "oma-runner"),
+        logger: { info: (line: string) => { const parsed = JSON.parse(line); if (parsed.msg === "sandbox_sweep") rounds.push(parsed); } } });
+      return { sweeper, rounds };
+    };
+    const orphan = async () => (await gateway.create({ image: "image", metadata: { [SANDBOX_BINDING_LABEL]: `sesn_gone_${gateway.created.length}`, [SANDBOX_ENVIRONMENT_LABEL]: "test" } })).id;
+    return { harness, gateway, runner, orphan };
+  }
+
+  it("sweeps on the Runner that asked first, every period, and on another from its next period once that one stops", async () => {
+    const env = await environment();
+    try {
+      const [a, b] = [env.runner(), env.runner()];
+      const first = await env.orphan();
+      expect(await a.sweeper.period()).toEqual(expect.objectContaining({ killed: 1 }));
+      expect(await b.sweeper.period()).toBeNull();
+      const second = await env.orphan();
+      expect(await b.sweeper.period()).toBeNull();
+      expect(await a.sweeper.period()).toEqual(expect.objectContaining({ killed: 1 }));
+      expect(env.gateway.destroyed).toEqual([first, second]);
+      await a.sweeper.stop();
+      const third = await env.orphan();
+      expect(await b.sweeper.period()).toEqual(expect.objectContaining({ killed: 1 }));
+      expect(env.gateway.destroyed).toEqual([first, second, third]);
+      expect([a.rounds.length, b.rounds.length]).toEqual([2, 1]);
+      await b.sweeper.stop();
+    } finally { await env.harness.close(); }
+  });
+
+  it("elects a Runner in each environment: another schema's leader excludes none of this one's", async () => {
+    const [production, test] = [await environment(), await environment()];
+    try {
+      const [here, there] = [production.runner(), test.runner()];
+      expect(await here.sweeper.period()).not.toBeNull();
+      expect(await there.sweeper.period()).not.toBeNull();
+      await Promise.all([here.sweeper.stop(), there.sweeper.stop()]);
+    } finally { await Promise.all([production.harness.close(), test.harness.close()]); }
+  });
+});

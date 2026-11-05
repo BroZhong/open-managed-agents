@@ -32,7 +32,7 @@
 // Runbook (#292, in this order; KUBECONFIG=~/.kube/agent-platform-config, namespace oma-test; details in
 // deploy/README.md § "Sandbox binding reconciliation on oma-test"). R=deploy/scripts/run-sandbox-reconcile-acceptance.sh
 //   1. report before:   deploy/scripts/run-sandbox-sweep-report.sh test > report-before.md
-//   2. note rollback images; scale Runners to 0: kubectl -n oma-test scale deploy/oma-runner --replicas=0
+//   2. note rollback images; stop the Runners: kubectl -n oma-test annotate scaledobject oma-runner autoscaling.keda.sh/paused-replicas=0 --overwrite
 //   3. $R migration pre                  (no live claim may remain)
 //   4. node deploy/scripts/migration-for-env.mjs test deploy/migrations/0024_<name>.sql > 0024-test.sql;
 //      review, apply with the privileged migration operator (deploy/README.md § Test migrations)

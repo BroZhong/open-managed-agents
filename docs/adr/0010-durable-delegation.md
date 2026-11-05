@@ -18,6 +18,13 @@ the Host answers every dangling call before the Turn continues. A Child
 execution whose owner was lost or handed it over continues in the same Turn
 under the claim that takes it over, in the slot it holds (#252).
 
+[ADR-0027](0027-delegation-admission-and-family-lock.md) revises §1 and §2: a
+parent admits at most four unfinished Delegation Executions, counted when
+`Agent` accepts the input, and the fifth call returns a tool error instead of
+queueing; an accepted child starts as soon as it is claimed, so no execution
+holds or waits for a slot. Coordination transactions lock their Delegation
+Family (the parent Session and its Child Sessions) instead of one global row.
+
 Accepted. Supersedes ADR-0006's plugin delegation, shared parent ToolExecutor,
 private usage bridge and parent-scoped child lifetime. Retains ADR-0002/0003's
 Host/Adapter boundary and ADR-0009's concurrent Workspace write semantics.
@@ -33,6 +40,12 @@ machinery as ordinary input, while preserving who accepted each operation.
 ## Decision
 
 ### 1. Persistent Sessions and execution associations
+
+> **Note ([ADR-0027](0027-delegation-admission-and-family-lock.md)):** the
+> single row lock below no longer exists. Each coordination transaction takes
+> a transaction-scoped advisory lock on its Delegation Family, including quota
+> admission, and different families never wait for each other. Migration 0031
+> drops `delegation_lock`.
 
 The Host owns `Agent`, `get_subagent_result` and `steer_subagent`. The Adapter
 receives bound capability objects per Turn; model arguments cannot supply a
@@ -56,6 +69,12 @@ over high coordination throughput; it can be partitioned after measuring load.
 The in-memory store is a development/test implementation, not crash durability.
 
 ### 2. One scheduler and independent capabilities
+
+> **Note ([ADR-0027](0027-delegation-admission-and-family-lock.md)):** excess
+> inputs no longer queue. A parent admits at most four unfinished executions,
+> queued or running, counted at acceptance; the fifth `Agent` call, resume and
+> background included, returns a tool error. A claimed child starts at once:
+> there are no slots, no wake of queued siblings and no scan retry for one.
 
 > **Note ([ADR-0022](0022-skill-bundles.md)):** "Sandbox projections" below are
 > now the Skill Install shared through the Child's environment binding; Skill

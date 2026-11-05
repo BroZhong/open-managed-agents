@@ -109,7 +109,7 @@ export interface Scenario {
   children?: "together" | "apart";
   /** The Host's model step budget of each Child execution. */
   childSteps?: number;
-  /** The parent's limit of concurrently running Child executions. */
+  /** The parent's limit of unfinished Child executions; a call beyond it is refused (ADR-0027). */
   maxChildren?: number;
   /**
    * The user stops every Turn a Runner holds right before the Runner is lost:
@@ -226,8 +226,8 @@ export class RefusedWrite extends Error {}
 const GONE = new Promise<never>(() => {});
 
 /**
- * Durable writes, by store and method. A claim that finds no head, a start
- * that finds no free slot and a reconciliation that finds nothing write nothing.
+ * Durable writes, by store and method. A claim that finds no head and a
+ * reconciliation that finds nothing write nothing.
  */
 const WRITES: Record<string, readonly string[]> = {
   eventLogStore: ["append"],
@@ -871,8 +871,8 @@ function expectSessionResumed(scenario: Scenario, outcome: Outcome, session: Ses
   }
   expect(starts.length).toBeGreaterThanOrEqual(log.filter(isAssistant).length);
   // One marker per takeover, with the reason and the calls it found dangling.
-  // A claim its owner released (a Child execution that waited for a slot)
-  // is taken over without a loss.
+  // A claim its owner released (a Turn handed over at shutdown) is taken
+  // over without a loss.
   const markers = log.filter((event) => event.type === "session.turn_resumed");
   const markersOf = (input: number, generation: (marked: number) => boolean) => eventsOfInput(log, session, input)
     .filter((event) => event.type === "session.turn_resumed" && generation((event.data as { generation: number }).generation));

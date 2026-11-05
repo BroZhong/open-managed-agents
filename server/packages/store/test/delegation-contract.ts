@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { DelegationLimitReached } from "../src/index.js";
 import type { WorkspaceMetadataStore, AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution, SandboxObservation, BindingTransition } from "../src/index.js";
 export interface DelegationFixture { workspaceStore: WorkspaceMetadataStore; agentStore: AgentStore; sessionStore: SessionStore; pendingEventStore: PendingEventStore; eventLogStore: EventLogStore; delegationStore: DelegationStore }
 export function delegationContract(name: string, create: () => Promise<DelegationFixture>, close?: () => Promise<void>) {
@@ -19,7 +20,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: { content: [{ type: "text", text: "parent" }] }, sessionThreadId: "sthr_primary" });
       const claim = await stores.pendingEventStore.claim!(parent.id, "parent-owner", 60_000);
       parentFence = { eventId: claim!.event.id, ownerId: claim!.ownerId, generation: claim!.generation };
-      input = { tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool-1", prompt: "Do task", mode: "async", parentModel: "provider/parent-model", maxSteps: 30, sandboxSessionId: parent.id };
+      input = { tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool-1", prompt: "Do task", mode: "async", parentModel: "provider/parent-model", maxSteps: 30, maxConcurrent: 4, sandboxSessionId: parent.id };
     });
     afterAll(async () => { await close?.(); });
     it.each(["new", "null", "/new", "create", "sess_missing"])("guides recovery from an unknown resume without accepting work (%s)", async (resume) => {
@@ -69,7 +70,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(await stores.delegationStore.accept(input, parentFence)).toEqual(accepted);
       expect(await stores.pendingEventStore.count(accepted.childId)).toBe(1);
       const firstFence = await fenceFor(accepted);
-      await stores.delegationStore.startExecution(accepted.id, firstFence, "first-turn", {}, 4);
+      await stores.delegationStore.startExecution(accepted.id, firstFence, "first-turn", {});
       expect((await finish(accepted, firstFence)).status).toBe("completed");
       await stores.pendingEventStore.ack(accepted.childId, accepted.pendingEventId, firstFence);
       // Session soft deletion is also presentation state, never a Turn interruption.
@@ -78,7 +79,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       const resumed = await stores.delegationStore.accept({ ...input, resume: accepted.childId, callerToolUseId: "resume" }, parentFence);
       expect(resumed.childId).toBe(accepted.childId);
       const resumedFence = await fenceFor(resumed);
-      await stores.delegationStore.startExecution(resumed.id, resumedFence, "resumed-turn", {}, 4);
+      await stores.delegationStore.startExecution(resumed.id, resumedFence, "resumed-turn", {});
       expect((await finish(resumed, resumedFence)).status).toBe("completed");
     });
     it("persists the trusted parent model per input and preserves it across idempotent retries", async () => {
@@ -100,20 +101,39 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await stores.pendingEventStore.releaseClaim!(input.callerSessionId, parentFence.eventId, parentFence);
       await expect(stores.delegationStore.accept({ ...input, callerToolUseId: "stale" }, parentFence)).rejects.toThrow();
     });
-    it("enforces persisted parent quota while queued child inputs retain FIFO identity", async () => {
-      const one = await stores.delegationStore.accept(input, parentFence);
-      const two = await stores.delegationStore.accept({ ...input, callerToolUseId: "tool-2" }, parentFence);
-      const f1 = await fenceFor(one); const f2 = await fenceFor(two);
-      expect((await stores.delegationStore.startExecution(one.id, f1, "child-turn", { model: "model" }, 1))?.status).toBe("running");
-      expect(await stores.delegationStore.startExecution(two.id, f2, "child-turn-2", {}, 1)).toBeNull();
-      expect((await stores.delegationStore.getByPendingEventId(two.pendingEventId))?.status).toBe("queued");
+    it("refuses the call beyond the parent's limit of unfinished executions, background, synchronous or resume alike (ADR-0027)", async () => {
+      const limited = { ...input, maxConcurrent: 2 };
+      const one = await stores.delegationStore.accept(limited, parentFence);
+      const two = await stores.delegationStore.accept({ ...limited, mode: "sync", callerToolUseId: "tool-2" }, parentFence);
+      for (const call of [{ callerToolUseId: "tool-3" }, { callerToolUseId: "tool-4", mode: "sync" as const }, { callerToolUseId: "resume", resume: one.childId }]) {
+        await expect(stores.delegationStore.accept({ ...limited, ...call }, parentFence)).rejects.toThrow(DelegationLimitReached);
+      }
+      // A refused call creates nothing: no Child Session, input, execution or wait.
+      expect((await stores.sessionStore.list(input.tenantId)).data).toHaveLength(3);
+      expect(await stores.delegationStore.list(input.tenantId, input.callerSessionId)).toHaveLength(2);
+      expect(await stores.delegationStore.listWaits(input.callerSessionId, parentFence.eventId)).toHaveLength(1);
+      // The same call again is the one it already accepted, never a refusal.
+      expect(await stores.delegationStore.accept(limited, parentFence)).toEqual(one);
+      // A running execution counts as much as a queued one; one that ended frees its place.
+      const f1 = await fenceFor(one);
+      expect((await stores.delegationStore.startExecution(one.id, f1, "child-turn", {})).status).toBe("running");
+      await expect(stores.delegationStore.accept({ ...limited, callerToolUseId: "tool-3" }, parentFence)).rejects.toThrow("2 unfinished subagents");
       await finish(one, f1);
-      expect((await stores.delegationStore.startExecution(two.id, f2, "child-turn-2", {}, 1))?.status).toBe("running");
+      const resumed = await stores.delegationStore.accept({ ...limited, callerToolUseId: "resume", resume: one.childId }, parentFence);
+      expect(resumed).toMatchObject({ childId: one.childId, status: "queued" });
+      expect(two.status).toBe("queued");
+    });
+    it("starts a claimed queued execution whatever its siblings run, as one queued beyond the limit before ADR-0027", async () => {
+      const executions = [];
+      for (const callerToolUseId of ["tool-1", "tool-2", "tool-3"]) executions.push(await stores.delegationStore.accept({ ...input, callerToolUseId, maxConcurrent: 3 }, parentFence));
+      for (const execution of executions) {
+        expect((await stores.delegationStore.startExecution(execution.id, await fenceFor(execution), "child-turn", {})).status).toBe("running");
+      }
     });
     it("persists the resolved model configuration without losing execution limits and fences updates", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const fence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, fence, "child-turn", { runtime: "pi-agent", maxModelSteps: 30, model: "requested" }, 4);
+      await stores.delegationStore.startExecution(child.id, fence, "child-turn", { runtime: "pi-agent", maxModelSteps: 30, model: "requested" });
       await stores.delegationStore.updateEffectiveConfig(child.id, fence, { model: "provider/resolved-model", thinking: "high", modelSource: "agent", thinkingSource: "model-default" });
       expect((await stores.delegationStore.getExecution(input.tenantId, child.id))?.effectiveConfig).toEqual({
         runtime: "pi-agent", maxSteps: 30, model: "provider/resolved-model", thinking: "high", modelSource: "agent", thinkingSource: "model-default",
@@ -124,7 +144,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
     it("publishes terminal result and one async notification, then consumes only after tool result append", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const fence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
+      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {});
       const terminal = await finish(child, fence);
       expect(await finish(child, fence)).toEqual(terminal);
       expect(await stores.pendingEventStore.count(input.callerSessionId)).toBe(2);
@@ -152,7 +172,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       const wait = await stores.delegationStore.saveWait({ ...input, executionId: child.id, parentPendingEventId: parentFence.eventId, config: { model: "provider/parent-model" } }, parentFence);
       expect(wait.status).toBe("waiting");
       const f = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, f, "child-turn", {}, 4); await finish(child, f);
+      await stores.delegationStore.startExecution(child.id, f, "child-turn", {}); await finish(child, f);
       expect(await stores.pendingEventStore.count(input.callerSessionId)).toBe(1);
       expect((await stores.delegationStore.listWaits(input.callerSessionId, parentFence.eventId))[0]?.executionId).toBe(child.id);
       await stores.delegationStore.consumeResult(child.id, input, parentFence, { type: "tool.result", data: { turnId: "parent-turn" }, sessionThreadId: "sthr_primary" });
@@ -173,16 +193,16 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
     it("C7 hands a running execution its lost owner left to the claim that takes its input over", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const oldFence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, oldFence, "child-turn", { model: "requested" }, 4);
+      await stores.delegationStore.startExecution(child.id, oldFence, "child-turn", { model: "requested" });
       await stores.delegationStore.updateEffectiveConfig(child.id, oldFence, { model: "provider/resolved", thinking: "high" });
       await stores.pendingEventStore.releaseClaim!(child.childId, oldFence.eventId, oldFence);
       const newFence = await fenceFor(child, "replacement");
-      // The Turn the takeover continues keeps its configuration and its slot; the owner is the new claim's.
-      const resumed = await stores.delegationStore.startExecution(child.id, newFence, "child-turn", { model: "other" }, 1);
+      // The Turn the takeover continues keeps its configuration; the owner is the new claim's.
+      const resumed = await stores.delegationStore.startExecution(child.id, newFence, "child-turn", { model: "other" });
       expect(resumed).toMatchObject({ status: "running", turnId: "child-turn", ownerId: "replacement", generation: newFence.generation,
         effectiveConfig: { model: "provider/resolved", thinking: "high", maxSteps: 30 } });
       expect(resumed?.result).toBeUndefined();
-      expect(await stores.delegationStore.startExecution(child.id, newFence, "child-turn", {}, 1)).toEqual(resumed);
+      expect(await stores.delegationStore.startExecution(child.id, newFence, "child-turn", {})).toEqual(resumed);
       // The lost owner is fenced out; the new one finishes the execution and its commands apply under its generation.
       await expect(finish(child, oldFence)).rejects.toThrow();
       await expect(stores.delegationStore.updateEffectiveConfig(child.id, oldFence, { model: "stale" })).rejects.toThrow();
@@ -195,33 +215,32 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
     it("C7 names the execution's Turn after the takeover's when no attempt named it in the log", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const oldFence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, oldFence, "turn_3_a1", {}, 4);
+      await stores.delegationStore.startExecution(child.id, oldFence, "turn_3_a1", {});
       await stores.pendingEventStore.releaseClaim!(child.childId, oldFence.eventId, oldFence);
       const newFence = await fenceFor(child, "replacement");
-      expect(await stores.delegationStore.startExecution(child.id, newFence, "turn_3_a2", {}, 4)).toMatchObject({ status: "running", turnId: "turn_3_a2" });
+      expect(await stores.delegationStore.startExecution(child.id, newFence, "turn_3_a2", {})).toMatchObject({ status: "running", turnId: "turn_3_a2" });
     });
     it("C10 counts a sibling whose owner was lost against the parent's limit until its takeover ends it", async () => {
-      const lost = await stores.delegationStore.accept(input, parentFence);
+      const limited = { ...input, maxConcurrent: 1 };
+      const lost = await stores.delegationStore.accept(limited, parentFence);
       const lostFence = await fenceFor(lost, "lost-owner");
-      await stores.delegationStore.startExecution(lost.id, lostFence, "lost-turn", {}, 1);
+      await stores.delegationStore.startExecution(lost.id, lostFence, "lost-turn", {});
       await stores.pendingEventStore.releaseClaim!(lost.childId, lostFence.eventId, lostFence);
-      const queued = await stores.delegationStore.accept({ ...input, callerToolUseId: "tool-2" }, parentFence);
-      const queuedFence = await fenceFor(queued);
-      // The lost owner's execution is not ended: it still runs, and occupies the only slot.
-      expect(await stores.delegationStore.startExecution(queued.id, queuedFence, "queued-turn", {}, 1)).toBeNull();
+      // The lost owner's execution is not ended: it still runs, and takes the only place.
+      await expect(stores.delegationStore.accept({ ...limited, callerToolUseId: "tool-2" }, parentFence)).rejects.toThrow(DelegationLimitReached);
       expect((await stores.delegationStore.getExecution(input.tenantId, lost.id))?.status).toBe("running");
       expect((await stores.eventLogStore.getEvents(input.callerSessionId)).data).toEqual([]);
-      // Its takeover continues it in the slot it holds and ends it; then the queued sibling starts.
+      // Its takeover continues it and ends it; then the parent may delegate again.
       const takeoverFence = await fenceFor(lost, "takeover");
-      expect((await stores.delegationStore.startExecution(lost.id, takeoverFence, "lost-turn", {}, 1))?.status).toBe("running");
-      expect(await stores.delegationStore.startExecution(queued.id, queuedFence, "queued-turn", {}, 1)).toBeNull();
+      expect((await stores.delegationStore.startExecution(lost.id, takeoverFence, "lost-turn", {})).status).toBe("running");
+      await expect(stores.delegationStore.accept({ ...limited, callerToolUseId: "tool-2" }, parentFence)).rejects.toThrow(DelegationLimitReached);
       await finish(lost, takeoverFence);
-      expect((await stores.delegationStore.startExecution(queued.id, queuedFence, "queued-turn", {}, 1))?.status).toBe("running");
+      expect((await stores.delegationStore.accept({ ...limited, callerToolUseId: "tool-2" }, parentFence)).status).toBe("queued");
     });
     it("reconciles terminated child executions after their pending inputs have been deleted", async () => {
       const child = await stores.delegationStore.accept({ ...input, mode: "sync" }, parentFence);
       const fence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
+      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {});
       const queued = await stores.delegationStore.accept({ ...input, resume: child.childId, callerToolUseId: "queued-resume" }, parentFence);
       await stores.sessionStore.terminate(child.childId);
       await stores.pendingEventStore.clear(child.childId);
@@ -238,11 +257,11 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
     it("reconciles terminated parents by stopping sync children and cancelling independent async waits", async () => {
       const running = await stores.delegationStore.accept({ ...input, mode: "sync" }, parentFence);
       const runningFence = await fenceFor(running);
-      await stores.delegationStore.startExecution(running.id, runningFence, "child-turn", {}, 4);
+      await stores.delegationStore.startExecution(running.id, runningFence, "child-turn", {});
       const queued = await stores.delegationStore.accept({ ...input, mode: "sync", callerToolUseId: "queued-sync" }, parentFence);
       const asynchronous = await stores.delegationStore.accept({ ...input, callerToolUseId: "independent-async" }, parentFence);
       const asyncFence = await fenceFor(asynchronous);
-      await stores.delegationStore.startExecution(asynchronous.id, asyncFence, "async-turn", {}, 4);
+      await stores.delegationStore.startExecution(asynchronous.id, asyncFence, "async-turn", {});
       await stores.delegationStore.saveWait({ ...input, callerToolUseId: "wait-async", executionId: asynchronous.id, parentPendingEventId: parentFence.eventId, config: {} }, parentFence);
       await stores.sessionStore.terminate(input.callerSessionId);
       await stores.pendingEventStore.clear(input.callerSessionId);
@@ -268,13 +287,13 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
     it("retains the Sandbox binding between execution admission and Router resource acquisition", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const fence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
+      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {});
       await stores.sessionStore.terminate(input.callerSessionId);
       expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(true);
     });
     it("retains independent child resource use after parent release and serializes Sandbox bindings", async () => {
       const child = await stores.delegationStore.accept(input, parentFence); const fence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
+      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {});
       await stores.delegationStore.acquireResourceUse(input.callerSessionId, input.sandboxSessionId, parentFence);
       await stores.delegationStore.acquireResourceUse(child.childId, input.sandboxSessionId, fence);
       await stores.delegationStore.releaseResourceUse(input.callerSessionId, parentFence);

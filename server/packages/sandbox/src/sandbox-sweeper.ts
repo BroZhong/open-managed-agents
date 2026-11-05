@@ -1,11 +1,14 @@
-import { SandboxBindingChanged, type DelegationStore, type SandboxSweepStore } from "@oma-server/store";
+import { SandboxBindingChanged, type DelegationStore, type Leadership, type SandboxSweepStore } from "@oma-server/store";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, SANDBOX_RUNNING_SECONDS, type ListedSandbox, type SandboxClient } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SWEEP_MAX_KILLS, SWEEP_MAX_UNSETTLED, selectSweep, type SandboxEnvironment, type SweepDecision, type SweepOptions } from "./sandbox-sweep.js";
 import { killSandboxes } from "./sandbox-kill.js";
 import { reconcileBinding, type SandboxBinding, type SandboxManager } from "./sandbox-manager.js";
 import { signallingBinding, type SandboxSignals } from "./sandbox-signals.js";
 
-/** How often each Runner sweeps (ADR-0023): every 10 minutes, give or take up to 2. */
+/**
+ * How often the sweeping Runner sweeps (ADR-0023), and how often every other
+ * Runner asks to lead (ADR-0026): every 10 minutes, give or take up to 2.
+ */
 export const SWEEP_INTERVAL_MS = 10 * 60_000;
 export const SWEEP_JITTER_MS = 2 * 60_000;
 /** A round's log line names at most this many failed actions. */
@@ -27,6 +30,12 @@ export interface SandboxSweeperDeps {
   environment: SandboxEnvironment;
   /** Tells a binding's waiters on every Runner that a reconciliation moved it out of Creating (a reclamation tells them through the Manager). */
   sandboxSignals?: SandboxSignals;
+  /**
+   * Which Runner of the environment sweeps (ADR-0026): each period, only the
+   * one that leads. Absent ⇒ this Runner sweeps every period (one process:
+   * development, tests).
+   */
+  leadership?: Leadership;
   logger?: Pick<Console, "info">;
   /** Uniform in [0, 1): spreads the rounds of Runners started together. */
   random?: () => number;
@@ -73,6 +82,19 @@ export interface SweepRound {
   ms: number;
 }
 
+/**
+ * The line a Runner writes when it starts or stops leading the sweep
+ * (ADR-0026), or cannot tell whether it leads; a Runner that does not lead
+ * writes no `sandbox_sweep` line, so those lines are the environment's rounds.
+ */
+export interface SweeperLead {
+  msg: "sandbox_sweeper_lead";
+  env: SandboxEnvironment;
+  lead: boolean;
+  /** Why the lead could not be told, by error name only. */
+  error?: string;
+}
+
 /** A failed action, by the Sandbox it was taken on, or by binding when it was taken on the binding as a whole. */
 type FailedAction =
   | { sandboxId: string; action: "kill" | "adopt" | "shorten" | "restore" }
@@ -95,7 +117,12 @@ function stopped(round: Round): boolean {
 }
 
 /**
- * The sweeper (ADR-0023, "The sweeper"), one per Runner. A round lists every
+ * The sweeper (ADR-0023, "The sweeper"), one per Runner, of which one sweeps
+ * per period: the one that leads (ADR-0026). With 50 Runners, one round per
+ * Runner and period would list the gateway and read the bindings 50 times
+ * for one round's worth of actions. A Runner that does not lead asks again
+ * each period, so when the leader stops, or vanishes, another sweeps from its
+ * next period on. A round lists every
  * Sandbox of the API key, reads the listed bindings with one query and
  * selects the actions (`selectSweep`); it also reads the bindings no Turn
  * settles whatever the gateway lists (`SandboxSweepStore.unsettled`). There
@@ -114,6 +141,8 @@ export class SandboxSweeper {
   private round?: Promise<void>;
   private readonly logger: Pick<Console, "info">;
   private readonly random: () => number;
+  /** Whether this Runner led at its last period, so its line is written only when that changes. */
+  private leading = false;
 
   constructor(private readonly deps: SandboxSweeperDeps) {
     this.logger = deps.logger ?? console;
@@ -126,12 +155,19 @@ export class SandboxSweeper {
     this.schedule(this.random() * SWEEP_INTERVAL_MS);
   }
 
-  /** Start no round; one in flight stops before its next action. Resolves once it has. */
+  /**
+   * Start no round; one in flight stops before its next action. Resolves
+   * once it has and the lead is given up, which another Runner takes at its
+   * next period. A lead that fails to close goes with the process.
+   */
   async stop(): Promise<void> {
     this.stopping.abort();
     clearTimeout(this.timer);
     this.timer = undefined;
     await this.round;
+    if (!this.deps.leadership) return;
+    await this.deps.leadership.close().catch(() => {});
+    this.lead(false);
   }
 
   private schedule(ms: number): void {
@@ -141,9 +177,35 @@ export class SandboxSweeper {
         this.round = undefined;
         if (!this.stopping.signal.aborted) this.schedule(SWEEP_INTERVAL_MS + (2 * this.random() - 1) * SWEEP_JITTER_MS);
       };
-      this.round = this.sweep(this.stopping.signal).then(next, next);
+      this.round = this.period(this.stopping.signal).then(next, next);
     }, ms);
     this.timer.unref?.();
+  }
+
+  /**
+   * This Runner's part of one period: a round if it leads, else nothing
+   * (null). A lead that cannot be told counts as another's: no Runner
+   * sweeps then rather than two. It never rejects.
+   */
+  async period(signal?: AbortSignal): Promise<SweepRound | null> {
+    const { leadership } = this.deps;
+    if (leadership) {
+      let leads: boolean;
+      try { leads = await leadership.hold(); }
+      catch (error) { this.lead(false, error); return null; }
+      this.lead(leads);
+      if (!leads || signal?.aborted) return null;
+    }
+    return this.sweep(signal);
+  }
+
+  /** Write the lead line when it changes, and whenever the lead could not be told. */
+  private lead(leads: boolean, error?: unknown): void {
+    if (leads === this.leading && error === undefined) return;
+    this.leading = leads;
+    const line: SweeperLead = { msg: "sandbox_sweeper_lead", env: this.deps.environment, lead: leads,
+      ...(error === undefined ? {} : { error: error instanceof Error ? error.name : typeof error }) };
+    this.logger.info(JSON.stringify(line));
   }
 
   /** One round; it never rejects, and writes its `sandbox_sweep` line however it ended. */

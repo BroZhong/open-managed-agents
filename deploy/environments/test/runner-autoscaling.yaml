@@ -1,0 +1,66 @@
+# KEDA scales the oma-test Runners on their demand (ADR-0026): the Turns they
+# execute plus the Sessions whose input waits to be claimed, read from the
+# API's internal endpoint. Intervene only through this file or the pause
+# annotations, never `kubectl scale` (deploy/README.md, "Runner autoscaling").
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: oma-runner-demand
+spec:
+  # The API reads the same Secret as RUNNER_DEMAND_TOKEN.
+  secretTargetRef:
+  - parameter: token
+    name: oma-runner-demand
+    key: token
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: oma-runner
+spec:
+  scaleTargetRef:
+    name: oma-runner
+  # Above 0 replicas the HPA reads the demand every 15 s, its sync period;
+  # pollingInterval would only pace KEDA's status reads.
+  minReplicaCount: 2
+  maxReplicaCount: 50
+  # A failing demand read never scales in. KEDA counts consecutive failures;
+  # past 3 the HPA is told the current count (at least 2), and until then it
+  # keeps the count it has.
+  fallback:
+    failureThreshold: 3
+    replicas: 2
+    behavior: currentReplicasIfHigher
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        # A burst is met at once, 10 Runners per 15 s.
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+          - type: Pods
+            value: 10
+            periodSeconds: 15
+        # Each Runner removed hands its Turns over (ADR-0021), so slowly.
+        scaleDown:
+          stabilizationWindowSeconds: 600
+          policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+  triggers:
+  - type: metrics-api
+    # Replicas = ceil(demand / targetValue).
+    metricType: AverageValue
+    metadata:
+      url: http://oma-api.oma-test.svc.cluster.local:3000/internal/runner-demand
+      valueLocation: demand
+      # C, the demand per Runner: below RUNNER_CAPACITY (N = 50), so a Runner
+      # has free places when the fleet is at its target.
+      targetValue: '40'
+      authMode: bearer
+      # Longer than the endpoint's 5 s database timeout, so a slow answer is
+      # used and a timeout arrives as its 503 (KEDA's default here is 3 s).
+      timeout: 7s
+    authenticationRef:
+      name: oma-runner-demand

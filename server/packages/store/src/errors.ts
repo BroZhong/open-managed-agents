@@ -14,6 +14,20 @@ export class PendingEventClaimLostError extends Error {
   }
 }
 
+/**
+ * The parent already has its limit of unfinished (queued or running)
+ * Delegation Executions, so an `Agent` call is refused instead of queued
+ * (ADR-0027). It creates nothing: the model learns it from the tool error and
+ * calls again once a child has ended.
+ */
+export class DelegationLimitReached extends Error {
+  readonly code = "delegation_limit_reached";
+  constructor(readonly limit: number) {
+    super(`This Session already has ${limit} unfinished subagents, its limit. Wait for one of them to finish (get_subagent_result with wait=true), then call Agent again.`);
+    this.name = "DelegationLimitReached";
+  }
+}
+
 export class SkillNameConflictError extends Error {
   readonly code = "skill_name_conflict";
   constructor(name: string) {

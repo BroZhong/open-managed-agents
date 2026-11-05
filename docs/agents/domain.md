@@ -28,8 +28,20 @@ ADR-0008's Skills paragraph, and revises ADR-0004's fork copy and ADR-0019's
 per-Turn Skills refresh.
 For Sandbox binding creation and recovery, ADR-0023 is authoritative: the gateway
 is the truth, a creation intent has a deadline and is reconciled by
-`oma.dev/binding`, termination reclaims by binding and every Runner sweeps. It
+`oma.dev/binding`, termination reclaims by binding and a sweeper reconciles the
+environment's Sandboxes (one Runner per period since ADR-0026). It
 supersedes ADR-0019's operator-only reconciliation and revises its budgets.
+For Runner Capacity, claiming and autoscaling, ADR-0026 is authoritative: each
+Runner executes at most `RUNNER_CAPACITY` Turns (Child Sessions are always
+claimed, synchronous delegation waits do not count), a claim skips a locked
+head instead of waiting and never passes it, KEDA scales the Runners on the
+API's `/internal/runner-demand`, and a scale-down is ADR-0021's handoff with a
+45-minute deadline. It supplements ADR-0021's shutdown handoff and revises
+ADR-0023's every-Runner sweeper.
+For delegation admission and coordination locking, ADR-0027 is authoritative:
+a parent admits at most four unfinished Delegation Executions and refuses the
+fifth `Agent` call, and coordination transactions lock their Delegation Family
+instead of one global row. It revises ADR-0010 §1 and §2.
 For Environments and the Sandbox start path, ADR-0024 is authoritative: an
 Environment (Base Image + init script + variables) is built once into an image
 by `oma-image-builder`, every Sandbox is claimed from one shared Warm Pool and

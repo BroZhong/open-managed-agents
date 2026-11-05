@@ -14,6 +14,16 @@ continuation", ADR-0016 on Host-generated results, ADR-0018 "Release boundary"
 ("does not introduce ... general Turn checkpoint recovery") and ADR-0020 "One
 stop path", as listed under "Revised decisions".
 
+Supplemented by [ADR-0026](0026-runner-capacity-and-autoscaling.md), which
+makes a scale-down a handoff and sets its parameters: the handoff deadline
+(`SHUTDOWN_GRACE_MS`) is 45 minutes, not 20 s, and the termination grace period
+45 minutes + 60 s, not 30 s. When the handoff starts, a Turn whose in-flight
+calls are all synchronous delegation waits is handed over at once instead of
+at the deadline. [ADR-0027](0027-delegation-admission-and-family-lock.md)
+removes the parent's execution slots from "Child executions": a running
+execution counts toward its parent's admission limit until it ends, also while
+its owner is lost, and no sibling waits for it to end in order to start.
+
 ## Context
 
 A Runner can disappear in the middle of a Turn: OOM, kill -9, a liveness

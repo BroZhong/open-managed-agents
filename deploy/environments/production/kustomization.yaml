@@ -14,3 +14,10 @@ patches:
     - op: replace
       path: /spec/rules/0/http/paths/0/backend/service/name
       value: oma-server
+# Fixed Runners until the production ScaledObject (#335); the base declares no
+# replicas because KEDA owns the count where it scales.
+- target:
+    kind: Deployment
+    name: oma-runner
+  patch: |-
+    - {op: add, path: /spec/replicas, value: 5}

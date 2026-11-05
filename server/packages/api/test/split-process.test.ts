@@ -124,11 +124,33 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
     const key = await stores.apiKeyStore.create("test", "split-tests");
     headers = { "x-api-key": key.rawKey, "content-type": "application/json" };
     firstApi = await start("api", 53170);
-    await start("api", 53171);
+    // Only the second API serves the Runner demand (ADR-0026).
+    await start("api", 53171, { RUNNER_DEMAND_TOKEN: "split-demand-token" });
   }, 30_000);
   afterAll(async () => {
     for (const child of children) await stop(child);
     if (pool) { await pool.query(`DROP SCHEMA "${schema}" CASCADE`); await pool.end(); }
+  });
+
+  it("serves the Runner demand outside the API routes, to its token, where a token is configured", async () => {
+    const demand = (base: string, token?: string) => fetch(`${base}/internal/runner-demand`, token ? { headers: { authorization: `Bearer ${token}` } } : {});
+    expect((await demand(api1, "split-demand-token")).status).toBe(404);
+    expect((await demand(api2)).status).toBe(401);
+    expect((await demand(api2, "another-token")).status).toBe(401);
+    const session = await newSession();
+    await input(api2, session.id);
+    const response = await demand(api2, "split-demand-token");
+    expect(response.status).toBe(200);
+    // Other cases of the suite may have left input behind: at least this Session's is ready.
+    const body = await response.json();
+    expect(body).toMatchObject({ executing: expect.any(Number), syncWaiting: expect.any(Number), ready: expect.any(Number) });
+    expect(body.ready).toBeGreaterThanOrEqual(1);
+    expect(body.demand).toBe(body.executing + body.ready);
+    expect(Number.isNaN(Date.parse(body.observedAt))).toBe(false);
+    // A terminated Session's input is no demand; nor does it run for the cases after this one.
+    await request(api2, `sessions/${session.id}`, undefined, "DELETE");
+    const after = await (await demand(api2, "split-demand-token")).json();
+    expect(after.ready).toBe(body.ready - 1);
   });
 
   it("accepts durable queued input with Runner absent; two APIs stream one competing execution and reconnect without duplicates", async () => {
@@ -325,7 +347,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
       await activities.begin(activity);
       const child = await stores.delegationStore.accept({ tenantId: "test", callerSessionId: retained.id,
         callerTurnId: "parent-turn", callerToolUseId: "shared", prompt: "shared resource", mode: "async",
-        parentModel: "mock", maxSteps: 500, sandboxSessionId: retained.id }, activity.fence);
+        parentModel: "mock", maxSteps: 500, maxConcurrent: 4, sandboxSessionId: retained.id }, activity.fence);
       const childClaim = (await stores.pendingEventStore.claim(child.childId, "child-owner", 30_000))!;
       const childActivity = { bindingId: retained.id, sessionId: child.childId,
         fence: { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation } };

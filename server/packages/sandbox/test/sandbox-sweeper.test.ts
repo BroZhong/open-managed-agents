@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type SandboxBindingFacts, type SandboxReclamation } from "@oma-server/store";
+import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type SandboxBindingFacts, type SandboxReclamation, type Leadership } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { DefaultSandboxManager } from "../src/sandbox-manager.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
@@ -205,5 +205,84 @@ describe("the sweeper on a Runner: rounds every 10 minutes with jitter, stopped 
     r.sweeper.start();
     await vi.advanceTimersByTimeAsync(2 * SWEEP_INTERVAL_MS);
     expect(r.lines).toEqual([]);
+  });
+});
+
+/** One lead among Runners, as the database's lock holds it: the first to ask while it is free holds it until it closes. */
+function sharedLead() {
+  let holder: object | undefined;
+  return (): Leadership => {
+    const self = {};
+    let closed = false;
+    return {
+      hold: async () => { if (closed) return false; holder ??= self; return holder === self; },
+      close: async () => { closed = true; if (holder === self) holder = undefined; },
+    };
+  };
+}
+
+describe("one Runner of the environment sweeps per period, the one that leads (ADR-0026)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** Two Runners over the same rows and gateway, each its own timer: `draw` fixes its first point and its jitter. */
+  async function runners(...draws: number[]) {
+    const stores = fakeSweeperStores();
+    const gateway = new FakeSandboxClient();
+    const lead = sharedLead();
+    return draws.map((draw) => {
+      const { bindings, facts, lifecycle } = stores.runner();
+      const manager = new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle });
+      const lines: Array<{ msg: string; lead?: boolean }> = [];
+      const sweeper = new SandboxSweeper({ client: gateway, facts, bindings, manager, environment: "test", random: () => draw,
+        leadership: lead(), logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
+      return { sweeper, lines, rounds: () => lines.filter((line) => line.msg === "sandbox_sweep").length,
+        leads: () => lines.filter((line) => line.msg === "sandbox_sweeper_lead").map((line) => line.lead) };
+    });
+  }
+  const minutes = (n: number) => n * 60_000;
+
+  it("sweeps on the Runner that asked first, every period; the other sweeps none", async () => {
+    vi.useFakeTimers();
+    // First points at 1 and 3 minutes; then every 8.4 and 9.2 minutes.
+    const [a, b] = await runners(0.1, 0.3);
+    a.sweeper.start();
+    b.sweeper.start();
+    await vi.advanceTimersByTimeAsync(minutes(30));
+    // a: 1, 9.4, 17.8 and 26.2 minutes; b asked at 3, 12.2 and 21.4.
+    expect(a.rounds()).toBe(4);
+    expect(b.rounds()).toBe(0);
+    expect(a.leads()).toEqual([true]);
+    expect(b.leads()).toEqual([]);
+    await Promise.all([a.sweeper.stop(), b.sweeper.stop()]);
+  });
+
+  it("is swept by another Runner from its next period once the leader stops", async () => {
+    vi.useFakeTimers();
+    const [a, b] = await runners(0.1, 0.3);
+    a.sweeper.start();
+    b.sweeper.start();
+    await vi.advanceTimersByTimeAsync(minutes(30));
+    await a.sweeper.stop();
+    expect(a.leads()).toEqual([true, false]);
+    // b's next period, at 30.6 minutes.
+    await vi.advanceTimersByTimeAsync(minutes(0.6));
+    expect(b.rounds()).toBe(1);
+    expect(b.leads()).toEqual([true]);
+    await vi.advanceTimersByTimeAsync(minutes(20));
+    expect(a.rounds()).toBe(4);
+    expect(b.rounds()).toBe(3);
+    await b.sweeper.stop();
+  });
+
+  it("does not sweep in a period whose lead it cannot tell", async () => {
+    const gateway = new FakeSandboxClient();
+    const { bindings, facts, lifecycle } = fakeSweeperStores().runner();
+    const manager = new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle });
+    const lines: unknown[] = [];
+    const sweeper = new SandboxSweeper({ client: gateway, facts, bindings, manager, environment: "test",
+      leadership: { hold: async () => { throw new Error("connection refused"); }, close: async () => {} },
+      logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
+    expect(await sweeper.period()).toBeNull();
+    expect(lines).toEqual([{ msg: "sandbox_sweeper_lead", env: "test", lead: false, error: "Error" }]);
   });
 });

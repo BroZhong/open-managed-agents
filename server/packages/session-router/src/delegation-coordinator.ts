@@ -20,6 +20,11 @@ export interface DelegationRun {
   effectiveConfig?: Record<string, unknown>;
   /** The attempt's write entry; wait transitions and recovered results are recorded there. */
   journal: TurnJournal;
+  /**
+   * The call now waits on its durable wait, which a next owner resumes: the
+   * Router counts a Turn that only waits as executing nothing (#330).
+   */
+  onWait?(toolUseId: string): void;
 }
 
 interface CoordinatorDeps {
@@ -31,6 +36,11 @@ interface CoordinatorDeps {
   /** The owner of the Session's running Turn should re-read its durable state now. */
   check(sessionId: string): void;
   maxSteps: number;
+  /**
+   * The parent's limit of unfinished Delegation Executions: a call beyond it
+   * is refused with a tool error, never queued (ADR-0027).
+   */
+  maxConcurrent: number;
   /** Fallback poll of a synchronous wait, for a lost child-completion hint. */
   pollMs?: number;
 }
@@ -54,16 +64,6 @@ export class DelegationCoordinator {
   /** Re-read the executions a Session's running Turn waits on now. */
   recheckWaits(sessionId: string): void {
     for (const wakeup of this.waits.get(sessionId) ?? []) wakeup.notify();
-  }
-
-  /**
-   * An ended execution frees a slot of its parent's concurrency limit. Its
-   * queued siblings do not poll for one: wake them now.
-   */
-  async wakeChildrenWaitingForSlot(ended: DelegationExecution): Promise<void> {
-    for (const execution of await this.deps.store.list(ended.tenantId, ended.callerSessionId)) {
-      if (execution.status === "queued") this.deps.wake(execution.childId);
-    }
   }
 
   private caller(run: DelegationRun, toolUseId: string): DelegationCaller {
@@ -108,6 +108,9 @@ export class DelegationCoordinator {
           parentModel,
           thinking: input.thinking,
           maxSteps,
+          // Beyond it the store refuses the call; the tool error tells the
+          // model to wait for a child to finish (ADR-0027).
+          maxConcurrent: this.deps.maxConcurrent,
           apiKeyId: run.apiKeyId,
           sandboxSessionId: run.session.id,
           parentThinking: waitConfig(run).thinking,
@@ -219,6 +222,7 @@ export class DelegationCoordinator {
   async waitForResult(run: DelegationRun, execution: DelegationExecution, toolUseId: string): Promise<Record<string, unknown>> {
     await this.recordStatus(run, "waiting", toolUseId);
     await run.journal.flush();
+    run.onWait?.(toolUseId);
     // Registered before the first read, so a hint that arrives during a read
     // makes the next wait return at once.
     const wakeup = new WaitWakeup();

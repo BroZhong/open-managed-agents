@@ -1,4 +1,4 @@
-export { SessionRouter } from "./session-router.js";
+export { SessionRouter, DEFAULT_RUNNER_CAPACITY, isRunnerCapacity } from "./session-router.js";
 export type {
   PendingRecoveryFailure,
   PendingRecoverySummary,

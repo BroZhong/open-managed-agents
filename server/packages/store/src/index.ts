@@ -1,5 +1,7 @@
 export type { SandboxActivity, SandboxBindingFacts, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore, UnsettledBinding } from './interfaces/sandbox-lifecycle-store.js';
 export { PgSandboxLifecycleStore } from './postgres/sandbox-lifecycle-store.js';
+export type { Leadership } from './interfaces/leadership.js';
+export { PgAdvisoryLeadership } from './postgres/advisory-leadership.js';
 export type {
   Agent,
   AgentToolConfig,
@@ -77,6 +79,7 @@ export type {
 export type {
   PendingEventStore,
   PendingEventIngressStore,
+  ClaimableHeadLimit,
   PendingEvent,
   PendingEventEnqueueInput,
   PendingEventClaim,
@@ -86,7 +89,7 @@ export type {
   PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
-export { PendingEventClaimLostError, SandboxBindingChanged } from "./errors.js";
+export { PendingEventClaimLostError, SandboxBindingChanged, DelegationLimitReached } from "./errors.js";
 
 export type {
   ApiKeyStore,
@@ -196,8 +199,9 @@ export type {
 } from "./skill-bundle.js";
 export type * from "./interfaces/delegation-store.js";
 export { TransactionalDelegationStore, delegationFenceLost, sandboxBindingId } from "./delegation-store.js";
-export type { DelegationTransaction, DelegationRecord, DelegationTable, SandboxBindingRecord } from "./delegation-store.js";
+export type { DelegationFamilyRef, DelegationTransaction, DelegationRecord, DelegationTable, SandboxBindingRecord } from "./delegation-store.js";
 export { PgDelegationStore } from "./postgres/delegation-store.js";
+export { PgRunnerDemandStore, type RunnerDemand } from "./postgres/runner-demand-store.js";
 
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";
 export { PgSessionShareStore } from "./postgres/session-share-store.js";
