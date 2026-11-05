@@ -25,6 +25,7 @@ describe("configured Pi models", () => {
     ["bigmodel/glm-5.3", "bigmodel", "glm-5.3", "xhigh"],
     ["deepseek/deepseek-flash", "deepseek", "deepseek-flash", "xhigh"],
     ["gpt-6-astra", "openai-codex", "gpt-6-astra", "max"],
+    ["gpt-6.1-sol", "openai-codex", "gpt-6.1-sol", "max"],
     ["gpt-5.6-sol", "openai-codex", "gpt-5.6-sol", "max"],
   ])("resolves %s and selects its highest thinking level", (selection, provider, id, thinking) => {
     const model = resolveModel(selection, runtime);

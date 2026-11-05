@@ -6,7 +6,7 @@ import { ModelProviderService } from "../src/lib/model-providers.js";
 const { dnsLookup } = vi.hoisted(() => ({ dnsLookup: vi.fn() }));
 vi.mock("node:dns", () => ({ lookup: dnsLookup }));
 
-describe("provider discovery DNS diagnostics", () => {
+describe.each(["http", "https"])("provider discovery DNS diagnostics over %s", (scheme) => {
   it.each([
     ["198.18.0.16", "Fake-IP"],
     ["198.19.255.254", "Fake-IP"],
@@ -25,7 +25,7 @@ describe("provider discovery DNS diagnostics", () => {
       const result = await service
         .discover("tenant", {
           api: "openai-completions",
-          baseUrl: "https://provider.example/v1",
+          baseUrl: `${scheme}://provider.example/v1`,
           apiKey: "secret-must-not-appear-in-errors",
         })
         .catch((error) => error);

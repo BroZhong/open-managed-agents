@@ -10,8 +10,8 @@ function model(provider: string, id: string): Model<Api> {
 }
 afterEach(() => vi.unstubAllGlobals());
 describe("Pi thinking options for display", () => {
-  it("shows Astra's five distinct efforts and maps legacy aliases and unsupported off", () => {
-    const options = thinkingOptions(model("openai-codex", "gpt-6-astra"));
+  it.each(["gpt-6-astra", "gpt-6.1-sol"])("shows %s's five distinct efforts and maps legacy aliases and unsupported off", (id) => {
+    const options = thinkingOptions(model("openai-codex", id));
     expect(options.choices.map(c => c.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(options.resolvedLevels.minimal).toBe("low");
     expect(options.resolvedLevels.off).toBe("low");

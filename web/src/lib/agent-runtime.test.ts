@@ -13,6 +13,7 @@ describe("Pi Agent models", () => {
       { value: "bigmodel/glm-5.3", label: "GLM-5.3" },
       { value: "deepseek/deepseek-flash", label: "DeepSeek V4.1 Flash" },
       { value: "openai-codex/gpt-6-astra", label: "GPT-6 Astra" },
+      { value: "openai-codex/gpt-6.1-sol", label: "GPT-6.1 Sol" },
       { value: "openai-codex/gpt-5.6-sol", label: "GPT-5.6 Sol" },
     ]);
   });

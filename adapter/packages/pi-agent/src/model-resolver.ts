@@ -27,7 +27,7 @@ function classify(raw: string): { provider: string; id: string } {
 
   const lower = model.toLowerCase();
   if (lower === "k3") return { provider: "kimi-coding-plan", id: "k3" };
-  if (lower === "gpt-6-astra" || lower === "gpt-5.6-sol") {
+  if (lower === "gpt-6-astra" || lower === "gpt-6.1-sol" || lower === "gpt-5.6-sol") {
     return { provider: "openai-codex", id: lower };
   }
   if (lower.startsWith("claude") || lower.startsWith("anthropic")) {

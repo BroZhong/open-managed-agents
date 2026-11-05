@@ -8,10 +8,19 @@ Pi Agents can select these model ids in the console or the Agent API:
 | GLM-5.3 (BigModel) | `bigmodel/glm-5.3` | `xhigh` | `max` |
 | DeepSeek V4.1 Flash | `deepseek/deepseek-flash` | `xhigh` | `max` |
 | GPT-6 Astra | `openai-codex/gpt-6-astra` | `max` | `max` |
+| GPT-6.1 Sol | `openai-codex/gpt-6.1-sol` | `max` | `max` |
 | GPT-5.6 Sol | `openai-codex/gpt-5.6-sol` | `max` | `max` |
 
 New Agents default to GPT-5.6 Sol, matching the local Pi model selection.
 Editing an existing Agent preserves its model until another model is selected.
+GPT-6.1 Sol metadata comes from the local Codex model catalog fetched on
+2026-11-05: text/image input and a default 500,000-token context. Its supported
+efforts include low, medium, high, xhigh, max and ultra; Pi 0.83.0 exposes only
+the first five. Unsupported off/minimal preferences resolve to low. Pricing and
+output limits are omitted because that catalog does not publish them; Pi supplies
+its fallback metadata, and a zero cost estimate does not mean free inference.
+This registration does not establish that the deployed OAuth account can call
+the model; verify an actual Turn after installing the catalog in the Host.
 Agent configuration exposes **思考强度** as a horizontal slider using the same
 model capability query as Session controls, including before the Agent has
 been saved. The API field
@@ -134,7 +143,7 @@ Official sources: [GLM-5.3](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.
 
 The console's **Models** page configures Tenant-owned providers. Choose OpenAI
 Chat Completions (`openai-completions`), OpenAI Responses (`openai-responses`), or
-Anthropic Messages (`anthropic-messages`), enter a public HTTPS Base URL and API
+Anthropic Messages (`anthropic-messages`), enter a public HTTP or HTTPS Base URL and API
 key, then click **Fetch models**. The searchable list contains only models
 returned by that endpoint using those credentials. Select up to ten models.
 Changing the endpoint, protocol or API key clears fetched results and selections;
@@ -255,8 +264,11 @@ a custom transport are not offered by this API-key form. The current three proto
 support Pi's injectable fetch, which lets Host enforce public-address DNS
 resolution at socket connection time, reject redirects and avoid credential
 leaks in upstream error bodies. Custom-provider requests use a dedicated direct
-HTTPS dispatcher, independent of the global `OMA_PROXY_URL`; the deployment must
-permit direct HTTPS egress to these endpoints.
+HTTP/HTTPS dispatcher, independent of the global `OMA_PROXY_URL`; the deployment
+must permit direct egress to the configured endpoint's port. HTTP is supported
+for gateways without TLS, but sends API keys and model traffic unencrypted;
+HTTPS remains recommended. Both schemes enforce the same public-address,
+endpoint-path and no-redirect restrictions.
 
 For local development with a proxy in Fake-IP mode, exclude provider domains
 from Fake-IP DNS (for example, add `open.bigmodel.cn` to Clash/Mihomo's

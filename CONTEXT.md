@@ -341,7 +341,7 @@ See ADR-0018 and `docs/api-runner-operations.md`.
 ## User-owned model providers
 
 A **Model Provider** is a Tenant-owned connection to a model service, configured
-with a Pi protocol, public HTTPS endpoint, encrypted API key and selected models.
+with a Pi protocol, public HTTP or HTTPS endpoint, encrypted API key and selected models.
 The Models page fetches models from the configured endpoint using the Tenant's
 credentials through Pi's dynamic provider discovery and vendor SDKs. It never
 substitutes a built-in catalog for that endpoint's list. Each selected model
