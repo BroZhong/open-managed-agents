@@ -16,9 +16,12 @@ Editing an existing Agent preserves its model until another model is selected.
 GPT-6.1 Sol metadata comes from the local Codex model catalog fetched on
 2026-11-05: text/image input and a default 500,000-token context. Its supported
 efforts include low, medium, high, xhigh, max and ultra; Pi 0.83.0 exposes only
-the first five. Unsupported off/minimal preferences resolve to low. Pricing and
-output limits are omitted because that catalog does not publish them; Pi supplies
-its fallback metadata, and a zero cost estimate does not mean free inference.
+the first five. Unsupported off/minimal preferences resolve to low. Its output
+limit is explicitly 128,000 tokens, matching the
+[official model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+checked on 2026-11-05. That documentation lists a 1,050,000-token API context;
+the managed Codex route retains its 500,000-token default. Pricing remains
+omitted, and Pi's zero cost estimate does not mean free inference.
 This registration does not establish that the deployed OAuth account can call
 the model; verify an actual Turn after installing the catalog in the Host.
 Agent configuration exposes **思考强度** as a horizontal slider using the same
@@ -150,7 +153,11 @@ Changing the endpoint, protocol or API key clears fetched results and selections
 refreshing the list drops selected IDs no longer returned. Fetch failures and
 empty lists are shown explicitly, without a built-in catalog fallback. For
 services without a model-list API, manual IDs remain an explicit fallback.
-Review context/output limits and image capabilities. **Supports reasoning** is
+New manual model entries default to 1,000,000 context tokens and 128,000 output
+tokens. Discovery uses the same defaults for missing limits, preserves valid
+endpoint-provided values, and caps output at the selected context limit. These
+defaults do not establish the upstream service's actual limits and do not rewrite
+saved providers. Review context/output limits and image capabilities. **Supports reasoning** is
 no longer a required checkbox. Missing reasoning metadata defaults to Pi's
 five basic levels (`off`, `minimal`, `low`, `medium`, `high`); automatic means
 `high`. An explicit, sourced upstream `false` disables thinking controls unless
