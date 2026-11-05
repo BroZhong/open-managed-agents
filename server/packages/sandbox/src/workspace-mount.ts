@@ -17,10 +17,19 @@ export interface WorkspaceMountTarget {
   prefix: string;
 }
 
+/** Only fixed classifications and elapsed time; never SDK messages, URLs or causes. */
+export interface WorkspaceMountDiagnostic {
+  stage: "get_info" | "metadata" | "probe" | "readback" | "cleanup";
+  category: "timeout" | "aborted" | "authentication" | "not_found" | "rate_limit" | "network" | "invalid_response" | "verification_failed" | "unknown";
+  durationMs: number;
+}
+
 export class WorkspaceMountUnavailable extends Error {
-  constructor() {
+  constructor(readonly diagnostic?: WorkspaceMountDiagnostic) {
     super(
-      "Workspace storage is unavailable or its mount could not be verified. Saved files remain in storage; retry after storage recovers.",
+      diagnostic?.stage === "get_info"
+        ? "Sandbox metadata could not be queried. Workspace mount verification has not run; a later tool call can retry."
+        : "Workspace storage is unavailable or its mount could not be verified. Saved files remain in storage; retry after storage recovers.",
     );
     this.name = "WorkspaceMountUnavailable";
   }

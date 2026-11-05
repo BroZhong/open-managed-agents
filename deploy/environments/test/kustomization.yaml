@@ -29,6 +29,7 @@ patches:
     - {op: replace, path: /data/PG_USER, value: oma_test_app}
     - {op: replace, path: /data/PG_SCHEMA, value: oma_test}
     - {op: replace, path: /data/PG_POOL_MAX, value: '10'}
+    - {op: add, path: /data/E2B_API_CONNECTIONS, value: '200'}
     - {op: replace, path: /data/REDIS_HOST, value: redis}
     - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
     - {op: replace, path: /data/OMA_ENVIRONMENT, value: test}

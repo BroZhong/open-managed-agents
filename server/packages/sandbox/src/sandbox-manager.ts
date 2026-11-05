@@ -20,6 +20,7 @@ import {
   WorkspaceMountUnavailable,
   type WorkspaceMountSpec,
   type WorkspaceMountTarget,
+  type WorkspaceMountDiagnostic,
 } from "./workspace-mount.js";
 
 /**
@@ -140,8 +141,12 @@ const UNAVAILABLE: Record<SandboxUnavailableReason, string> = {
  */
 export class SandboxUnavailable extends ExecutorUnavailableError {
   declare readonly code: "sandbox_unavailable";
-  constructor(readonly reason: SandboxUnavailableReason, readonly status?: number, options?: ErrorOptions) {
-    super("sandbox_unavailable", UNAVAILABLE[reason], { reason }, options);
+  readonly diagnostic?: WorkspaceMountDiagnostic;
+  constructor(readonly reason: SandboxUnavailableReason, readonly status?: number, options?: ErrorOptions & { diagnostic?: WorkspaceMountDiagnostic }) {
+    super("sandbox_unavailable", UNAVAILABLE[reason], { reason, ...(options?.diagnostic ? {
+      stage: options.diagnostic.stage, category: options.diagnostic.category, durationMs: String(options.diagnostic.durationMs),
+    } : {}) }, options);
+    this.diagnostic = options?.diagnostic;
     this.name = "SandboxUnavailable";
   }
 }
@@ -152,7 +157,9 @@ export class SandboxUnavailable extends ExecutorUnavailableError {
  */
 function sandboxUnavailable(error: unknown): SandboxUnavailable {
   if (error instanceof SandboxUnavailable) return error;
-  return new SandboxUnavailable(error instanceof WorkspaceMountUnavailable ? "mount" : "unreachable", undefined, { cause: error });
+  const diagnostic = error instanceof WorkspaceMountUnavailable ? error.diagnostic : undefined;
+  return new SandboxUnavailable(error instanceof WorkspaceMountUnavailable && diagnostic?.stage !== "get_info" ? "mount" : "unreachable",
+    undefined, { cause: error, ...(diagnostic ? { diagnostic } : {}) });
 }
 
 /** Thrown inside the binding lock to leave it without a write while another Turn creates the Sandbox. */
@@ -856,7 +863,9 @@ class SandboxSessionImpl implements SandboxSession {
   private async verify(id: string): Promise<void> {
     try {
       await this.deps.sandboxClient.verifyWorkspaceMount(id, this.target);
-    } catch {
+    } catch (error) {
+      // The SDK client already removes raw diagnostics. Preserve its safe classification.
+      if (error instanceof WorkspaceMountUnavailable) throw error;
       throw new WorkspaceMountUnavailable();
     }
   }

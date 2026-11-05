@@ -510,6 +510,32 @@ describe("E2BSandboxClient", () => {
     }
   });
 
+  it.each([
+    [new DOMException("private URL and token", "TimeoutError"), "timeout"],
+    [new TypeError("private URL", { cause: Object.assign(new Error("secret"), { code: "ECONNRESET" }) }), "network"],
+  ])("reports getInfo failure safely before attempting a mount probe", async (failure, category) => {
+    let now = 0;
+    const { client, sandboxes } = makeClient(validProbe, { clock: () => now });
+    const { id } = await client.create(mountOptions);
+    vi.spyOn(sandboxes[0], "getInfo").mockImplementation(async () => { now += 20_000; throw failure; });
+    const error = await client.verifyWorkspaceMount(id, target).catch(error => error);
+    expect(error.diagnostic).toEqual({ stage: "get_info", category, durationMs: 20_000 });
+    expect(error.cause).toBeUndefined();
+    expect(String(error) + JSON.stringify(error)).not.toMatch(/private|secret|token/);
+    expect(sandboxes[0].runCalls).toEqual([]);
+  });
+
+  it("retains readback failure when cleanup also fails", async () => {
+    const { client } = makeClient(cmd => cmd.includes("OMA_WORKSPACE_PROBE_REMOVED")
+      ? { exitCode: 1 } : validProbe(cmd), {
+      verifyWorkspaceProbe: async () => { throw new DOMException("secret", "TimeoutError"); },
+    });
+    const { id } = await client.create(mountOptions);
+    await expect(client.verifyWorkspaceMount(id, target)).rejects.toMatchObject({
+      diagnostic: { stage: "readback", category: "timeout" },
+    });
+  });
+
   it("rejects another prefix in gateway identity metadata before creating a probe", async () => {
     const { client, sandboxes } = makeClient(validProbe);
     const { id } = await client.create(mountOptions);

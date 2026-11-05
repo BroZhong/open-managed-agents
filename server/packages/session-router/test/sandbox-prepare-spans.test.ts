@@ -36,6 +36,14 @@ describe("a Turn attempt's Sandbox preparation spans (ADR-0023)", () => {
     ]);
   });
 
+  it("persists sanitized failure diagnostics in the prepare span", () => {
+    const { prepares, written } = spans();
+    const diagnostic = { stage: "get_info", category: "timeout", durationMs: 20000 } as const;
+    prepares.started();
+    prepares.ended({ outcome: "failed", error: new SandboxUnavailable("unreachable", undefined, { diagnostic }) });
+    expect(written.at(-1)?.event.data).toMatchObject({ outcome: "failed", reason: "unreachable", diagnostic });
+  });
+
   it("records the Environment and image of every preparation, and the claim's swap and duration only when it claimed (ADR-0024)", () => {
     const { prepares, written } = spans();
     const image = "registry.example/welltop/oma-sandbox@sha256:" + "4".repeat(64);
