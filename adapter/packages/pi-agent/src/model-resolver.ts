@@ -1,5 +1,6 @@
 import { getModel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai/compat";
+import { withResponsesToolCompat } from "./responses-tool-compat.js";
 
 /** Matches the local Pi default; deployment provides its catalog in models.json. */
 export const DEFAULT_MODEL = {
@@ -69,7 +70,7 @@ export function resolveModel(
       `Pi model ${wanted.provider}/${wanted.id} is not configured; add it to the Host Pi models.json`,
     );
   }
-  return model;
+  return withResponsesToolCompat(model);
 }
 
 /** Pi maps this level to the provider's effort (K3 xhigh maps to max). */

@@ -227,6 +227,14 @@ old `reasoning: false` is not proof of upstream non-support or user intent.
 On upgrade, unknown legacy models can therefore begin sending reasoning controls,
 including records that were previously disabled manually.
 
+For `openai-responses`, the adapter sets the public Pi compatibility flag
+`supportsStrictMode: true` so the SDK explicitly emits `strict: false` for ordinary
+function tools. This enables the field, not strict validation. Omitting `strict`
+allows Responses to normalize optional parameters into required ones. The policy
+covers custom providers and configured models, including native, delegation and
+extension tools; it preserves their original parameter schemas. Other protocols,
+including the separate `openai-codex-responses` serializer, retain Pi's behavior.
+
 **Native SDK boundary:** #228's “由接入服务决定” mode is unsupported.
 Pi 0.83.0 cannot omit all Responses thinking controls while retaining collection
 of newly produced encrypted reasoning history. The API rejects
