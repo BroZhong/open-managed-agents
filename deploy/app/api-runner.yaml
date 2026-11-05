@@ -58,6 +58,12 @@ spec:
         - configMapRef:
             name: oma-api-config
         env:
+        # Model discovery/tests inherit the same proxy as Runner inference.
+        - name: OMA_PROXY_URL
+          valueFrom:
+            configMapKeyRef:
+              name: oma-runner-config
+              key: OMA_PROXY_URL
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:
