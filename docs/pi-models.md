@@ -8,10 +8,22 @@ Pi Agents can select these model ids in the console or the Agent API:
 | GLM-5.3 (BigModel) | `bigmodel/glm-5.3` | `xhigh` | `max` |
 | DeepSeek V4.1 Flash | `deepseek/deepseek-flash` | `xhigh` | `max` |
 | GPT-6 Astra | `openai-codex/gpt-6-astra` | `max` | `max` |
+| GPT-6.1 Sol | `openai-codex/gpt-6.1-sol` | `max` | `max` |
 | GPT-5.6 Sol | `openai-codex/gpt-5.6-sol` | `max` | `max` |
 
 New Agents default to GPT-5.6 Sol, matching the local Pi model selection.
 Editing an existing Agent preserves its model until another model is selected.
+GPT-6.1 Sol metadata comes from the local Codex model catalog fetched on
+2026-11-05: text/image input and a default 500,000-token context. Its supported
+efforts include low, medium, high, xhigh, max and ultra; Pi 0.83.0 exposes only
+the first five. Unsupported off/minimal preferences resolve to low. Its output
+limit is explicitly 128,000 tokens, matching the
+[official model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+checked on 2026-11-05. That documentation lists a 1,050,000-token API context;
+the managed Codex route retains its 500,000-token default. Pricing remains
+omitted, and Pi's zero cost estimate does not mean free inference.
+This registration does not establish that the deployed OAuth account can call
+the model; verify an actual Turn after installing the catalog in the Host.
 Agent configuration exposes **思考强度** as a horizontal slider using the same
 model capability query as Session controls, including before the Agent has
 been saved. The API field
@@ -134,14 +146,18 @@ Official sources: [GLM-5.3](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.
 
 The console's **Models** page configures Tenant-owned providers. Choose OpenAI
 Chat Completions (`openai-completions`), OpenAI Responses (`openai-responses`), or
-Anthropic Messages (`anthropic-messages`), enter a public HTTPS Base URL and API
+Anthropic Messages (`anthropic-messages`), enter a public HTTP or HTTPS Base URL and API
 key, then click **Fetch models**. The searchable list contains only models
 returned by that endpoint using those credentials. Select up to ten models.
 Changing the endpoint, protocol or API key clears fetched results and selections;
 refreshing the list drops selected IDs no longer returned. Fetch failures and
 empty lists are shown explicitly, without a built-in catalog fallback. For
 services without a model-list API, manual IDs remain an explicit fallback.
-Review context/output limits and image capabilities. **Supports reasoning** is
+New manual model entries default to 1,000,000 context tokens and 128,000 output
+tokens. Discovery uses the same defaults for missing limits, preserves valid
+endpoint-provided values, and caps output at the selected context limit. These
+defaults do not establish the upstream service's actual limits and do not rewrite
+saved providers. Review context/output limits and image capabilities. **Supports reasoning** is
 no longer a required checkbox. Missing reasoning metadata defaults to Pi's
 five basic levels (`off`, `minimal`, `low`, `medium`, `high`); automatic means
 `high`. An explicit, sourced upstream `false` disables thinking controls unless
@@ -211,6 +227,14 @@ old `reasoning: false` is not proof of upstream non-support or user intent.
 On upgrade, unknown legacy models can therefore begin sending reasoning controls,
 including records that were previously disabled manually.
 
+For `openai-responses`, the adapter sets the public Pi compatibility flag
+`supportsStrictMode: true` so the SDK explicitly emits `strict: false` for ordinary
+function tools. This enables the field, not strict validation. Omitting `strict`
+allows Responses to normalize optional parameters into required ones. The policy
+covers custom providers and configured models, including native, delegation and
+extension tools; it preserves their original parameter schemas. Other protocols,
+including the separate `openai-codex-responses` serializer, retain Pi's behavior.
+
 **Native SDK boundary:** #228's “由接入服务决定” mode is unsupported.
 Pi 0.83.0 cannot omit all Responses thinking controls while retaining collection
 of newly produced encrypted reasoning history. The API rejects
@@ -255,8 +279,11 @@ a custom transport are not offered by this API-key form. The current three proto
 support Pi's injectable fetch, which lets Host enforce public-address DNS
 resolution at socket connection time, reject redirects and avoid credential
 leaks in upstream error bodies. Custom-provider requests use a dedicated direct
-HTTPS dispatcher, independent of the global `OMA_PROXY_URL`; the deployment must
-permit direct HTTPS egress to these endpoints.
+HTTP/HTTPS dispatcher, independent of the global `OMA_PROXY_URL`; the deployment
+must permit direct egress to the configured endpoint's port. HTTP is supported
+for gateways without TLS, but sends API keys and model traffic unencrypted;
+HTTPS remains recommended. Both schemes enforce the same public-address,
+endpoint-path and no-redirect restrictions.
 
 For local development with a proxy in Fake-IP mode, exclude provider domains
 from Fake-IP DNS (for example, add `open.bigmodel.cn` to Clash/Mihomo's

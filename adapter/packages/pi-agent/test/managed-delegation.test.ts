@@ -18,6 +18,15 @@ describe("Host delegation tool boundary", () => {
 });
 
 describe("delegation validation", () => {
+  it.each(["", " ", null])("explains how to recover from an invalid resume (%j)", async (resume) => {
+    const host = capability();
+    const tool = buildSubagentTools(host)[0];
+    await expect(tool.execute("invalid", { prompt: "task", resume }, undefined, undefined, {} as never))
+      .rejects.toThrow("To create a new child, omit resume entirely");
+    expect(host.delegate).not.toHaveBeenCalled();
+    await tool.execute("corrected", { prompt: "task" }, undefined, undefined, {} as never);
+    expect(host.delegate).toHaveBeenCalledWith({ prompt: "task", runInBackground: false }, expect.anything());
+  });
   it.each(["worktree", "isolated", "tenantId", "parentSessionId", "model"])("rejects unsupported %s before calling the Host", async (key) => {
     const host = capability();
     await expect(buildSubagentTools(host)[0].execute("id", { prompt: "task", [key]: true }, undefined, undefined, {} as never)).rejects.toThrow("Unsupported delegation parameter");

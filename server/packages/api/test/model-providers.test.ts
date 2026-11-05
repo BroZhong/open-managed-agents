@@ -417,7 +417,18 @@ describe("custom provider network boundary", () => {
     (address) => expect(isPublicProviderAddress(address)).toBe(true),
   );
   it.each([
-    "http://example.com",
+    "ftp://example.com",
+    "file:///etc/passwd",
+    "http://localhost:3102",
+    "http://api.localhost:3102",
+    "http://127.1:3102",
+    "http://2130706433",
+    "http://10.0.0.1:3102",
+    "http://169.254.169.254",
+    "http://[::1]:3102",
+    "http://user:key@example.com",
+    "http://example.com?key=x",
+    "http://example.com#fragment",
     "https://127.1",
     "https://2130706433",
     "https://[::1]",
@@ -427,17 +438,28 @@ describe("custom provider network boundary", () => {
   ])("rejects unsafe endpoint %s", (url) =>
     expect(() => providerBaseUrl(url)).toThrow(),
   );
-  it("rejects endpoint escapes and forbids redirects", async () => {
+  it.each([
+    "http://47.252.6.181:3102",
+    "http://example.com:3102/v1",
+    "https://example.com/v1",
+  ])("accepts and normalizes public endpoint %s", (url) => {
+    expect(providerBaseUrl(`${url}/`)).toBe(url);
+  });
+  it.each(["http", "https"])("rejects endpoint escapes and forbids redirects over %s", async (scheme) => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("OK"));
     vi.stubGlobal("fetch", fetchMock);
-    const request = providerFetch("https://example.com/v1");
+    const request = providerFetch(`${scheme}://example.com:3102/v1`);
     await expect(
-      request("https://other.example.com/v1/messages"),
+      request(`${scheme}://other.example.com:3102/v1/messages`),
     ).rejects.toThrow();
-    await expect(request("https://example.com/private")).rejects.toThrow();
-    await request("https://example.com/v1/messages");
+    await expect(request(`${scheme}://example.com:3102/private`)).rejects.toThrow();
+    await expect(request(`${scheme}://example.com:3103/v1/messages`)).rejects.toThrow();
+    const otherScheme = scheme === "http" ? "https" : "http";
+    await expect(request(`${otherScheme}://example.com:3102/v1/messages`)).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await request(`${scheme}://example.com:3102/v1/messages`);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://example.com/v1/messages",
+      `${scheme}://example.com:3102/v1/messages`,
       expect.objectContaining({
         redirect: "error",
         dispatcher: expect.anything(),

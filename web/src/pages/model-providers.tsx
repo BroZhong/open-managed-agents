@@ -455,8 +455,8 @@ function ProviderEditor({
                     addModel({
                       id: manualId.trim(),
                       name: manualId.trim(),
-                      contextWindow: 32768,
-                      maxTokens: 4096,
+                      contextWindow: 1_000_000,
+                      maxTokens: 128_000,
                       reasoningSource: "default",
                       capabilityVersion: 1,
                       input: ["text"],
@@ -475,7 +475,8 @@ function ProviderEditor({
             </h3>
             <p className="text-xs text-neutral-500">
               Check the context and output limits against your service. If the
-              endpoint omits them, conservative defaults are used.
+              endpoint omits them, defaults are 1,000,000 context tokens and
+              128,000 output tokens, capped at the context limit.
             </p>
             {form.models.length === 0 && (
               <p className="rounded-lg bg-neutral-50 p-5 text-sm text-neutral-500">

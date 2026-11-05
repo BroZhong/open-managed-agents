@@ -47,7 +47,7 @@ describe("endpoint discovery through Pi refresh and vendor SDKs", () => {
       expect(request).toHaveBeenCalledOnce();
     },
   );
-  it("preserves metadata returned by the endpoint and uses conservative defaults when absent", async () => {
+  it("preserves metadata returned by the endpoint and uses configured defaults when absent", async () => {
     const result = await discoverCustomProviderModels(definition, async () =>
       Response.json({
         data: [
@@ -63,6 +63,7 @@ describe("endpoint discovery through Pi refresh and vendor SDKs", () => {
           },
           { id: "unknown-id" },
           { id: "explicitly-unsupported", reasoning: false },
+          { id: "small-context", context_window: 16384 },
         ],
       }),
     );
@@ -77,13 +78,14 @@ describe("endpoint discovery through Pi refresh and vendor SDKs", () => {
       input: ["text", "image"],
     });
     expect(result[1]).toMatchObject({
-      contextWindow: 32768,
-      maxTokens: 4096,
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
       reasoning: true,
       reasoningSource: "default",
       capabilityVersion: 1,
     });
     expect(result[2]).toMatchObject({ reasoning: false, reasoningSource: "upstream", capabilityVersion: 1 });
+    expect(result[3]).toMatchObject({ contextWindow: 16384, maxTokens: 16384 });
   });
   it("uses Anthropic's models API, headers and SDK pagination", async () => {
     const request = vi.fn<typeof fetch>(async (url, init) => {

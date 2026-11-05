@@ -59,7 +59,7 @@ export function providerBaseUrl(raw: string): string {
   const url = new URL(raw);
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (
-    url.protocol !== "https:" ||
+    !["http:", "https:"].includes(url.protocol) ||
     url.username ||
     url.password ||
     url.search ||
@@ -69,7 +69,7 @@ export function providerBaseUrl(raw: string): string {
     hostname.endsWith(".localhost")
   ) {
     throw new Error(
-      "Use a public HTTPS provider URL without credentials, query parameters or fragments.",
+      "Use a public HTTP or HTTPS provider URL without credentials, query parameters or fragments.",
     );
   }
   return url.href.replace(/\/+$/, "");

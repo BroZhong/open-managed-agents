@@ -11,7 +11,7 @@ import { ModelProviderService } from "../src/lib/model-providers.js";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-it("carries discovered capabilities through save, Agent/Session preferences and actual Pi Turns", async () => {
+it.each(["http", "https"])("carries discovered capabilities through save, Agent/Session preferences and actual Pi Turns over %s", async (scheme) => {
   const agentDir = await mkdtemp(join(tmpdir(), "oma-thinking-workflow-"));
   vi.stubEnv("AUTH_DISABLED", "true");
   vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
@@ -21,7 +21,7 @@ it("carries discovered capabilities through save, Agent/Session preferences and 
       { id: "vendor/unknown", name: "Unknown" },
       { id: "vendor/plain", name: "Plain", reasoning: false },
     ] });
-    expect(String(url)).toBe("https://gateway.example.com/v1/chat/completions");
+    expect(String(url)).toBe(`${scheme}://gateway.example.com:3102/v1/chat/completions`);
     requests.push(JSON.parse(String(init?.body)));
     return new Response([
       { id: "chat-1", choices: [{ index: 0, delta: { role: "assistant", content: "OK" }, finish_reason: null }] },
@@ -44,7 +44,7 @@ it("carries discovered capabilities through save, Agent/Session preferences and 
     return result;
   };
   try {
-    const connection = { api: "openai-completions", baseUrl: "https://gateway.example.com/v1", apiKey: "controlled-test-key" };
+    const connection = { api: "openai-completions", baseUrl: `${scheme}://gateway.example.com:3102/v1`, apiKey: "controlled-test-key" };
     const discovered = await json(await post("/v1/model-providers/discover", connection));
     expect(discovered.data[0]).toMatchObject({ reasoning: true, reasoningSource: "default", capabilityVersion: 1 });
     expect(discovered.data[1]).toMatchObject({ reasoning: false, reasoningSource: "upstream", capabilityVersion: 1 });

@@ -82,13 +82,13 @@ function modelDefinition(raw: unknown): CustomModelDefinition {
       : fallback;
   const contextWindow = integer(
     item.context_window ?? item.max_input_tokens,
-    32768,
+    1_000_000,
     1024,
     10_000_000,
   );
   const maxTokens = Math.min(
     contextWindow,
-    integer(item.max_tokens ?? item.max_output_tokens, 4096, 128, 1_000_000),
+    integer(item.max_tokens ?? item.max_output_tokens, 128_000, 128, 1_000_000),
   );
   const name = item.display_name ?? item.name;
   const capabilities = item.capabilities as

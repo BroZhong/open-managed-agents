@@ -91,7 +91,7 @@ export class ModelProviderService {
     } catch {
       throw new ProviderError(400, {
         message:
-          "Use a public HTTPS provider URL without credentials, query parameters or fragments.",
+          "Use a public HTTP or HTTPS provider URL without credentials, query parameters or fragments.",
       });
     }
     const models = input.models.map((model) => ({

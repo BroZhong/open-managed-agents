@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { CustomModelDefinition, CustomProviderDefinition, CustomProviderProtocol } from "./custom-provider.js";
+import { withResponsesToolCompat } from "./responses-tool-compat.js";
 
 export interface CapabilityReference { provider: string; modelId: string }
 export interface CapabilityRecommendation extends CapabilityReference { name: string; reason: string }
@@ -57,7 +58,7 @@ export function resolveCustomModel(
   const reference = matched ? { provider: matched.provider, modelId: matched.id } : undefined;
   const source = manualReference || adaptive ? "manual" : explicitlyUnsupported ? "upstream" : matched ? "catalog" : model.reasoningSource === "upstream" ? "upstream" : "default";
   return {
-    model: {
+    model: withResponsesToolCompat({
       id: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
       input: model.input, reasoning, api: definition.api, provider: definition.id, baseUrl: definition.baseUrl,
       // New references describe capabilities only. Preserve pricing solely for
@@ -72,7 +73,7 @@ export function resolveCustomModel(
         compat: { ...matched?.compat, forceAdaptiveThinking: true, supportsTemperature: false },
         thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
       } : {}),
-    },
+    }),
     capabilities: { source, ...(reference ? { reference } : {}), ...(adaptive ? { profile: "anthropic-adaptive" } : {}), recommendations: matched || adaptive ? [] : capabilityReferences(definition.api, model.id).recommendations },
   };
 }
