@@ -22,6 +22,17 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       input = { tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool-1", prompt: "Do task", mode: "async", parentModel: "provider/parent-model", maxSteps: 30, sandboxSessionId: parent.id };
     });
     afterAll(async () => { await close?.(); });
+    it.each(["new", "null", "/new", "create", "sess_missing"])("guides recovery from an unknown resume without accepting work (%s)", async (resume) => {
+      await expect(stores.delegationStore.accept({ ...input, resume }, parentFence))
+        .rejects.toThrow("To create a new child, omit resume entirely");
+      expect(await stores.delegationStore.list(input.tenantId, input.callerSessionId)).toHaveLength(0);
+      expect((await stores.sessionStore.list(input.tenantId)).data).toHaveLength(1);
+      const child = await stores.delegationStore.accept(input, parentFence);
+      expect(await stores.pendingEventStore.count(child.childId)).toBe(1);
+      const resumed = await stores.delegationStore.accept({ ...input, callerToolUseId: "follow-up", resume: child.childId }, parentFence);
+      expect(resumed.childId).toBe(child.childId);
+      expect(resumed.id).not.toBe(child.id);
+    });
     it("atomically accepts once per parent tool and keeps immutable child origin", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       expect(await stores.delegationStore.accept(input, parentFence)).toEqual(child);

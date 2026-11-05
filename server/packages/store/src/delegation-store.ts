@@ -126,7 +126,9 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       if (existing) return existing;
       let child;
       if (input.resume) {
-        if (!await this.accessible(tx, input.tenantId, input.callerSessionId, input.resume)) throw new Error("Child Session not found or not accessible");
+        if (!await this.accessible(tx, input.tenantId, input.callerSessionId, input.resume)) {
+          throw new Error('Child Session not found or not accessible. To continue an existing child, pass the childId returned by a previous Agent call in this parent Session. To create a new child, omit resume entirely.');
+        }
         child = await tx.sessions.getById(input.resume);
         if (!child || child.status === "terminated") throw new Error("Child Session terminated; cannot resume");
       } else {

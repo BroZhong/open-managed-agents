@@ -11,14 +11,17 @@ export function buildSubagentTools(host: HostSubagentCapability): ToolDefinition
   const tools: ToolDefinition[] = [
     defineTool({
       name: "Agent", label: "Delegate task",
-      description: `Delegate a general-purpose task in a durable child Session sharing this Workspace and Sandbox. No subtype is required. Defaults to synchronous waiting in this Turn; run_in_background=true lets this Turn finish and delivers a later result. resume continues the same child in a new child Turn. New and resumed children use the same model as the calling parent Turn; model selection is not a tool parameter. Children cannot delegate or use Web/MCP, have a Host-assigned budget of ${maxModelSteps} model steps per execution, and may leave partial files on failure. Budget exhaustion returns budget_exhausted; inspect the result and decide whether to resume. Resuming starts a new execution with a fresh Host-assigned budget; it is never automatic. Interrupt of a synchronous caller stops its own synchronous delegation; background children continue independently.`,
-      parameters: Type.Object({ prompt: Type.String({ minLength: 1 }), resume: Type.Optional(child), subagent_type: Type.Optional(Type.Literal("general-purpose")), run_in_background: Type.Optional(Type.Boolean({ default: false })), thinking: Type.Optional(Type.String()) }, { additionalProperties: false }),
+      description: `Delegate a general-purpose task in a durable child Session sharing this Workspace and Sandbox. Omit resume to create a new child; set it to the childId returned by a previous Agent call to continue that child in a new Turn. No subtype is required. Defaults to synchronous waiting in this Turn; run_in_background=true lets this Turn finish and delivers a later result. New and resumed children use the same model as the calling parent Turn; model selection is not a tool parameter. Children cannot delegate or use Web/MCP, have a Host-assigned budget of ${maxModelSteps} model steps per execution, and may leave partial files on failure. Budget exhaustion returns budget_exhausted; inspect the result and decide whether to resume. Resuming starts a new execution with a fresh Host-assigned budget; it is never automatic. Interrupt of a synchronous caller stops its own synchronous delegation; background children continue independently.`,
+      parameters: Type.Object({ prompt: Type.String({ minLength: 1 }), resume: Type.Optional(Type.String({ minLength: 1, description: 'Optional childId returned by a previous Agent call. Use to continue that child; omit to create a new child.' })), subagent_type: Type.Optional(Type.Literal("general-purpose")), run_in_background: Type.Optional(Type.Boolean({ default: false })), thinking: Type.Optional(Type.String()) }, { additionalProperties: false }),
       async execute(toolUseId, args, signal) {
         validateArguments(args, ["prompt", "resume", "subagent_type", "run_in_background", "thinking"]);
         if (args.subagent_type !== undefined && args.subagent_type !== "general-purpose") throw new Error("Only general-purpose delegation is supported; no subtype is required");
         requiredText(args.prompt, "prompt");
         optionalBoolean(args.run_in_background, "run_in_background");
-        optionalText(args.resume, "resume"); optionalText(args.thinking, "thinking");
+        if (args.resume !== undefined && (typeof args.resume !== "string" || !args.resume.trim())) {
+          throw new Error('Invalid resume. To continue an existing child, pass the childId returned by a previous Agent call. To create a new child, omit resume entirely.');
+        }
+        optionalText(args.thinking, "thinking");
         return result(await host.delegate({ prompt: args.prompt, runInBackground: args.run_in_background ?? false, ...(args.resume !== undefined ? { resume: args.resume } : {}), ...(args.thinking !== undefined ? { thinking: args.thinking } : {}) }, { toolUseId, signal }));
       },
     }),
