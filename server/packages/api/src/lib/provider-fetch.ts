@@ -1,6 +1,6 @@
-import { lookup } from "node:dns";
+import { lookup, type LookupAddress } from "node:dns";
 import { BlockList, isIP } from "node:net";
-import { Agent } from "undici";
+import { Agent, Pool, ProxyAgent, type Dispatcher } from "undici";
 
 const blocked = new BlockList();
 for (const [address, prefix] of [
@@ -77,26 +77,13 @@ export function providerBaseUrl(raw: string): string {
 
 // Validate at connection time and return precisely the validated addresses to
 // the socket. A separate preflight DNS lookup would permit DNS rebinding.
-const dispatcher = new Agent({
+const directDispatcher = new Agent({
   connect: {
     lookup(hostname, options, callback) {
       lookup(hostname, { all: true, verbatim: true }, (error, addresses) => {
         if (error) return callback(error, [], 0);
-        if (
-          !addresses.length ||
-          addresses.some((item) => !isPublicProviderAddress(item.address))
-        ) {
-          return callback(
-            new ProviderAddressError(
-              addresses.some(
-                (item) =>
-                  item.family === 4 && fakeIpV4.check(item.address, "ipv4"),
-              ),
-            ),
-            [],
-            0,
-          );
-        }
+        try { assertPublicAddresses(addresses); }
+        catch (error) { return callback(error as Error, [], 0); }
         const matches = options.family
           ? addresses.filter((item) => item.family === Number(options.family))
           : addresses;
@@ -113,8 +100,67 @@ const dispatcher = new Agent({
   },
 });
 
+function assertPublicAddresses(addresses: LookupAddress[]): void {
+  if (!addresses.length || addresses.some(item => !isPublicProviderAddress(item.address))) {
+    throw new ProviderAddressError(addresses.some(item =>
+      item.family === 4 && fakeIpV4.check(item.address, "ipv4")));
+  }
+}
+
+/** Pin the CONNECT authority to a validated IP. Letting the proxy resolve the
+ * original hostname after a local preflight would reopen DNS rebinding. The
+ * ProxyAgent still uses the original origin for HTTP Host and TLS verification. */
+class PublicProviderProxyPool extends Pool {
+  override dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers): boolean {
+    if (options.method !== "CONNECT") {
+      handler.onError?.(new Error("Provider proxy requires CONNECT"));
+      return false;
+    }
+    const target = new URL(`http://${options.path}`);
+    const hostname = target.hostname.replace(/^\[|\]$/g, "");
+    const connect = (error: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => {
+      try {
+        if (error) throw error;
+        assertPublicAddresses(addresses);
+        const { address, family } = addresses[0]!;
+        const authority = `${family === 6 ? `[${address}]` : address}:${target.port || "80"}`;
+        super.dispatch({
+          ...options,
+          path: authority,
+          headers: { ...options.headers, host: authority },
+        }, handler);
+      } catch (error) { handler.onError?.(error as Error); }
+    };
+    const family = isIP(hostname);
+    if (family) connect(null, [{ address: hostname, family }]);
+    else lookup(hostname, { all: true, verbatim: true }, connect);
+    return true;
+  }
+}
+
+const proxyDispatchers = new Map<string, ProxyAgent>();
+function providerDispatcher(): Dispatcher {
+  // Absent inherits the Host proxy; an explicit empty value opts out. Do not
+  // fall back to direct on proxy failures. Both protocols use the same route.
+  const proxyUrl = process.env.OMA_PROVIDER_PROXY_URL ?? (
+    process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy ||
+    process.env.HTTP_PROXY || process.env.http_proxy
+  );
+  if (!proxyUrl?.trim()) return directDispatcher;
+  let dispatcher = proxyDispatchers.get(proxyUrl);
+  if (!dispatcher) {
+    dispatcher = new ProxyAgent({
+      uri: proxyUrl,
+      clientFactory: (origin, options) => new PublicProviderProxyPool(origin, options),
+    });
+    proxyDispatchers.set(proxyUrl, dispatcher);
+  }
+  return dispatcher;
+}
+
 export function providerFetch(baseUrl: string): typeof fetch {
   const base = new URL(providerBaseUrl(baseUrl));
+  const dispatcher = providerDispatcher();
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     providerBaseUrl(`${url.origin}${url.pathname}`);

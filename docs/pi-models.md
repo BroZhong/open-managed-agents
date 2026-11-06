@@ -278,12 +278,24 @@ Protocols requiring OAuth, cloud identities, deployment-specific credentials or
 a custom transport are not offered by this API-key form. The current three protocols
 support Pi's injectable fetch, which lets Host enforce public-address DNS
 resolution at socket connection time, reject redirects and avoid credential
-leaks in upstream error bodies. Custom-provider requests use a dedicated direct
-HTTP/HTTPS dispatcher, independent of the global `OMA_PROXY_URL`; the deployment
-must permit direct egress to the configured endpoint's port. HTTP is supported
-for gateways without TLS, but sends API keys and model traffic unencrypted;
-HTTPS remains recommended. Both schemes enforce the same public-address,
-endpoint-path and no-redirect restrictions.
+leaks in upstream error bodies. Custom-provider discovery, connection tests and
+inference share a dedicated HTTP/HTTPS dispatcher. When `OMA_PROVIDER_PROXY_URL`
+is absent, it inherits the first non-empty Host setting in this order:
+`OMA_PROXY_URL`, `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`.
+Set `OMA_PROVIDER_PROXY_URL` to a proxy URL to override that route, or explicitly
+to an empty string to use direct connections. With no proxy address configured
+anywhere, local development remains direct. A proxy failure never falls back to
+direct. This explicit Provider route does not use `NO_PROXY`; use the dedicated
+empty setting for direct Provider traffic. API and Runner must receive the same
+proxy configuration so connection tests and inference follow the same route.
+
+Proxy connections use CONNECT for both HTTP and HTTPS. Before each new tunnel,
+the Host resolves and validates the target, then passes the validated IP to the
+proxy, preventing a second proxy-side DNS lookup from bypassing the public-address
+restriction. HTTP Host and HTTPS SNI/certificate checks retain the original
+provider hostname. HTTP is supported for gateways without TLS, but sends API
+keys and model traffic unencrypted inside the tunnel; HTTPS remains recommended.
+Both routes retain endpoint-path and no-redirect restrictions.
 
 For local development with a proxy in Fake-IP mode, exclude provider domains
 from Fake-IP DNS (for example, add `open.bigmodel.cn` to Clash/Mihomo's
