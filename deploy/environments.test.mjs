@@ -148,14 +148,17 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("both environments run 2-CPU Runners rolled out a quarter at a time; only test can kill them abruptly", () => {
-  for (const env of ["test", "production"]) {
+test("Runners roll out a quarter at a time, 1C4G on test and 2C8G in production; only test can kill them abruptly", () => {
+  for (const [env, cpu, memoryGi] of [["test", "1", 4], ["production", "2", 8]]) {
     const doc = runner(render(env));
     assert.match(doc, /^    type: RollingUpdate$/m, env);
     assert.match(doc, /^      maxSurge: 25%$/m, env);
     assert.match(doc, /^      maxUnavailable: 0$/m, env);
-    assert.match(doc, /^            cpu: "2"$/m, env);
-    assert.match(doc, /^            memory: 8Gi$/m, env);
+    assert.match(doc, new RegExp(`^            cpu: "${cpu}"$`, "m"), env);
+    assert.match(doc, new RegExp(`^            memory: ${memoryGi}Gi$`, "m"), env);
+    // The heap stays below the limit, so V8 collects before the kernel kills.
+    const heapMi = Number(doc.match(/--max-old-space-size=(\d+)/)?.[1]);
+    assert.ok(heapMi > 0 && heapMi <= memoryGi * 1024 * 0.75, `${env}: heap ${heapMi} MiB within ${memoryGi} GiB`);
   }
   assert.match(runner(render("test")), /^      shareProcessNamespace: true$/m);
   assert.doesNotMatch(runner(render("production")), /shareProcessNamespace/);
@@ -179,7 +182,7 @@ test("a stopping Runner hands its Turns over for 45 minutes and is killed 60 s a
   }
 });
 
-test("KEDA scales the test Runners on their demand below Runner Capacity; production keeps five (ADR-0026)", () => {
+test("KEDA scales the test Runners on their demand below Runner Capacity, down to none; production keeps five (ADR-0026)", () => {
   const docs = render("test");
   // No apply resets the count KEDA sets.
   assert.doesNotMatch(runner(docs), /^  replicas:/m);
@@ -202,12 +205,14 @@ test("KEDA scales the test Runners on their demand below Runner Capacity; produc
     "            type: Pods",
     "            value: 10",
     "          stabilizationWindowSeconds: 0",
+    "  cooldownPeriod: 600",
     "  fallback:",
     "    behavior: currentReplicasIfHigher",
     "    failureThreshold: 3",
-    "    replicas: 2",
+    "    replicas: 1",
     "  maxReplicaCount: 50",
-    "  minReplicaCount: 2",
+    "  minReplicaCount: 0",
+    "  pollingInterval: 10",
     "  scaleTargetRef:",
     "    name: oma-runner",
     "  triggers:",
