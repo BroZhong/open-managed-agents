@@ -157,12 +157,20 @@ installed once for the cluster: see [keda/README.md](keda/README.md) and
 `oma-runner` and its TriggerAuthentication. KEDA's Metrics API scaler reads
 `demand` from `GET /internal/runner-demand` on the `oma-api` Service, a route
 outside `/api` that the public Ingress never reaches, with a bearer token, and
-drives the HPA `keda-hpa-oma-runner`: replicas = ceil(demand / 40), between 2
+drives the HPA `keda-hpa-oma-runner`: replicas = ceil(demand / 40), between 0
 and 50, at most 10 more per 15 s, and after 600 s of lower demand at most 2
 fewer per minute. The target 40 stays below the Runners' `RUNNER_CAPACITY` (50);
 the render test checks both. A failed read (the endpoint answers 503, never 0)
 does not scale in: the HPA keeps its count, and after 3 consecutive failures
-KEDA reports the current count (at least 2) until a read succeeds.
+KEDA reports the current count (at least 1) until a read succeeds.
+
+Test idles at no Runner (production's planned minimum is 2, ADR-0026). With no
+Runner, KEDA polls the demand every 10 s and starts one once it is above 0, so
+the first input after an idle period waits for a Runner to start; the last
+Runner leaves 600 s after the demand reached 0. Meanwhile the console cannot
+read a managed model's thinking levels (the API asks a Runner) and no Loop
+fires (only Runners schedule Loops). Test Runners are 1C4G with a 3 GiB heap;
+production's are 2C8G with 6 GiB.
 
 The token is one Secret: the API reads it as `RUNNER_DEMAND_TOKEN` (optional;
 without it the endpoint is not served) and the TriggerAuthentication sends it.
@@ -215,9 +223,9 @@ production with #335):
    returns 1.
 3. Release as in [Test releases](#test-releases), with API and Runner images
    that serve the endpoint and Runner Capacity. Before the new API is up the
-   reads fail, and the fallback keeps at least 2 Runners.
+   reads fail, and the fallback keeps the Runners there are.
 4. Check as above, and that `kubectl -n oma-test get deploy oma-runner -o
-   jsonpath='{.spec.replicas}'` never went below 2.
+   jsonpath='{.spec.replicas}'` did not drop while the first apply rolled out.
 
 To stop autoscaling, pin `replicas` in the test overlay, delete the KEDA objects
 (`kubectl -n oma-test delete scaledobject/oma-runner

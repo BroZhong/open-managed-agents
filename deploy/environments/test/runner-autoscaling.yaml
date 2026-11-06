@@ -20,16 +20,24 @@ metadata:
 spec:
   scaleTargetRef:
     name: oma-runner
-  # Above 0 replicas the HPA reads the demand every 15 s, its sync period;
-  # pollingInterval would only pace KEDA's status reads.
-  minReplicaCount: 2
+  # Test idles at no Runner, unlike production's minimum of 2 (ADR-0026): the
+  # first input after an idle period waits for a Runner to start. With none,
+  # the console cannot read a managed model's thinking levels and no Loop
+  # fires, since only Runners run the Loop scheduler.
+  minReplicaCount: 0
   maxReplicaCount: 50
+  # At no Runner KEDA itself polls the demand and starts the first one when
+  # it is above 0; from one Runner up the HPA reads it every 15 s.
+  pollingInterval: 10
+  # The last Runner leaves 600 s after the demand reached 0, the HPA's
+  # scale-down window for the others.
+  cooldownPeriod: 600
   # A failing demand read never scales in. KEDA counts consecutive failures;
-  # past 3 the HPA is told the current count (at least 2), and until then it
+  # past 3 the HPA is told the current count (at least 1), and until then it
   # keeps the count it has.
   fallback:
     failureThreshold: 3
-    replicas: 2
+    replicas: 1
     behavior: currentReplicasIfHigher
   advanced:
     horizontalPodAutoscalerConfig:

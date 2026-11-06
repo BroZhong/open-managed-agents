@@ -51,6 +51,29 @@ patches:
   # abruptly, the way an OOM kill or a node failure would.
   patch: |-
     - {op: add, path: /spec/template/spec/shareProcessNamespace, value: true}
+# 1C4G Runners on test, the size of a Sandbox: idle and bursty, test pays per
+# Runner as KEDA scales it. The heap keeps a quarter of the limit for Node's
+# own memory, so V8 collects before the kernel kills.
+- target:
+    kind: Deployment
+    name: oma-runner
+  patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: oma-runner
+    spec:
+      template:
+        spec:
+          containers:
+          - name: runner
+            env:
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=3072
+            resources:
+              limits:
+                cpu: '1'
+                memory: 4Gi
 - target:
     kind: Ingress
     name: oma-console
