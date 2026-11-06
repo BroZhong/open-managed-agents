@@ -8,18 +8,18 @@
 # NO_PROXY: GitHub needs the proxy, Aliyun mirrors stay direct. Nothing here
 # writes proxy settings into the image.
 #
-# Every version and checksum reproduces the live auto-story-v2 0.3.3 image
+# The initial versions and checksums reproduced the live auto-story-v2 0.3.3 image
 # (oma-sandbox@sha256:67a46af6…, recipe on branch codex/sandbox-runtime-0.3.1),
 # without its offline Whisper (maintainer decision 2026-10-26). README.md lists
-# the sources and what deliberately differs.
+# the sources, subsequent tool upgrades and what deliberately differs.
 set -euo pipefail
 
 # --- Pinned inputs -----------------------------------------------------------
 # Each *_URL is checked against *_SHA256; the installed file against
 # *_BINARY_SHA256.
-VFS_CLI_URL=https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.21/vfs-cli_v0.3.21_linux_amd64.tar.gz
-VFS_CLI_SHA256=13a8125d6083d4747fe74b6d74142121c8c272c10f77b23e5b22334ab48abacb
-VFS_CLI_BINARY_SHA256=d4493416139db06f69cbaffd7edf80b64355fd98e77c7f904a06da737295e020
+VFS_CLI_URL=https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.23/vfs-cli_v0.3.23_linux_amd64.tar.gz
+VFS_CLI_SHA256=52cbb1d25ebf5e780cc54584c424e9f6dbed3c8827019b708008d8ff1fb6fd94
+VFS_CLI_BINARY_SHA256=e951c9f97f27365e12deee08588600eec777276276c3a37098faae5f9c97aa63
 MEDIAKIT_CLI_URL=https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz
 MEDIAKIT_CLI_SHA256=8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987
 MEDIAKIT_CLI_BINARY_SHA256=2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca
@@ -104,7 +104,7 @@ PY
 chmod 0644 /etc/pip.conf
 
 # --- Command-line tools ------------------------------------------------------
-step "vfs-cli v0.3.21"
+step "vfs-cli v0.3.23"
 if ! installed vfs-cli "$VFS_CLI_BINARY_SHA256"; then
   fetch "$VFS_CLI_URL" "$VFS_CLI_SHA256" "$work/vfs-cli.tar.gz"
   tar -xzf "$work/vfs-cli.tar.gz" -C "$work" --no-same-owner vfs-cli

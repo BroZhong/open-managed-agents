@@ -166,11 +166,12 @@ test("video-production replaces auto-story-v2 with the agreed variables", () => 
   assert.equal(definition.env.length, platform.length + 6);
 });
 
-test("video-production installs the live image's pinned tools and policy", () => {
+test("video-production installs the pinned tools and policy", () => {
   const { initScript } = builtins.find((b) => b.dir === "video-production");
   const pins = {
-    VFS_CLI_URL: "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.21/vfs-cli_v0.3.21_linux_amd64.tar.gz",
-    VFS_CLI_SHA256: "13a8125d6083d4747fe74b6d74142121c8c272c10f77b23e5b22334ab48abacb",
+    VFS_CLI_URL: "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.23/vfs-cli_v0.3.23_linux_amd64.tar.gz",
+    VFS_CLI_SHA256: "52cbb1d25ebf5e780cc54584c424e9f6dbed3c8827019b708008d8ff1fb6fd94",
+    VFS_CLI_BINARY_SHA256: "e951c9f97f27365e12deee08588600eec777276276c3a37098faae5f9c97aa63",
     MEDIAKIT_CLI_URL: "https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz",
     MEDIAKIT_CLI_SHA256: "8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987",
     OSSUTIL_URL: "https://gosspublic.alicdn.com/ossutil/v2/2.2.0/ossutil-2.2.0-linux-amd64.zip",
