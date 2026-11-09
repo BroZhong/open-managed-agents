@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { fixture, json, run } from "../test/helpers.mjs";
 const packageRoot = new URL("..", import.meta.url).pathname;
+const { version } = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
 const dir = await realpath(await mkdtemp(join(tmpdir(), "oma-installed-")));
 let server;
 try {
@@ -34,8 +35,15 @@ try {
     const r = await run(args, { bin, cwd: dir });
     assert.equal(r.code, 0, r.stderr);
   }
+  const environment = {
+    id: "env_video_production", name: "video-production", ownerType: "platform",
+    baseImage: "oma-media", status: "ready", description: "fixture", updatedAt: "2026-10-26T00:00:00Z",
+    env: [{ name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }],
+  };
   server = await fixture((req, res) =>
-    json(
+    req.url.includes("/v1/environments")
+      ? json(res, req.url.endsWith("/v1/environments") ? { data: [environment] } : environment)
+      : json(
       res,
       req.url.includes("/a1")
         ? {
@@ -64,16 +72,26 @@ try {
     { bin, cwd: dir, env },
   );
   assert.equal(get.data().data.system, "x");
+  const environments = await run(["environment", "list"], { bin, cwd: dir, env });
+  assert.equal(environments.code, 0, environments.stderr);
+  assert.equal(environments.data().data[0].id, "env_video_production");
+  const environmentGet = await run(["environment", "get", "--environment-id", "env_video_production"], { bin, cwd: dir, env });
+  assert.equal(environmentGet.code, 0, environmentGet.stderr);
+  assert.equal(environmentGet.data().data.baseImage, "oma-media");
+  for (const path of [["environment", "create"], ["environment", "logs"], ["agent", "update"]]) {
+    const schema = await run(["schema", ...path], { bin, cwd: dir });
+    assert.equal(schema.code, 0, schema.stderr);
+  }
   const text = execFileSync(
     join(dir, "node_modules/.bin/oma-cli"),
     ["--version"],
     { cwd: dir, encoding: "utf8" },
   );
-  assert.equal(text.trim(), "0.0.2");
+  assert.equal(text.trim(), version);
   console.log(
     JSON.stringify(
       {
-        version: "0.0.2",
+        version,
         runtime: process.version,
         sha256: createHash("sha256")
           .update(await readFile(tarball))
@@ -84,6 +102,8 @@ try {
           "executable bin",
           "offline discovery",
           "fixture list → get",
+          "fixture environment list → get",
+          "offline environment and agent schemas",
         ],
       },
       null,
