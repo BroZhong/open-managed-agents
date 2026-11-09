@@ -23,7 +23,7 @@ export async function write(
   project?: (x: any) => unknown,
 ): Promise<Result> {
   if (c.flags["dry-run"]) return plan(c, [step]);
-  const data = await c.http.request(step.path, step.method, step.body);
+  const data = await c.http.request(step.path, step.method, step.body, { headers: step.headers });
   return { data: project ? project(data) : data };
 }
 export async function exists(read: () => Promise<unknown>): Promise<boolean> {

@@ -1,7 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import type { DelegationStore, SandboxStatus, Session, SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
-import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor, sandboxBindingId } from "@oma-server/store";
+import { SessionCreationConflictError, SessionWorkspaceDeletedError, workspaceObjectPrefix, decodeSessionUpdatedAtCursor, sandboxBindingId } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { sharedSession } from "../lib/public-projection.js";
@@ -21,6 +21,7 @@ type Env = {
 
 export interface SessionRouteDeps {
   thinkingOptions?: import("../lib/thinking-options.js").ThinkingOptionsReader;
+  sessionCreationStore?: import("@oma-server/store").SessionCreationStore;
   sessionShareStore?: SessionShareStore;
   sessionStore: SessionStore;
   agentStore: AgentStore;
@@ -121,17 +122,39 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
         return c.json({ error: "workspace_id must contain 1–128 letters, numbers, underscores or hyphens" }, 400);
       }
     }
-    const agent = await deps.agentStore.getById(agentId);
-    if (!agent || agent.tenantId !== tenant.tenantId) {
-      return c.json({ error: "Agent not found" }, 404);
+    const prepare = async () => {
+      const agent = await deps.agentStore.getById(agentId);
+      if (!agent || agent.tenantId !== tenant.tenantId) {
+        throw new HTTPException(404, { res: c.json({ error: "Agent not found" }, 404) });
+      }
+      if (environmentIdInput !== undefined) {
+        if (!deps.environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
+        await deps.environments.bindable(tenant.tenantId, environmentIdInput);
+      }
+      return { agent, environmentId: environmentIdInput ?? agent.environmentId };
+    };
+    const key = c.req.header("Idempotency-Key");
+    if (key !== undefined) {
+      if (!/^[\x21-\x7E]{1,128}$/.test(key)) {
+        return c.json({ error: "Idempotency-Key must contain 1–128 visible ASCII characters without spaces", code: "validation_error" }, 400);
+      }
+      if (!deps.sessionCreationStore) {
+        return c.json({ error: "Idempotent Session creation is unavailable" }, 503);
+      }
+      try {
+        const session = await deps.sessionCreationStore.create(tenant.tenantId, key, {
+          agentId, workspaceId: workspaceIdInput, workspaceName: workspaceNameInput, environmentId: environmentIdInput,
+        }, prepare);
+        return c.json(await presentOne(tenant.tenantId, session), 201);
+      } catch (error) {
+        if (error instanceof SessionCreationConflictError) {
+          return c.json({ error: error.message, code: error.code, sessionId: error.sessionId }, 409);
+        }
+        if (error instanceof SessionWorkspaceDeletedError) return c.json({ error: error.message }, 409);
+        throw error;
+      }
     }
-    // The Session freezes its Environment now (ADR-0024): the one named, which
-    // must serve an image, otherwise its Agent's.
-    if (environmentIdInput !== undefined) {
-      if (!deps.environments) throw new EnvironmentError(404, "environment_not_found", "Environment not found");
-      await deps.environments.bindable(tenant.tenantId, environmentIdInput);
-    }
-    const environmentId = environmentIdInput ?? agent.environmentId;
+    const { agent, environmentId } = await prepare();
 
     // Resolve the Workspace to bind: use the supplied ID as-is (idempotent
     // create), otherwise auto-create one. The Session→Workspace binding is

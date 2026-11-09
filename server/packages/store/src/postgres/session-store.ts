@@ -32,7 +32,7 @@ function reviveAgent(agent: Agent): Agent {
   };
 }
 
-function rowToSession(row: SessionRow): Session {
+export function rowToSession(row: SessionRow): Session {
   return {
     id: row.id,
     thinking: row.thinking ?? null,
@@ -52,19 +52,27 @@ function rowToSession(row: SessionRow): Session {
   };
 }
 
+/** Shared by ordinary creation and the atomic idempotent creation transaction. */
+export async function insertSession(
+  db: Pick<Pool, "query">,
+  input: SessionStoreCreateInput,
+  id = `sess_${nanoid()}`,
+): Promise<Session> {
+  const now = new Date();
+  const { rows } = await db.query<SessionRow>(
+    `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, environment_id, loop_id, created_at, updated_at, delegation)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     RETURNING *`,
+    [id, input.tenantId, input.agentId, "idle", JSON.stringify(input.agent), input.workspaceId, input.environmentId ?? null, input.loopId ?? null, now, now, JSON.stringify(input.delegation ?? null)],
+  );
+  return rowToSession(rows[0]);
+}
+
 export class PgSessionStore implements SessionStore {
   constructor(private readonly pool: Pool) {}
 
   async create(input: SessionStoreCreateInput): Promise<Session> {
-    const now = new Date();
-    const id = `sess_${nanoid()}`;
-    const { rows } = await this.pool.query<SessionRow>(
-      `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, environment_id, loop_id, created_at, updated_at, delegation)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       RETURNING *`,
-      [id, input.tenantId, input.agentId, "idle", JSON.stringify(input.agent), input.workspaceId, input.environmentId ?? null, input.loopId ?? null, now, now, JSON.stringify(input.delegation ?? null)],
-    );
-    return rowToSession(rows[0]);
+    return insertSession(this.pool, input);
   }
 
   async getById(id: string): Promise<Session | null> {

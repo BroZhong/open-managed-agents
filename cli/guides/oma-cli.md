@@ -1,6 +1,6 @@
 # oma-cli
 
-Version 0.0.2. This guide is distributed with the CLI. The npm package name is `@welltop/oma-cli`. Requires Node.js >=22.
+Version 0.1.1. This guide is distributed with the CLI. The npm package name is `@welltop/oma-cli`. Requires Node.js >=22.
 
 ## Connect and discover
 
@@ -249,3 +249,27 @@ Exit codes: 0 success; 1 network/internal/partial failure; 2 validation;
 124 timeout; 130 SIGINT. Structured error fields are type/subtype/message/param
 (when relevant)/hint/retryable. Follow the hint and inspect remote state before
 retrying a write; do not infer that a timeout proves it was not accepted.
+
+### Retry-safe Session creation
+
+Pass `--idempotency-key` to send the `Idempotency-Key` header:
+
+```sh
+oma-cli session create --agent-id agent-example --idempotency-key job-123
+```
+
+After a timeout or lost response, repeat that command with the same key and
+creation parameters. The Host returns the original Session's current state,
+including its original Workspace, with HTTP 201. Keys are scoped to the Tenant,
+have no automatic expiry, and remain reserved after termination or soft deletion.
+Without a key, every successful request creates a new Session. The CLI does not
+automatically retry writes or generate keys.
+
+The Host compares `agent`, `workspace_id`, `workspace_name` and `environmentId`
+after normalizing API aliases. An omitted Environment stays omitted for this
+comparison, even if the Agent's default later changes. A reused key with changed
+parameters returns HTTP 409; the CLI exits with code 5 and reports
+`error.subtype: "idempotency_key_conflict"` and `error.sessionId` for the existing
+Session. Use a new key to intentionally create another Session. Failed creation
+does not consume the key. Keys must contain 1–128 visible ASCII characters,
+without spaces. `--dry-run` displays the header without submitting a request.

@@ -73,6 +73,7 @@ export const sessions: Command[] = [
     description:
       "Create Session; bind an existing or new Workspace. workspace-name only names newly created Workspaces. The Session keeps its Agent's Environment, or --environment, for its lifetime.",
     flags: {
+      "idempotency-key": string("Tenant-scoped Idempotency-Key header; reuse with the same parameters to retry creation (1–128 visible ASCII characters, no spaces)"),
       "agent-id": string("Agent ID", { field: "agent" }),
       "workspace-id": string("Workspace ID", { field: "workspace_id" }),
       "workspace-name": string("New Workspace name", {
@@ -91,14 +92,19 @@ export const sessions: Command[] = [
     requiredBody: ["agent"],
     write: true,
     api: ["POST /v1/sessions"],
-    validate: (_f, b) => {
+    validate: (f, b) => {
+      if (f["idempotency-key"] !== undefined && !/^[\x21-\x7E]{1,128}$/.test(f["idempotency-key"]))
+        invalid("Idempotency key must contain 1–128 visible ASCII characters without spaces", "--idempotency-key");
       if (!b.agent) invalid("Agent ID cannot be empty", "--agent-id");
       if (b.workspace_id !== undefined) workspaceId(b.workspace_id);
       if (b.environmentId !== undefined && !b.environmentId)
         invalid("Environment ID cannot be empty", "--environment");
     },
     run: (c) =>
-      write(c, { method: "POST", path: "/v1/sessions", body: c.body }),
+      write(c, {
+        method: "POST", path: "/v1/sessions", body: c.body,
+        ...(c.flags["idempotency-key"] !== undefined ? { headers: { "Idempotency-Key": c.flags["idempotency-key"] } } : {}),
+      }),
   },
   {
     path: "session rename",

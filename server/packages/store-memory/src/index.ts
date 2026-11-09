@@ -1,3 +1,5 @@
+import { InMemorySessionCreationStore } from "./session-creation-store.js";
+export { InMemorySessionCreationStore } from "./session-creation-store.js";
 import { InMemoryModelProviderStore } from "./model-provider-store.js";
 export { InMemoryModelProviderStore } from "./model-provider-store.js";
 import { InMemoryEnvironmentStore } from "./environment-store.js";
@@ -34,6 +36,7 @@ export { InMemoryWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 export { InMemoryLoopStore } from "./loop-store.js";
 
 export interface MemoryStores {
+  sessionCreationStore: InMemorySessionCreationStore;
   modelProviderStore: InMemoryModelProviderStore;
   agentStore: InMemoryAgentStore;
   agentFileStore: InMemoryAgentFileStore;
@@ -99,6 +102,7 @@ export function createMemoryStores(options: MemoryStoresOptions = {}): MemorySto
     pendingEventStore,
   );
   return {
+    sessionCreationStore: new InMemorySessionCreationStore(sessionStore, workspaceStore),
     modelProviderStore: new InMemoryModelProviderStore(),
     agentStore,
     agentFileStore: new InMemoryAgentFileStore(),

@@ -444,3 +444,20 @@ test("CLI binds an Agent to a built Environment against the real Host, and Sessi
     assert.equal(defaulted.environmentId, "env_video_production");
     assert.deepEqual((await call(["session", "create", "--agent-id", defaulted.id])).environment, { id: "env_video_production", name: "video-production" });
   }));
+
+test("CLI Session creation retries against the real Host reuse one Session and expose conflict IDs", async () =>
+  withHost(async (config, opts) => {
+    const args = ["session", "create", "--agent-id", config.agentId, "--idempotency-key", "host-retry"];
+    const attempts = await Promise.all([run(args, opts), run(args, opts)]);
+    for (const result of attempts) assert.equal(result.code, 0, result.stderr);
+    const first = attempts[0].data().data;
+    assert.equal(attempts[1].data().data.id, first.id);
+    assert.equal(attempts[1].data().data.workspaceId, first.workspaceId);
+    const conflict = await run([...args, "--workspace-name", "changed"], opts);
+    assert.equal(conflict.code, 5, conflict.stderr);
+    assert.equal(conflict.error().subtype, "idempotency_key_conflict");
+    assert.equal(conflict.error().sessionId, first.id);
+    const replay = await run(args, opts);
+    assert.equal(replay.code, 0, replay.stderr);
+    assert.equal(replay.data().data.id, first.id);
+  }));

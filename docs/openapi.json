@@ -9630,6 +9630,19 @@
         "tags": [
           "Sessions"
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\x21-\\x7E]{1,128}$",
+              "description": "Optional Tenant-scoped key, retained without automatic expiry. Same key and normalized creation parameters return the original Session's current state (201); different parameters return 409 idempotency_key_conflict with sessionId. Aliases normalize to the same fields. Omitted Environment stays omitted for comparison, regardless of later Agent changes. Failed creation does not consume the key. Termination or soft deletion does not release it."
+            },
+            "required": false,
+            "description": "Optional Tenant-scoped key, retained without automatic expiry. Same key and normalized creation parameters return the original Session's current state (201); different parameters return 409 idempotency_key_conflict with sessionId. Aliases normalize to the same fields. Omitted Environment stays omitted for comparison, regardless of later Agent changes. Failed creation does not consume the key. Termination or soft deletion does not release it.",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -9678,7 +9691,7 @@
         },
         "responses": {
           "201": {
-            "description": "Session created",
+            "description": "Session created or replayed by Idempotency-Key",
             "content": {
               "application/json": {
                 "schema": {
@@ -9728,7 +9741,32 @@
             }
           },
           "409": {
-            "description": "Workspace has been deleted, or the Environment has never built successfully (environment_not_ready)",
+            "description": "Idempotency key reused with different parameters (idempotency_key_conflict), Workspace deleted, or Environment not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "type": "string",
+                      "description": "Existing Session ID when code is idempotency_key_conflict."
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Idempotent Session creation is unavailable",
             "content": {
               "application/json": {
                 "schema": {

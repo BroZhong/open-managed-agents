@@ -3,6 +3,7 @@ export type ErrorInfo = {
   subtype: string;
   message: string;
   param?: string;
+  sessionId?: string;
   hint: string;
   retryable: boolean;
 };

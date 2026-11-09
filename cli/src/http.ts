@@ -170,9 +170,12 @@ export class Http {
                 ? raw.error
                 : (known.message ?? `HTTP ${status}`),
             param: known.param,
+            ...(raw.code === "idempotency_key_conflict" && typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
             hint:
               known.hint ??
-              (type === "auth"
+              (raw.code === "idempotency_key_conflict"
+                ? "Read the existing Session using error.sessionId. Retry with the original parameters, or use a new key to create another Session."
+                : type === "auth"
                 ? "Check the API key and its permissions."
                 : type === "not_found"
                   ? "Check the explicit resource ID and path."

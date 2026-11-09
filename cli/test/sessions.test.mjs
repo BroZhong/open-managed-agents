@@ -309,3 +309,59 @@ test("long deadlines do not clamp and transient wait reads recover without dupli
     await f.close();
   }
 });
+
+test("session create exposes and transmits Idempotency-Key, including dry-run, without changing the body", async () => {
+  const f = await fixture((_req, res) => json(res, { id: "sess_existing" }, 201));
+  try {
+    const args = ["session", "create", "--agent-id", "agent_a", "--idempotency-key", "job:123"];
+    const schema = await run(["schema", "session", "create"]);
+    assert.match(schema.data().data.flags["idempotency-key"].description, /Idempotency-Key/);
+    const dry = await run([...args, "--dry-run"], auth(f));
+    assert.equal(dry.code, 10, dry.stderr);
+    assert.deepEqual(dry.data().data.steps[0].headers, { "Idempotency-Key": "job:123" });
+    assert.deepEqual(dry.data().data.steps[0].body, { agent: "agent_a" });
+    assert.equal(f.requests.length, 0);
+    const created = await run(args, auth(f));
+    assert.equal(created.code, 0, created.stderr);
+    assert.equal(f.requests[0].headers["idempotency-key"], "job:123");
+    assert.deepEqual(JSON.parse(f.requests[0].body), { agent: "agent_a" });
+    const plain = await run(["session", "create", "--agent-id", "agent_a"], auth(f));
+    assert.equal(plain.code, 0, plain.stderr);
+    assert.equal(f.requests[1].headers["idempotency-key"], undefined);
+    const body = await run(["session", "create", "--idempotency-key", "from-body", "--body", '{"agent":"agent_a","workspace_id":"shared"}'], auth(f));
+    assert.equal(body.code, 0, body.stderr);
+    assert.equal(f.requests[2].headers["idempotency-key"], "from-body");
+    assert.deepEqual(JSON.parse(f.requests[2].body), { agent: "agent_a", workspace_id: "shared" });
+  } finally { await f.close(); }
+});
+
+test("session create validates idempotency keys before networking", async () => {
+  const f = await fixture((_req, res) => json(res, {}));
+  try {
+    for (const key of ["", "a b", "a\nb", "a".repeat(129), "中文"]) {
+      const bad = await run(["session", "create", "--agent-id", "a", "--idempotency-key", key], auth(f));
+      assert.equal(bad.code, 2, bad.stderr);
+      assert.equal(bad.error().param, "--idempotency-key");
+    }
+    assert.equal(f.requests.length, 0);
+  } finally { await f.close(); }
+});
+
+test("session creation conflicts preserve sessionId and failures are not automatically retried", async () => {
+  let conflict = true;
+  const f = await fixture((req, res) => {
+    if (conflict) json(res, { error: "This Idempotency-Key was already used with different Session creation parameters.", code: "idempotency_key_conflict", sessionId: "sess_original" }, 409);
+    else req.socket.destroy();
+  });
+  try {
+    const args = ["session", "create", "--agent-id", "a", "--idempotency-key", "job-1"];
+    const bad = await run(args, auth(f));
+    assert.equal(bad.code, 5, bad.stderr);
+    assert.equal(bad.error().subtype, "idempotency_key_conflict");
+    assert.equal(bad.error().sessionId, "sess_original");
+    conflict = false;
+    const lost = await run(args, auth(f));
+    assert.notEqual(lost.code, 0);
+    assert.equal(f.requests.length, 2);
+  } finally { await f.close(); }
+});

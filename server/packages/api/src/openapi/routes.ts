@@ -968,6 +968,11 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     description: "Creates an idle Session for an Agent; send user.message to POST /v1/sessions/{id}/events to start a Turn. Omitting workspace_id creates a new Workspace. A supplied ID creates or reuses a Workspace in this Tenant and binds it permanently to this Session. Multiple Sessions may share that Workspace. The Session runs in its Agent's Environment as of now unless environmentId names another.",
     tags: ["Sessions"],
     request: {
+      headers: z.object({
+        "Idempotency-Key": z.string().regex(/^[\x21-\x7E]{1,128}$/, "Idempotency-Key must contain 1–128 visible ASCII characters without spaces")
+          .optional().openapi({ param: { name: "Idempotency-Key", in: "header" },
+            description: "Optional Tenant-scoped key, retained without automatic expiry. Same key and normalized creation parameters return the original Session's current state (201); different parameters return 409 idempotency_key_conflict with sessionId. Aliases normalize to the same fields. Omitted Environment stays omitted for comparison, regardless of later Agent changes. Failed creation does not consume the key. Termination or soft deletion does not release it." }),
+      }),
       body: jsonBody(
         z.object({
           agent: z.string({ error: "Missing required field: agent" }).openapi({
@@ -1004,9 +1009,10 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       ),
     },
     responses: {
-      201: jsonResponse(SessionSchema, "Session created"),
+      201: jsonResponse(SessionSchema, "Session created or replayed by Idempotency-Key"),
       400: errorResponse("Invalid Session input"),
-      409: errorResponse("Workspace has been deleted, or the Environment has never built successfully (environment_not_ready)"),
+      409: jsonResponse(z.object({ error: z.string(), code: z.string().optional(), sessionId: z.string().optional().openapi({ description: "Existing Session ID when code is idempotency_key_conflict." }) }), "Idempotency key reused with different parameters (idempotency_key_conflict), Workspace deleted, or Environment not ready"),
+      503: errorResponse("Idempotent Session creation is unavailable"),
       404: errorResponse("Agent not found, or Environment not found (environment_not_found)"),
     },
   }),

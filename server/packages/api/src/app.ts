@@ -42,6 +42,7 @@ export interface AppDeps {
   modelProviderService?: ModelProviderService;
   /** Environments (ADR-0024); their routes mount only with it. */
   environmentService?: EnvironmentService;
+  sessionCreationStore?: import("@oma-server/store").SessionCreationStore;
   sessionShareStore?: SessionShareStore;
   apiKeyStore: ApiKeyStore;
   fullApiKeyStore?: FullApiKeyStore;
@@ -173,6 +174,7 @@ export function createApp(deps: AppDeps) {
   if (deps.sessionStore && deps.agentStore && deps.workspaceStore) {
     app.route("/", sessionRoutes({
       thinkingOptions: deps.thinkingOptions,
+      sessionCreationStore: deps.sessionCreationStore,
       sessionShareStore: deps.sessionShareStore,
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,

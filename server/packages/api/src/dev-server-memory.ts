@@ -90,6 +90,7 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
+    sessionCreationStore: stores.sessionCreationStore,
     workspaceStore: stores.workspaceStore,
     loopStore: stores.loopStore,
     userStore: stores.userStore,

@@ -37,7 +37,7 @@ function rowToWorkspace(row: WorkspaceRow): Workspace {
  * many Sessions concurrently. See ADR-0002 §4.
  */
 export class PgWorkspaceMetadataStore implements WorkspaceMetadataStore {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pick<Pool, "query">) {}
 
   async create(input: WorkspaceMetadataStoreCreateInput): Promise<Workspace> {
     const now = new Date();

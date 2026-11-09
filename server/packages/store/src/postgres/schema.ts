@@ -158,6 +158,14 @@ ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS delegation JSONB;
 -- The Environment the Session is frozen to at creation (ADR-0024); NULL: none.
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS environment_id TEXT;
 
+CREATE TABLE IF NOT EXISTS ${s}.session_creation_keys (
+  tenant_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  request TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, key)
+);
+
 -- Coordination transactions lock their Delegation Family with an advisory
 -- lock (ADR-0027); migration 0031 dropped the global delegation_lock row.
 CREATE TABLE IF NOT EXISTS ${s}.delegation_executions (id TEXT PRIMARY KEY, record JSONB NOT NULL);

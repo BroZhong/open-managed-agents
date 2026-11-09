@@ -45,6 +45,15 @@ _Avoid_: sandbox agent, isolated agent, Kubernetes agent
 A conversation and work history for a single **Agent**. A Session contains one or more **Turns** and keeps the Agent's working state between turns when the Agent is sandboxed. An Agent owns many Sessions; a Session belongs to exactly one Agent. A Session may also be created by one **Loop**, in which case it is listed under that Loop and still belongs to the Loop's Agent. The console is entered through an Agent, and its Sessions are listed within it.
 _Avoid_: chat, thread, run
 
+Session creation accepts an optional Tenant-scoped `Idempotency-Key` header.
+The same key and normalized creation parameters return the original Session's
+current state (HTTP 201); changed parameters return `409 idempotency_key_conflict`
+with its `sessionId`. The comparison uses the caller's Agent, Workspace ID/name
+and Environment override, before resolving Agent defaults. PostgreSQL commits
+the key, Workspace and Session atomically. Failed creation consumes no key;
+termination and soft deletion do not release it, and keys have no automatic
+expiry. Without a key every creation request creates a fresh Session.
+
 Session thinking intensity is an optional persisted override. An absent/null
 preference follows the current Agent on each new Turn; Loop Sessions retain
 their Agent snapshot. Changing it affects future Turns only, never another

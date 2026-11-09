@@ -233,6 +233,9 @@ export type {
   SandboxEnvironmentRecord,
 } from "./interfaces/environment-store.js";
 export { DEFAULT_ENVIRONMENT_ID, ENVIRONMENT_BASE_IMAGES, newEnvironmentId, newEnvironmentBuildId, environmentDefinitionSha256, validateEnvironmentBuildLeaseMs } from "./environment.js";
+export type { SessionCreationStore, SessionCreationRequest } from "./interfaces/session-creation-store.js";
+export { sessionCreationFingerprint, SessionCreationConflictError, SessionWorkspaceDeletedError } from "./interfaces/session-creation-store.js";
+export { PgSessionCreationStore } from "./postgres/session-creation-store.js";
 export { EnvironmentNameConflictError } from "./errors.js";
 export { PgEnvironmentStore } from "./postgres/environment-store.js";
 

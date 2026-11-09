@@ -36,6 +36,7 @@ export type Step = {
   method: string;
   path: string;
   body?: unknown;
+  headers?: Record<string, string>;
   effects?: string;
   output?: string;
 };
