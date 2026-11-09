@@ -1,5 +1,7 @@
 # Runner 自动扩缩容 oma-test 验收（#333，V1–V14 与 2000 个真实 Session 压测）
 
+> 2026-11-09 复核修正：下文保留首次报告的历史记录，其中“V1–V14 全部通过”“0 报错”和 thinking off 的结论不能继续作为完整验收依据。后续发现了可恢复模型错误、实际 thinking=minimal，以及 V2 严格条件和 SQL 语句计数的缺口。请结合 [遗留 issue 复核](runner-autoscaling-issue-audit-2026-11-09.md) 和 [#333 后续报告](https://github.com/BroZhong/open-managed-agents/issues/333) 阅读；最终 Turn 全部成功与模型尝试零错误是两种不同指标。
+
 2026-11-05 01:53–03:50（Asia/Shanghai；带 Z 的时间为 UTC）。分支 `feat/runner-autoscaling`（#323–#332，ADR-0026、ADR-0027）发布到 oma-test：KEDA 读 API 内部需求接口来驱动 Runner，并在 V1–V14 上逐项验收，最后跑了 2000 个真实 Session。
 
 除 oma-test 外，只在 kube-system 重启过 ack-keda（V9）。压测期间对生产只读：RDS、NAT 指标和生产 Pod 日志。
