@@ -20,7 +20,7 @@ metadata:
 spec:
   scaleTargetRef:
     name: oma-runner
-  # Test idles at no Runner, unlike production's minimum of 2 (ADR-0026): the
+  # Test idles at no Runner, unlike production's minimum of 1 (ADR-0026): the
   # first input after an idle period waits for a Runner to start. With none,
   # the console cannot read a managed model's thinking levels and no Loop
   # fires, since only Runners run the Loop scheduler.

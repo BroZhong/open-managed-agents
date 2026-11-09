@@ -50,8 +50,8 @@ cluster's virtual kubelet, `kubectl delete pod --force --grace-period=0` still
 delivers SIGTERM, so it tests the handoff; to test a lost Runner (lease expiry,
 reason `expired`), kill the process with SIGKILL inside the container.
 
-Each environment runs one API and 2 CPU / 8 GiB Runners: on test KEDA scales
-them between 2 and 50 on their demand, production runs five (ADR-0026,
+Each environment runs one API. KEDA scales production Runners (2 CPU / 8 GiB)
+between 1 and 50, and test Runners (1 CPU / 4 GiB) between 0 and 50 (ADR-0026,
 `deploy/README.md` "Runner autoscaling"). A rolling
 update starts new Runners, a quarter of them at a time, before old ones receive
 SIGTERM, which then hand their running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
@@ -180,8 +180,7 @@ explicitly. The following commands are for the separately authorized release:
 9. Record cleanup retries (`session_cleanup`), unknown activity retention
    (`sandbox_activities`), PG scan failures and the real image-pair evidence.
    Return staging to its configured counts after its scale tests: one API, and the Runners to the ScaledObject's own
-   bounds (remove the pause annotation or restore `minReplicaCount`). Production runs one API and the five Runners its
-   overlay pins until its ScaledObject (ADR-0026 phase 3); it is not scaled for these tests.
+   bounds (remove the pause annotation or restore `minReplicaCount`). Production runs one API and its ScaledObject retains at least one Runner.
 
 ## Rollback and recovery
 
@@ -213,6 +212,10 @@ Do not point staging Runners at the production schema or Redis for fault injecti
 Run phases in order: `basic`, `real-start`, `real-finish`, `interrupt`,
 `delegation-sync`, `delegation-async`, `loop`, `terminate`, `active-terminate`, and
 `cleanup`. For example, after copying the script into the Pod:
+
+Set `VERIFY_MODEL` to an available managed model when the historical default is unavailable.
+Active termination and final cleanup allow ten minutes: termination during Sandbox creation
+waits for the 180-second intent deadline and the cleanup retry backoff.
 
 Run `cleanup` even if an earlier verification phase fails. It first disables the
 verification Loop, attempts every verification Session (including completed
