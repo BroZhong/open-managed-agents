@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterAll, describe, expect, it } from 'vitest';
 import { createPgStores, PgSandboxLifecycleStore, type PgStores, type SandboxActivity } from '../src/index.js';
 import { createPgTestHarness, type PgTestHarness } from './pg-harness.js';
 
@@ -32,33 +32,24 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
   const ack = (use = activity) => stores.pendingEventStore.ack(use.sessionId, use.fence.eventId, use.fence);
   const id = () => stores.delegationStore.withBindingLock(activity.bindingId, async ({ sandboxId }) => ({ value: sandboxId }));
 
-  it('sets idle only after actual settlement and an empty queue, without a clock or scanner', async () => {
-    const idle = vi.fn(async () => {});
+  it('resolves idle only after actual settlement and an empty queue, without a clock or scanner', async () => {
     await ack();
-    // Missing callbacks retain the existing finite platform deadline.
-    expect(idle).not.toHaveBeenCalled();
-    await lifecycle.finish(activity, idle);
-    expect(idle).toHaveBeenCalledExactlyOnceWith('sandbox-original');
-    await lifecycle.finish(activity, idle);
-    expect(idle).toHaveBeenCalledTimes(1);
+    expect(await lifecycle.finish(activity)).toBe('sandbox-original');
+    expect(await lifecycle.finish(activity)).toBeNull();
   });
-  it('preserves managed execution through Router completion bookkeeping until settlement requests idle', async () => {
-    const idle = vi.fn(async () => {});
+  it('preserves managed execution through Router completion bookkeeping until settlement resolves idle', async () => {
     // Completion bookkeeping (a Child execution's finish) releases ordinary
     // delegation use before ack. This must not consume the managed
     // execution's settlement token.
     await stores.delegationStore.releaseResourceUse(activity.sessionId, activity.fence);
     await ack();
-    await lifecycle.finish(activity, idle);
-    expect(idle).toHaveBeenCalledExactlyOnceWith('sandbox-original');
-    await lifecycle.finish(activity, idle);
-    expect(idle).toHaveBeenCalledTimes(1);
+    expect(await lifecycle.finish(activity)).toBe('sandbox-original');
+    expect(await lifecycle.finish(activity)).toBeNull();
   });
   it.each(['user.message', 'delegation_input', 'delegation_result'])('protects queued %s input', async origin => {
-    const idle = vi.fn(async () => {});
     await stores.pendingEventStore.enqueue(activity.sessionId, { type: origin, data: {}, sessionThreadId: 'sthr_primary' });
-    await ack(); await lifecycle.finish(activity, idle);
-    expect(idle).not.toHaveBeenCalled();
+    await ack();
+    expect(await lifecycle.finish(activity)).toBeNull();
     expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
   });
   it('waits for a child sharing the binding but not an independent Session sharing only Workspace', async () => {
@@ -68,49 +59,27 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     const childUse = await begin(child.id, parent.id, 'delegation_input');
     const independent = await stores.sessionStore.create({ tenantId: parent.tenantId, agentId: parent.agentId, agent: parent.agent, workspaceId: parent.workspaceId });
     await begin(independent.id, independent.id);
-    const idle = vi.fn(async () => {});
-    await ack(); await lifecycle.finish(activity, idle);
-    expect(idle).not.toHaveBeenCalled();
-    await ack(childUse); await lifecycle.finish(childUse, idle);
-    expect(idle).toHaveBeenCalledExactlyOnceWith('sandbox-original');
+    await ack();
+    expect(await lifecycle.finish(activity)).toBeNull();
+    await ack(childUse);
+    expect(await lifecycle.finish(childUse)).toBe('sandbox-original');
   });
   it('does not turn lease loss into idle and supersedes uncertainty only on new admission', async () => {
-    const idle = vi.fn(async () => {});
     await stores.pendingEventStore.releaseClaim(activity.sessionId, activity.fence.eventId, activity.fence);
-    expect(idle).not.toHaveBeenCalled();
     const claim = (await stores.pendingEventStore.claim(activity.sessionId, 'next-runner', 60000))!;
     const newer = { ...activity, fence: { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation } };
     await lifecycle.begin(newer);
-    await lifecycle.finish(activity, idle); // Old generation cannot release the new owner.
-    expect(idle).not.toHaveBeenCalled();
-    await ack(newer); await lifecycle.finish(newer, idle);
-    expect(idle).toHaveBeenCalledTimes(1);
+    expect(await lifecycle.finish(activity)).toBeNull(); // Old generation cannot release the new owner.
+    await ack(newer);
+    expect(await lifecycle.finish(newer)).toBe('sandbox-original');
   });
-  it('serializes new input with the idle request, without claiming remote fencing', async () => {
+  it('cannot let an old retry shorten a newer generation', async () => {
     await ack();
-    let arrived!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>(resolve => { arrived = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const finish = lifecycle.finish(activity, async () => { arrived(); await gate; });
-    await entered;
-    let accepted = false;
-    const enqueue = stores.pendingEventStore.enqueue(activity.sessionId, { type: 'user.message', data: {}, sessionThreadId: 'sthr_primary' }).then(() => { accepted = true; });
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(accepted).toBe(false);
-    release(); await finish; await enqueue;
-    expect(accepted).toBe(true);
-    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
-  });
-  it('retains failed idle settlement for retry and cannot let an old retry shorten a newer generation', async () => {
-    await ack();
-    await expect(lifecycle.finish(activity, async () => { throw new Error('timeout response lost'); })).rejects.toThrow('response lost');
+    expect(await lifecycle.finish(activity)).toBe('sandbox-original');
     const newer = await begin(activity.sessionId, activity.bindingId);
-    const idle = vi.fn(async () => {});
-    await lifecycle.finish(activity, idle);
-    expect(idle).not.toHaveBeenCalled();
-    await ack(newer); await lifecycle.finish(newer, idle);
-    expect(idle).toHaveBeenCalledTimes(1);
+    expect(await lifecycle.finish(activity)).toBeNull();
+    await ack(newer);
+    expect(await lifecycle.finish(newer)).toBe('sandbox-original');
   });
   it('retries committed explicit deletion across Runners and rejects stale cleanup callbacks', async () => {
     expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();

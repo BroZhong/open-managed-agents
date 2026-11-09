@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { Agent, DelegationStore, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
-import { CommandVariablesUnavailable, DefaultSandboxManager, SandboxUnavailable, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
+import type { Agent, DelegationStore, PendingEventFence, PendingEventStore, Session, SessionStore } from "@oma-server/store";
+import { CommandVariablesUnavailable, DefaultSandboxManager, SandboxUnavailable, type SandboxManagerDeps, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
 import { FakeSandboxClient, type FakeSandboxClientOptions } from "../src/fake-sandbox-client.js";
 import { FAKE_ENVIRONMENT_IMAGE, fakeEnvironments } from "../src/fake-environments.js";
 import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf, type SkillSet } from "../src/skill-install.js";
-import { SANDBOX_IDLE_SECONDS } from "../src/sandbox-client.js";
+import { SANDBOX_IDLE_SECONDS, SANDBOX_RUNNING_SECONDS } from "../src/sandbox-client.js";
 import { DefaultTurnSandboxes, type SandboxEnvironments, type SandboxLeaseRequest, type TurnSandboxesDeps } from "../src/turn-sandboxes.js";
 import { PLATFORM_DEFAULT_ENV } from "../src/environment-variables.js";
 import { WORKSPACE_ENV } from "../src/workspace-environment.js";
@@ -17,7 +17,7 @@ export interface TurnSandboxStores {
   pendingEventStore: PendingEventStore;
   delegationStore: DelegationStore;
   /** The native lifecycle store, where the backend has one. */
-  lifecycle?: SandboxLifecycleStore;
+  lifecycle?: SandboxManagerDeps["lifecycle"];
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -607,6 +607,37 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(h.client.deadlines.filter((deadline) => deadline.seconds === SANDBOX_IDLE_SECONDS)).toEqual([]);
       exit();
       await vi.waitFor(() => expect(h.client.deadlines).toContainEqual({ id, seconds: SANDBOX_IDLE_SECONDS }));
+    });
+
+    it.skipIf(!options.lifecycle)("shortens with the binding's lock released, and gives a Turn admitted meanwhile its 24 hours back", async () => {
+      const h = await setup();
+      const session = await h.session();
+      await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
+      const [id] = h.client.created;
+      const fence = await h.claim(session);
+      const lease = (await h.acquire(session, fence))!;
+      await lease.executor!.readFile("saved.txt");
+      await h.ack(session, fence);
+      // The gateway holds the shorten until the next Turn has connected.
+      let entered!: () => void;
+      let answer!: () => void;
+      const shortening = new Promise<void>((resolve) => { entered = resolve; });
+      const answered = new Promise<void>((resolve) => { answer = resolve; });
+      const setTimeout = h.client.setTimeout.bind(h.client);
+      vi.spyOn(h.client, "setTimeout").mockImplementation(async (sandboxId, seconds) => {
+        if (seconds === SANDBOX_IDLE_SECONDS) { entered(); await answered; }
+        return setTimeout(sandboxId, seconds);
+      });
+      const released = lease.release({ settled: true });
+      await shortening;
+      // Input for the binding queues and is admitted while the call is out.
+      const next = await Promise.race([h.claim(session), new Promise<null>((resolve) => globalThis.setTimeout(() => resolve(null), 2_000))]);
+      expect(next).not.toBeNull();
+      const nextLease = (await h.acquire(session, next!))!;
+      expect(await nextLease.executor!.readFile("saved.txt")).toBe("x");
+      answer();
+      await released;
+      expect(h.client.deadlines.slice(-2)).toEqual([{ id, seconds: SANDBOX_IDLE_SECONDS }, { id, seconds: SANDBOX_RUNNING_SECONDS }]);
     });
   });
 }

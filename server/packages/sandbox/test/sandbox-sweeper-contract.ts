@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { DelegationStore, BindingTransition, SandboxActivity, SandboxLifecycleStore, SandboxSweepStore } from "@oma-server/store";
+import type { DelegationStore, BindingTransition, SandboxActivity, SandboxSweepStore } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, SANDBOX_RUNNING_SECONDS, type SandboxClient } from "../src/sandbox-client.js";
-import { DefaultSandboxManager } from "../src/sandbox-manager.js";
+import { DefaultSandboxManager, type SandboxManagerDeps } from "../src/sandbox-manager.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, SWEEP_MAX_UNSETTLED } from "../src/sandbox-sweep.js";
 import { SandboxSweeper, type SweepRound } from "../src/sandbox-sweeper.js";
 import { signalBus } from "./bindings.js";
@@ -13,7 +13,7 @@ export interface SweeperRunnerStores {
   bindings: Pick<DelegationStore, "withBindingLock">;
   facts: SandboxSweepStore;
   /** Turn admission and reclamation, as the Runner's Sandbox Manager uses them. */
-  lifecycle: SandboxLifecycleStore;
+  lifecycle: NonNullable<SandboxManagerDeps["lifecycle"]>;
 }
 
 /** The stores every Runner shares, and the facts a test arranges in them. */

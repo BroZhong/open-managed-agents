@@ -1,11 +1,11 @@
-import { EventPayloadCodec } from "../event-payload.js";
+import { EventPayloadCodec, eventPayloadRef, lazyEventData } from "../event-payload.js";
 import { eventSequenceWidth } from "../event-presentation.js";
 import type { Pool, PoolClient } from "./connection.js";
 import { PgSessionStore } from "./session-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
 import { TransactionalDelegationStore, delegationFenceLost, type DelegationFamilyRef, type DelegationTransaction, type DelegationTable, type DelegationRecord, type SandboxBindingRecord } from "../delegation-store.js";
 import type { EventLogStoreAppendInput } from "../interfaces/event-log-store.js";
-import type { DelegationExecution, DelegationCommand, DelegationWait, SandboxBindingRow, BindingLockResult, BindingTransition, InstalledSkillSet, SkillSetRecordOutcome } from "../interfaces/delegation-store.js";
+import type { DelegationCaller, DelegationExecution, DelegationCommand, DelegationWait, SandboxBindingRow, BindingLockResult, BindingTransition, InstalledSkillSet, SkillSetRecordOutcome } from "../interfaces/delegation-store.js";
 import type { StoredEvent } from "../types.js";
 import { SandboxBindingChanged } from "../errors.js";
 import type { PendingEventFence } from "../interfaces/pending-event-store.js";
@@ -160,8 +160,8 @@ export class PgDelegationStore extends TransactionalDelegationStore {
         },
       };
       const result = await work(tx);
-      // An OSS upload can outlast a lease while row locks are held. Recheck
-      // wall-clock ownership immediately before committing any references.
+      // A transaction can outlast a lease while its row locks hold off the
+      // renewal. Recheck wall-clock ownership immediately before committing.
       for (const [sessionId, fence] of checkedFences) {
         if (!await pending.ownsClaim(sessionId, fence.eventId, fence)) delegationFenceLost(sessionId, fence);
       }
@@ -172,19 +172,38 @@ export class PgDelegationStore extends TransactionalDelegationStore {
       throw error;
     } finally { client.release(); }
   }
-  /** Append while retaining the caller's open transaction and Session locks. */
+  /**
+   * A result's object is uploaded before the transaction and read back after
+   * it: no OSS request waits under the family's lock and the parent's claimed
+   * input row, which its lease renewal needs. A retry gets the committed
+   * event; when that stored the same bytes, nothing is read back.
+   */
+  override async consumeResult(executionId: string, caller: DelegationCaller, fence: PendingEventFence, event: EventLogStoreAppendInput): Promise<StoredEvent> {
+    const sessionId = caller.callerSessionId;
+    const data = this.payloads ? await this.payloads.encode(sessionId, event.type, event.data) : event.data;
+    const saved = await super.consumeResult(executionId, caller, fence, { ...event, data });
+    const stored = eventPayloadRef(saved.data, saved.type);
+    if (!stored || !this.payloads) return saved;
+    const same = stored.sha256 === eventPayloadRef(data, event.type)?.sha256;
+    return { ...saved, data: same ? event.data : await this.payloads.decode(sessionId, saved.data, saved.type) };
+  }
+  /**
+   * Append while retaining the caller's open transaction and Session locks.
+   * It neither uploads nor reads an object: an event that needs one is stored
+   * before the transaction, and a retry's comes back as committed.
+   */
   private async append(client: PoolClient, sessionId: string, input: EventLogStoreAppendInput): Promise<StoredEvent> {
+    if (this.payloads && lazyEventData(input.type, input.data) !== input.data) throw new Error(`Delegation event ${input.type} must be stored before its transaction`);
     await client.query("INSERT INTO event_counters (session_id, seq) VALUES ($1, 0) ON CONFLICT (session_id) DO NOTHING", [sessionId]);
     await client.query("SELECT seq FROM event_counters WHERE session_id = $1 FOR UPDATE", [sessionId]);
     if (input.idempotencyKey) {
       const existing = await client.query("SELECT * FROM events WHERE session_id = $1 AND idempotency_key = $2", [sessionId, input.idempotencyKey]);
-      if (existing.rows[0]) { const row = existing.rows[0]; return { sessionId, seq: Number(row.seq), type: row.type, data: this.payloads ? await this.payloads.decode(sessionId, row.data, row.type) : row.data, ts: new Date(row.ts), sessionThreadId: row.session_thread_id }; }
+      if (existing.rows[0]) { const row = existing.rows[0]; return { sessionId, seq: Number(row.seq), type: row.type, data: row.data, ts: new Date(row.ts), sessionThreadId: row.session_thread_id }; }
     }
-    const data = this.payloads ? await this.payloads.encode(sessionId, input.type, input.data) : input.data;
     const counter = await client.query("UPDATE event_counters SET seq = seq + $2 WHERE session_id = $1 RETURNING seq", [sessionId, eventSequenceWidth(input.type, input.data)]);
     const seq = Number(counter.rows[0].seq);
     const ts = new Date();
-    await client.query("INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [sessionId, seq, input.type, JSON.stringify(data ?? null), ts, input.sessionThreadId, input.apiKeyId ?? null, input.idempotencyKey ?? null]);
+    await client.query("INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [sessionId, seq, input.type, JSON.stringify(input.data ?? null), ts, input.sessionThreadId, input.apiKeyId ?? null, input.idempotencyKey ?? null]);
     return { sessionId, seq, type: input.type, data: input.data, ts, sessionThreadId: input.sessionThreadId };
   }
   /**

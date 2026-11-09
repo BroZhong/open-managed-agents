@@ -1,8 +1,8 @@
 import { SandboxBindingChanged, type DelegationStore, type Leadership, type SandboxSweepStore } from "@oma-server/store";
-import { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, SANDBOX_RUNNING_SECONDS, type ListedSandbox, type SandboxClient } from "./sandbox-client.js";
+import { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, type ListedSandbox, type SandboxClient } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SWEEP_MAX_KILLS, SWEEP_MAX_UNSETTLED, selectSweep, type SandboxEnvironment, type SweepDecision, type SweepOptions } from "./sandbox-sweep.js";
 import { killSandboxes } from "./sandbox-kill.js";
-import { reconcileBinding, type SandboxBinding, type SandboxManager } from "./sandbox-manager.js";
+import { reconcileBinding, restoreIfUsed, type SandboxBinding, type SandboxManager } from "./sandbox-manager.js";
 import { signallingBinding, type SandboxSignals } from "./sandbox-signals.js";
 
 /**
@@ -350,23 +350,10 @@ export class SandboxSweeper {
     }
   }
 
-  /**
-   * Read the binding once more after shortening its Sandbox's deadline, and
-   * set 24 hours back if it is in use: a Turn admitted since the decision may
-   * have connected (24 hours) before the shorten, which would delete it 15
-   * minutes into the Turn. The read closes that window without holding the
-   * row lock across a gateway call: an admitted Turn's input stays pending
-   * until the Turn acknowledges it at its end, so a Turn admitted before the
-   * read is seen by it, and one whose input arrives after it connects after
-   * the shorten completed, its connect setting 24 hours itself. Part of the
-   * shorten: shutdown does not stop it.
-   */
+  /** {@link restoreIfUsed}, as part of the shorten: shutdown does not stop it. */
   private async restoreIfUsed(round: Round, bindingId: string, sandboxId: string): Promise<void> {
     try {
-      const { bindings } = await this.deps.facts.sweepFacts([bindingId]);
-      if (!bindings.get(bindingId)?.inUse) return;
-      await this.deps.client.setTimeout(sandboxId, SANDBOX_RUNNING_SECONDS);
-      round.line.restored++;
+      if (await restoreIfUsed(this.deps.client, this.deps.facts, bindingId, sandboxId)) round.line.restored++;
     } catch (error) {
       this.failed(round.line, { sandboxId, action: "restore" }, error);
     }

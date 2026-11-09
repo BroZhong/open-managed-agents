@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
-import type { SandboxBindingRow, BindingLockResult, SandboxActivity, SandboxLifecycleStore } from "@oma-server/store";
-import { DefaultSandboxManager, type EnvSpec, type SandboxBinding } from "../src/sandbox-manager.js";
+import type { SandboxBindingRow, BindingLockResult, SandboxActivity } from "@oma-server/store";
+import { DefaultSandboxManager, type EnvSpec, type SandboxBinding, type SandboxManagerDeps } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS } from "../src/sandbox-client.js";
 import { BINDING_REREAD_MS } from "../src/sandbox-signals.js";
@@ -32,9 +32,10 @@ function fleet() {
   const bus = signalBus();
   let reclaiming = false;
   /** Explicit termination's coordination over the shared binding rows: no Turn is admitted while it reclaims. */
-  const lifecycle: SandboxLifecycleStore = {
+  const lifecycle: NonNullable<SandboxManagerDeps["lifecycle"]> = {
     begin: vi.fn(async () => !reclaiming),
-    finish: vi.fn(async () => {}),
+    finish: vi.fn(async () => null),
+    sweepFacts: vi.fn(async () => ({ now: new Date(), bindings: new Map() })),
     claimReclamation: vi.fn(async (bindingId: string) => {
       const row = await stores.delegationStore.withBindingLock(bindingId, async ({ sandboxId, creatingSince, now }) => ({ value: { sandboxId, creatingSince, now } }));
       reclaiming = true;

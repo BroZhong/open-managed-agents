@@ -69,8 +69,12 @@ export interface SandboxSweepStore {
 export interface SandboxLifecycleStore {
   /** false means committed explicit deletion must finish before admission. */
   begin(activity: SandboxActivity): Promise<boolean>;
-  /** Only observed settlement can attempt idle; callback runs inside the binding lock. */
-  finish(activity: SandboxActivity, idle?: (sandboxId: string) => Promise<void>): Promise<void>;
+  /**
+   * Observed settlement ends the activity's use. Resolves the Sandbox to
+   * idle when that left the binding with no user and no queued input, else
+   * null: the caller requests idle after the binding's lock is released.
+   */
+  finish(activity: SandboxActivity): Promise<string | null>;
   /**
    * Explicit termination only, after rechecking shared business users and
    * inputs: null while a non-terminated Session uses the binding or has input

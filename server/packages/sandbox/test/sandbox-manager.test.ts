@@ -8,11 +8,11 @@ import {
   type SandboxPrepareOutcome,
   type EnvSpec,
   type SandboxBinding,
+  type SandboxManagerDeps,
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS, SandboxCreateRejected } from "../src/sandbox-client.js";
 import { isSkillInstallCommand, skillSetOf } from "../src/skill-install.js";
-import type { SandboxLifecycleStore } from '@oma-server/store';
 import { createMemoryStores } from "@oma-server/store-memory";
 import { Bundles, text } from "./skill-bundles.js";
 import { databaseClock, durableBinding } from "./bindings.js";
@@ -47,8 +47,8 @@ describe("mounted Workspace Sandbox Manager", () => {
   it('retries explicit deletion without connecting and clears the binding only after confirmation', async () => {
     const client = new FakeSandboxClient();
     const binding = durableBinding('root');
-    const store: SandboxLifecycleStore = {
-      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+    const store: NonNullable<SandboxManagerDeps["lifecycle"]> = {
+      begin: vi.fn(async () => true), finish: vi.fn(async () => null), sweepFacts: vi.fn(async () => ({ now: new Date(), bindings: new Map() })),
       claimReclamation: vi.fn(async () => ({ bindingId: 'root', ...binding.row(), now: new Date() })),
       completeReclamation: vi.fn(async () => { binding.write({ sandboxId: null, creatingSince: null }); }),
     };
@@ -69,8 +69,8 @@ describe("mounted Workspace Sandbox Manager", () => {
   });
   it('preserves shared users but clears their obsolete pointer only on confirmed native deletion', async () => {
     const { client } = makeManager();
-    const store: SandboxLifecycleStore = {
-      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+    const store: NonNullable<SandboxManagerDeps["lifecycle"]> = {
+      begin: vi.fn(async () => true), finish: vi.fn(async () => null), sweepFacts: vi.fn(async () => ({ now: new Date(), bindings: new Map() })),
       claimReclamation: vi.fn(async () => null), completeReclamation: vi.fn(async () => {}),
     };
     const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store, environment: "test" });

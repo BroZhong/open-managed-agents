@@ -1,5 +1,5 @@
 import { describe, beforeEach, afterAll, it, expect } from "vitest";
-import { createPgStores, PgDelegationStore, DelegationLimitReached, type DelegationAcceptInput, type PendingEventFence, type DelegationExecution, type PgStores } from "../src/index.js";
+import { createPgStores, PgDelegationStore, DelegationLimitReached, EventPayloadCodec, BIG_RESULT_BYTES, type DelegationAcceptInput, type PendingEventFence, type DelegationExecution, type PgStores } from "../src/index.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
 describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real PostgreSQL", () => {
@@ -120,6 +120,46 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
       expect(await within(stores.delegationStore.hasResourceUsers(caller.callerSessionId))).toBe("settled");
       expect(await stores.delegationStore.hasResourceUsers(caller.callerSessionId)).toBe(true);
     } finally { await blocker.query("ROLLBACK").catch(() => {}); blocker.release(); }
+  });
+  it("uploads a consumed result before its transaction and reads a retry's back after it: no object call waits under a lock", async () => {
+    const objects = new Map<string, Buffer>();
+    const gates = { put: Promise.resolve(), get: Promise.resolve() };
+    const begun = { put: () => {}, get: () => {} };
+    /** Hold the next `op` until released; `started` once it has begun. */
+    const hold = (op: "put" | "get") => {
+      let release!: () => void;
+      gates[op] = new Promise((resolve) => { release = resolve; });
+      return { started: new Promise<void>((resolve) => { begun[op] = resolve; }), release };
+    };
+    const store = new PgDelegationStore(harness.pool, new EventPayloadCodec({
+      put: async (sessionId, sha256, body) => { begun.put(); await gates.put; objects.set(`${sessionId}/${sha256}`, body); },
+      get: async (sessionId, sha256) => { begun.get(); await gates.get; return objects.get(`${sessionId}/${sha256}`)!; },
+    }));
+    const child = await store.accept(caller, parentFence);
+    await store.finishExecution(child.id, await start(child), outcome(child));
+    const result = (text: string) => ({ type: "agent.tool_result", sessionThreadId: "sthr_primary",
+      data: { turnId: "parent-turn", toolUseId: "tool", content: [{ type: "text", text: text.repeat(BIG_RESULT_BYTES) }] } });
+    // The parent's lease renews, and its family transacts, while an object call is out.
+    const unblocked = async () => {
+      expect(await within(stores.pendingEventStore.renewClaim(caller.callerSessionId, parentFence.eventId, parentFence, 60000))).toBe("settled");
+      expect(await within(store.acquireResourceUse(caller.callerSessionId, caller.callerSessionId, parentFence))).toBe("settled");
+    };
+    const upload = hold("put");
+    const consumed = store.consumeResult(child.id, caller, parentFence, result("x"));
+    await upload.started;
+    await unblocked();
+    upload.release();
+    const saved = await consumed;
+    expect(saved.data).toEqual(result("x").data);
+    const { rows: [row] } = await harness.pool.query("SELECT data FROM events WHERE session_id = $1 AND seq = $2", [caller.callerSessionId, saved.seq]);
+    expect(row.data).toMatchObject({ toolUseId: "tool", payloadRef: { version: 1 } });
+    // A retry gets the committed result, read back after its transaction.
+    const download = hold("get");
+    const retried = store.consumeResult(child.id, caller, parentFence, result("y"));
+    await download.started;
+    await unblocked();
+    download.release();
+    expect(await retried).toEqual(saved);
   });
   it("publishes before it consumes, once, while many families finish and consume at once", async () => {
     const families = await Promise.all(Array.from({ length: 6 }, (_, index) => family(`parent-${index}`)));

@@ -36,13 +36,18 @@ function fakeSweeperStores(): SweeperStores {
     if (!rows.has(bindingId)) rows.set(bindingId, { sandboxId: null, creatingSince: null, reclaiming: false });
     return rows.get(bindingId)!;
   };
+  const sweepFacts: SweeperRunnerStores["facts"]["sweepFacts"] = async (bindingIds) => ({
+    now: clock.now(),
+    bindings: new Map([...new Set(bindingIds)].flatMap((id) => { const row = rows.get(id); return row ? [[id, facts(id, { ...row })] as const] : []; })),
+  });
   const lifecycle: SweeperRunnerStores["lifecycle"] = {
+    sweepFacts,
     begin: async ({ bindingId, sessionId, fence }) => {
       if (rowOf(bindingId).reclaiming) return false;
       uses.set(fence.eventId, sessionId);
       return true;
     },
-    finish: async ({ fence }) => { uses.delete(fence.eventId); },
+    finish: async ({ fence }) => { uses.delete(fence.eventId); return null; },
     claimReclamation: async (bindingId) => {
       const row = rowOf(bindingId);
       const ticket: SandboxReclamation = { bindingId, sandboxId: row.sandboxId, creatingSince: row.creatingSince, now: clock.now() };
@@ -83,10 +88,7 @@ function fakeSweeperStores(): SweeperStores {
         },
       },
       facts: {
-        sweepFacts: async (bindingIds) => ({
-          now: clock.now(),
-          bindings: new Map([...new Set(bindingIds)].flatMap((id) => { const row = rows.get(id); return row ? [[id, facts(id, { ...row })] as const] : []; })),
-        }),
+        sweepFacts,
         bindingEnvironment: async (bindingId) => sessions.get(bindingId)?.environmentId ?? null,
         unsettled: async (deadlineSeconds, limit) => {
           const expired = (row: FakeRow) => row.sandboxId === null && row.creatingSince !== null

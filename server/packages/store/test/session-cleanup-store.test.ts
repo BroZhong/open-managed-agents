@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PgSessionCleanupStore } from "../src/index.js";
+import { CLEANUP_CLAIM_MS } from "../src/postgres/session-cleanup-store.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
 let harness: PgTestHarness;
@@ -37,6 +38,26 @@ describe.skipIf(Boolean(process.env.PG_TEST_URL))("PgSessionCleanupStore.sweep",
       vi.advanceTimersByTime(100);
       expect(await attempted(store, new Error("gateway unavailable")), `not retried after ${delay} s`).toBe(true);
     }
+  });
+
+  it("claims a cleanup for a lease instead of holding a transaction across it", async () => {
+    const first = new PgSessionCleanupStore(harness.pool);
+    const second = new PgSessionCleanupStore(harness.pool);
+    let started!: () => void;
+    let finish!: (completed: boolean) => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const sweep = first.sweep(() => { started(); return new Promise<boolean>((resolve) => { finish = resolve; }); });
+    await running;
+    // Another Runner leaves the claimed row alone while its lease lasts.
+    expect(await attempted(second, true)).toBe(false);
+    // A claimer lost past its lease leaves the row to the next sweep.
+    vi.advanceTimersByTime(CLEANUP_CLAIM_MS);
+    expect(await attempted(second, false)).toBe(true);
+    // The lost claim's late outcome is not recorded over its successor's.
+    finish(true);
+    await sweep;
+    vi.advanceTimersByTime(10_000);
+    expect(await attempted(second, true)).toBe(true);
   });
 
   it("never retries a completed cleanup", async () => {
