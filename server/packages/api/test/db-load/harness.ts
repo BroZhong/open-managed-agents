@@ -17,7 +17,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, fakeEnvironments, FAKE_ENVIRONMENT_IMAGE } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { sessionSignalScope, type SessionSignal, type SessionSignalScope, type SessionSignals } from "@oma-server/redis";
-import type { Agent, SandboxLifecycleStore, Session } from "@oma-server/store";
+import type { Agent, SandboxLifecycleStore, SandboxSweepStore, Session } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { RunnerDispatch } from "../../src/lib/runner-dispatch.js";
@@ -142,12 +142,13 @@ export class Meter {
   }
 
   /** The Sandbox lifecycle coordination store, which only PostgreSQL implements. */
-  lifecycle(runner: string): SandboxLifecycleStore {
+  lifecycle(runner: string): SandboxLifecycleStore & Pick<SandboxSweepStore, "sweepFacts"> {
     const record = (method: string, args: unknown[], result?: unknown) =>
       this.record(runner, `sandboxLifecycle.${method}`, { args, result, failed: false });
     return {
       async begin(work) { record("begin", [work.sessionId], true); return true; },
-      async finish(work) { record("finish", [work.sessionId]); },
+      async finish(work) { record("finish", [work.sessionId]); return null; },
+      async sweepFacts() { return { now: new Date(), bindings: new Map() }; },
       // The binding is still in use, as for a Child sharing its parent's
       // Sandbox: explicit reclamation is refused and retried later.
       async claimReclamation(bindingId) { record("claimReclamation", [bindingId], null); return null; },

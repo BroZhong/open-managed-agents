@@ -11,7 +11,7 @@ import { CLAIM_IMAGE_METADATA, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS,
 import type { ListedSandbox, SandboxClaim, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
-import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type BindingTransition, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
+import { SandboxBindingChanged, type SandboxBindingRow, type BindingLockResult, type BindingTransition, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SandboxSweepStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
 import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type SandboxSignals } from "./sandbox-signals.js";
 import { EMPTY_SKILL_SET, SkillInstallError, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
@@ -66,8 +66,8 @@ export interface EnvSpec {
 }
 
 export interface SandboxManagerDeps {
-  /** Business execution/queue coordination and explicit termination only. */
-  lifecycle?: SandboxLifecycleStore;
+  /** Business execution/queue coordination and explicit termination, and the read that restores a Turn's deadline. */
+  lifecycle?: SandboxLifecycleStore & Pick<SandboxSweepStore, "sweepFacts">;
   sandboxClient: SandboxClient;
   /**
    * Labels every Sandbox created (`oma.dev/environment`): each environment's
@@ -356,9 +356,19 @@ export class DefaultSandboxManager implements SandboxManager {
     }
     return true;
   }
+  /**
+   * Shorten the deadline of a Sandbox the activity left unused, after its
+   * binding's lock is released: input for the binding's Sessions never waits
+   * on the gateway. A Turn admitted meanwhile gets 24 hours back, as the
+   * sweeper restores one ({@link restoreIfUsed}). A failed shorten leaves the
+   * deadline to the sweeper.
+   */
   async finishActivity(activity: SandboxActivity): Promise<void> {
     const store = this.deps.lifecycle;
-    await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
+    const idle = await store?.finish(activity);
+    if (!store || !idle) return;
+    await this.deps.sandboxClient.setTimeout(idle, SANDBOX_IDLE_SECONDS);
+    await restoreIfUsed(this.deps.sandboxClient, store, activity.bindingId, idle);
   }
   open(spec: EnvSpec, binding: SandboxBinding, variables?: CommandVariables): SandboxSession {
     return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, signallingBinding(binding, this.deps.sandboxSignals), variables);
@@ -430,6 +440,25 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, sandboxSignals
     if (error instanceof SandboxBindingChanged) return false;
     throw error;
   }
+}
+
+/**
+ * Read the binding once more after shortening its Sandbox's deadline, and
+ * set 24 hours back if it is in use: a Turn admitted since the decision may
+ * have connected (24 hours) before the shorten, which would delete it 15
+ * minutes into the Turn. The read closes that window without holding the
+ * row lock across a gateway call: an admitted Turn's input stays pending
+ * until the Turn acknowledges it at its end, so a Turn admitted before the
+ * read is seen by it, and one whose input arrives after it connects after
+ * the shorten completed, its connect setting 24 hours itself. Resolves
+ * whether it restored.
+ */
+export async function restoreIfUsed(client: Pick<SandboxClient, "setTimeout">, facts: Pick<SandboxSweepStore, "sweepFacts">,
+  bindingId: string, sandboxId: string): Promise<boolean> {
+  const { bindings } = await facts.sweepFacts([bindingId]);
+  if (!bindings.get(bindingId)?.inUse) return false;
+  await client.setTimeout(sandboxId, SANDBOX_RUNNING_SECONDS);
+  return true;
 }
 
 /**

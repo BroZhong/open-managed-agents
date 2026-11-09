@@ -45,20 +45,18 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
       return true;
     });
   }
-  async finish(activity: SandboxActivity, idle?: (id: string) => Promise<void>): Promise<void> {
-    await this.locked(activity.bindingId, async client => {
+  async finish(activity: SandboxActivity): Promise<string | null> {
+    return this.locked(activity.bindingId, async client => {
       const removed = await client.query(`DELETE FROM delegation_resource_uses WHERE id=$1
         AND record->>'ownerId'=$2 AND (record->>'generation')::bigint=$3 RETURNING id`,
       [activity.fence.eventId, activity.fence.ownerId, activity.fence.generation]);
-      if (!removed.rows.length) return; // A duplicate or superseded callback cannot shorten another Turn.
+      if (!removed.rows.length) return null; // A duplicate or superseded callback cannot shorten another Turn.
       const busy = await client.query(`SELECT 1 FROM delegation_resource_uses WHERE record->>'sandboxSessionId'=$1
         UNION ALL SELECT 1 FROM pending_events p JOIN sessions s ON s.id=p.session_id
         WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=$1 LIMIT 1`, [activity.bindingId]);
-      if (busy.rows.length) return;
+      if (busy.rows.length) return null;
       const { rows: [binding] } = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>('SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id=$1', [activity.bindingId]);
-      if (binding.sandbox_id && !binding.reclaiming) await idle?.(binding.sandbox_id);
-      // External timeout writes have no fencing token. A remote late response
-      // may beat a newer 24h write even though normal admission is serialized.
+      return binding.sandbox_id && !binding.reclaiming ? binding.sandbox_id : null;
     });
   }
   async claimReclamation(bindingId: string): Promise<SandboxReclamation | null> {
