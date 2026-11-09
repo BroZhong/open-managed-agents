@@ -1,0 +1,49 @@
+{
+  "sourceCommit": "6e19185ac5d63e5d04f16adf347463da9b562ec8",
+  "imageTag": "202611092248",
+  "imageDigest": "sha256:b8a0d2dde947567b0624952e22b16983d6a37744ff2691f10a06b78c54d4c1c2",
+  "cliVersion": "0.1.1",
+  "cliSha256": "b7201b6491a8b6d24993fab435b572fa4b7c51ddcfdfa77af0bc6b7decd28088",
+  "test": {
+    "base": "https://agentry-test.welltop.tech/api",
+    "schema": "oma_test",
+    "startedAt": "2026-11-09T14:51:40.212Z",
+    "finishedAt": "2026-11-09T14:51:42.163Z",
+    "passed": true,
+    "checks": [
+      "public health and OpenAPI header",
+      "CLI 0.1.1 and 12 concurrent HTTP retries create one Session and Workspace",
+      "parameter conflicts return 409 and existing sessionId; CLI exits 5",
+      "Workspace aliases normalize",
+      "failed validation does not consume the key",
+      "same key is isolated by Tenant",
+      "requests without keys still create independent Sessions"
+    ],
+    "tenants": [
+      "b5ae3b9a-5e4c-4403-bd5f-b17058cf09c6",
+      "150e83d1-54ee-4ded-ae0b-27e1c9d307bd"
+    ],
+    "cleanupErrors": []
+  },
+  "production": {
+    "base": "https://agentry.welltop.tech/api",
+    "schema": "oma",
+    "startedAt": "2026-11-09T14:53:15.602Z",
+    "finishedAt": "2026-11-09T14:53:17.285Z",
+    "passed": true,
+    "checks": [
+      "public health and OpenAPI header",
+      "CLI 0.1.1 and 12 concurrent HTTP retries create one Session and Workspace",
+      "parameter conflicts return 409 and existing sessionId; CLI exits 5",
+      "Workspace aliases normalize",
+      "failed validation does not consume the key",
+      "same key is isolated by Tenant",
+      "requests without keys still create independent Sessions"
+    ],
+    "tenants": [
+      "e74ddce0-7e5f-4f7e-b2f9-a6ce2adacac2",
+      "197d994e-e94b-4d9a-861e-3e27dcacf8f1"
+    ],
+    "cleanupErrors": []
+  }
+}
