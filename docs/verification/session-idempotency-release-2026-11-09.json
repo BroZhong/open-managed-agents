@@ -45,5 +45,24 @@
       "197d994e-e94b-4d9a-861e-3e27dcacf8f1"
     ],
     "cleanupErrors": []
+  },
+  "npmPublication": {
+    "name": "@welltop/oma-cli",
+    "version": "0.1.1",
+    "tags": {
+      "latest": "0.1.1"
+    },
+    "publishedAt": "2026-11-09T15:02:50.425Z",
+    "verifiedAt": "2026-11-09T15:03:13.120Z",
+    "checks": [
+      "registry integrity matches verified tarball",
+      "latest is 0.1.1",
+      "fresh install from official npm registry",
+      "installed version 0.1.1",
+      "installed session create schema exposes idempotency-key",
+      "bundled guide version and idempotency instructions"
+    ],
+    "integrity": "sha512-U1/uCt+L3W/J5Y3V30sRlVnBoflRUroyuSZnRxpdf1kYIWHFn8gFpRU4ox9A3KbeZ0iXeaFiK2orLq10UBDG3Q==",
+    "tarball": "https://registry.npmjs.org/@welltop/oma-cli/-/oma-cli-0.1.1.tgz"
   }
 }

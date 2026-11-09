@@ -76,7 +76,14 @@ are in `session-idempotency-release-2026-11-09.json`.
 - Tarball: `welltop-oma-cli-0.1.1.tgz`, 38,320 bytes.
 - SHA-256: `b7201b6491a8b6d24993fab435b572fa4b7c51ddcfdfa77af0bc6b7decd28088`.
 - Local delivery directory: `exports/oma-cli-0.1.1/` in the original checkout.
-- This release packages a tarball; it does not publish to the npm registry.
+- Published the exact verified tarball to `https://registry.npmjs.org/` as
+  `@welltop/oma-cli@0.1.1`, public access and `latest`, after the user's explicit
+  publication instruction and npm account authentication.
+- Registry publication time: **2026-11-09 23:02:50 Asia/Shanghai**.
+- Registry SHA-1 and SHA-512 integrity match the original tarball. A fresh
+  installation from the official registry passed executable version, Session
+  creation schema (`--idempotency-key`) and bundled guide checks at 23:03:13.
+- Package: https://www.npmjs.com/package/@welltop/oma-cli/v/0.1.1
 
 ## Rollback
 
