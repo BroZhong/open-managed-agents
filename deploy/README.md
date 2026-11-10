@@ -171,7 +171,7 @@ the first input after an idle period waits for a Runner to start; the last
 Runner leaves 600 s after the demand reached 0. Meanwhile the console cannot
 read a managed model's thinking levels (the API asks a Runner) and no Loop
 fires (only Runners schedule Loops). Test Runners are 1C4G with a 3 GiB heap;
-production's are 2C8G with 6 GiB.
+production's are 1C8G with a 6 GiB V8 old-space heap.
 
 The token is one Secret: the API reads it as `RUNNER_DEMAND_TOKEN` (optional;
 without it the endpoint is not served) and the TriggerAuthentication sends it.
@@ -211,6 +211,14 @@ Change the Runner count only through the ScaledObject:
 The overlay declares neither annotation, so an apply keeps them. Never use
 `kubectl scale` or the console's replica count: the HPA overrides them at its
 next read.
+
+CPU and memory belong to the Runner Deployment's container resources, not the
+ScaledObject. Update the Deployment template and the corresponding manifest
+together; the next full apply otherwise restores the manifest's resource size.
+Keep `NODE_OPTIONS` below the container's memory limit. A resource change rolls
+out new Pods (`maxSurge: 25%`, `maxUnavailable: 0`), so old and new sizes may
+temporarily coexist while Turns hand over. The ScaledObject continues to own
+only the desired replica count; production's minimum remains 1.
 
 The first apply without Runner replicas, once per namespace (completed for
 both environments; use `oma-infra` instead of `oma-test` for production):

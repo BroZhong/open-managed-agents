@@ -148,8 +148,8 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("Runners roll out a quarter at a time, 1C4G on test and 2C8G in production; only test can kill them abruptly", () => {
-  for (const [env, cpu, memoryGi] of [["test", "1", 4], ["production", "2", 8]]) {
+test("Runners roll out a quarter at a time, 1C4G on test and 1C8G in production; only test can kill them abruptly", () => {
+  for (const [env, cpu, memoryGi] of [["test", "1", 4], ["production", "1", 8]]) {
     const doc = runner(render(env));
     assert.match(doc, /^    type: RollingUpdate$/m, env);
     assert.match(doc, /^      maxSurge: 25%$/m, env);
