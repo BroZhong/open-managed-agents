@@ -17,9 +17,9 @@ set -euo pipefail
 # --- Pinned inputs -----------------------------------------------------------
 # Each *_URL is checked against *_SHA256; the installed file against
 # *_BINARY_SHA256.
-VFS_CLI_URL=https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.23/vfs-cli_v0.3.23_linux_amd64.tar.gz
-VFS_CLI_SHA256=52cbb1d25ebf5e780cc54584c424e9f6dbed3c8827019b708008d8ff1fb6fd94
-VFS_CLI_BINARY_SHA256=e951c9f97f27365e12deee08588600eec777276276c3a37098faae5f9c97aa63
+VFS_CLI_URL=https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.24/vfs-cli_v0.3.24_linux_amd64.tar.gz
+VFS_CLI_SHA256=c2eb05c87a7dcd976e1c51618282133cbb372a42fdc0d0af07a149936f762987
+VFS_CLI_BINARY_SHA256=b5e9c7582de8e658d114c4ac33629beabd714a95f1a05262605f2b72a8c6fc32
 MEDIAKIT_CLI_URL=https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz
 MEDIAKIT_CLI_SHA256=8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987
 MEDIAKIT_CLI_BINARY_SHA256=2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca
@@ -104,7 +104,7 @@ PY
 chmod 0644 /etc/pip.conf
 
 # --- Command-line tools ------------------------------------------------------
-step "vfs-cli v0.3.23"
+step "vfs-cli v0.3.24"
 if ! installed vfs-cli "$VFS_CLI_BINARY_SHA256"; then
   fetch "$VFS_CLI_URL" "$VFS_CLI_SHA256" "$work/vfs-cli.tar.gz"
   tar -xzf "$work/vfs-cli.tar.gz" -C "$work" --no-same-owner vfs-cli

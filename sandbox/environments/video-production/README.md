@@ -32,7 +32,7 @@ recipe on the unmerged branch `codex/sandbox-runtime-0.3.1`; main's
 | Step | Pinned to | Source of the pin |
 | --- | --- | --- |
 | `libgl1` (OpenCV's `libGL.so.1`) | `1.6.0-1`; its 32 dependencies follow bookworm | 0.3.1 runtime overlay |
-| vfs-cli | v0.3.23, archive `52cbb1d2…`, binary `e951c9f9…` | [Official release](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.23); archive verified against the release checksum, binary hash computed from its Linux amd64 binary |
+| vfs-cli | v0.3.24, archive `c2eb05c8…`, binary `b5e9c758…` | [Official release](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.24); archive verified against the release checksum, binary hash computed from its Linux amd64 binary |
 | mediakit-cli | 0.2.1, archive `8c25ebd7…`, binary `2c962efe…` | `versions.json` |
 | ossutil | 2.2.0, archive `9e02837d…`, binary `de09edc5…` | `prepare-ossutil.py` |
 | Gemini venv `/opt/auto-story/venv` | `google-genai==2.22.0` with its live closure, then `scenedetect==0.7.1`, `Pillow>=10.4,<13`, `fonttools>=4.50,<5` | live venv `pip freeze` |
