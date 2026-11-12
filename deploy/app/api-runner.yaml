@@ -349,9 +349,9 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 6
         resources:
-          # One Node.js process uses about one core; the 6 GiB heap needs the memory.
+          # Production: 1 CPU / 8 GiB, leaving 2 GiB outside V8's old-space heap.
           limits:
-            cpu: '2'
+            cpu: '1'
             memory: 8Gi
         command:
         - node

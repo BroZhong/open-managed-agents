@@ -148,29 +148,30 @@ kubectl -n oma-infra get secret oma-secrets -o json \
 
 ### Runner autoscaling (ADR-0026)
 
-On test, KEDA scales `oma-runner` on its demand; production runs a fixed five
-(the production overlay pins them) until its own ScaledObject (#335). KEDA is
+KEDA scales `oma-runner` on its demand in both environments. Production keeps
+at least one Runner (user decision, 2026-11-09); test may scale to zero. KEDA is
 installed once for the cluster: see [keda/README.md](keda/README.md) and
 [keda/values.yaml](keda/values.yaml).
 
-`environments/test/runner-autoscaling.yaml` declares the ScaledObject
+Each environment’s `runner-autoscaling.yaml` declares the ScaledObject
 `oma-runner` and its TriggerAuthentication. KEDA's Metrics API scaler reads
 `demand` from `GET /internal/runner-demand` on the `oma-api` Service, a route
 outside `/api` that the public Ingress never reaches, with a bearer token, and
-drives the HPA `keda-hpa-oma-runner`: replicas = ceil(demand / 40), between 0
-and 50, at most 10 more per 15 s, and after 600 s of lower demand at most 2
+drives the HPA `keda-hpa-oma-runner`: replicas = ceil(demand / 40), bounded
+to 0–50 on test and 1–50 on production, at most 10 more per 15 s, and after
+600 s of lower demand at most 2
 fewer per minute. The target 40 stays below the Runners' `RUNNER_CAPACITY` (50);
 the render test checks both. A failed read (the endpoint answers 503, never 0)
 does not scale in: the HPA keeps its count, and after 3 consecutive failures
 KEDA reports the current count (at least 1) until a read succeeds.
 
-Test idles at no Runner (production's planned minimum is 2, ADR-0026). With no
+Test idles at no Runner; production retains one (revising ADR-0026’s original minimum of 2). With no
 Runner, KEDA polls the demand every 10 s and starts one once it is above 0, so
 the first input after an idle period waits for a Runner to start; the last
 Runner leaves 600 s after the demand reached 0. Meanwhile the console cannot
 read a managed model's thinking levels (the API asks a Runner) and no Loop
 fires (only Runners schedule Loops). Test Runners are 1C4G with a 3 GiB heap;
-production's are 2C8G with 6 GiB.
+production's are 1C8G with a 6 GiB V8 old-space heap.
 
 The token is one Secret: the API reads it as `RUNNER_DEMAND_TOKEN` (optional;
 without it the endpoint is not served) and the TriggerAuthentication sends it.
@@ -211,8 +212,16 @@ The overlay declares neither annotation, so an apply keeps them. Never use
 `kubectl scale` or the console's replica count: the HPA overrides them at its
 next read.
 
-The first apply without Runner replicas, once per namespace (test now,
-production with #335):
+CPU and memory belong to the Runner Deployment's container resources, not the
+ScaledObject. Update the Deployment template and the corresponding manifest
+together; the next full apply otherwise restores the manifest's resource size.
+Keep `NODE_OPTIONS` below the container's memory limit. A resource change rolls
+out new Pods (`maxSurge: 25%`, `maxUnavailable: 0`), so old and new sizes may
+temporarily coexist while Turns hand over. The ScaledObject continues to own
+only the desired replica count; production's minimum remains 1.
+
+The first apply without Runner replicas, once per namespace (completed for
+both environments; use `oma-infra` instead of `oma-test` for production):
 
 1. Create the `oma-runner-demand` Secret as above.
 2. `deploy/scripts/drop-runner-replicas.sh oma-test` (preview it with
@@ -227,7 +236,7 @@ production with #335):
 4. Check as above, and that `kubectl -n oma-test get deploy oma-runner -o
    jsonpath='{.spec.replicas}'` did not drop while the first apply rolled out.
 
-To stop autoscaling, pin `replicas` in the test overlay, delete the KEDA objects
+To stop autoscaling, pin `replicas` in the affected environment’s overlay, delete the KEDA objects
 (`kubectl -n oma-test delete scaledobject/oma-runner
 triggerauthentication/oma-runner-demand`; the Deployment keeps the count it
 has), remove `runner-autoscaling.yaml` from the overlay and apply.

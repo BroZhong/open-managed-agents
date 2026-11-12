@@ -148,8 +148,8 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("Runners roll out a quarter at a time, 1C4G on test and 2C8G in production; only test can kill them abruptly", () => {
-  for (const [env, cpu, memoryGi] of [["test", "1", 4], ["production", "2", 8]]) {
+test("Runners roll out a quarter at a time, 1C4G on test and 1C8G in production; only test can kill them abruptly", () => {
+  for (const [env, cpu, memoryGi] of [["test", "1", 4], ["production", "1", 8]]) {
     const doc = runner(render(env));
     assert.match(doc, /^    type: RollingUpdate$/m, env);
     assert.match(doc, /^      maxSurge: 25%$/m, env);
@@ -182,7 +182,7 @@ test("a stopping Runner hands its Turns over for 45 minutes and is killed 60 s a
   }
 });
 
-test("KEDA scales the test Runners on their demand below Runner Capacity, down to none; production keeps five (ADR-0026)", () => {
+test("KEDA scales the test Runners on their demand below Runner Capacity, down to none; production keeps at least one (ADR-0026)", () => {
   const docs = render("test");
   // No apply resets the count KEDA sets.
   assert.doesNotMatch(runner(docs), /^  replicas:/m);
@@ -242,8 +242,12 @@ test("KEDA scales the test Runners on their demand below Runner Capacity, down t
   ["spec:", "  secretTargetRef:", "  - key: token", "    name: oma-runner-demand", "    parameter: token"].join("\n"));
 
   const production = render("production");
-  assert.match(runner(production), /^  replicas: 5$/m);
-  assert.doesNotMatch(production.join("\n"), /^kind: (ScaledObject|TriggerAuthentication)$/m);
+  assert.doesNotMatch(runner(production), /^  replicas:/m);
+  const productionScaled = ofKind(production, "ScaledObject", "oma-runner");
+  assert.equal(productionScaled.slice(productionScaled.indexOf("spec:")),
+    scaled.slice(scaled.indexOf("spec:")).replace("minReplicaCount: 0", "minReplicaCount: 1").replace("oma-test.svc", "oma-infra.svc"));
+  assert.equal(ofKind(production, "TriggerAuthentication", "oma-runner-demand").split("spec:")[1],
+    ofKind(docs, "TriggerAuthentication", "oma-runner-demand").split("spec:")[1]);
 });
 
 test("each API reads the demand token from an optional Secret, so an environment without it still starts", () => {

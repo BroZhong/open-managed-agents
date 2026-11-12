@@ -16,6 +16,9 @@ behind a PG advisory lock". [ADR-0027](0027-delegation-admission-and-family-lock
 removes the waiting-for-slot queue this ADR's claim rules would otherwise have
 to account for.
 
+Production minimum revised to **1** by the maintainer on 2026-11-09; test
+retains its minimum of 0. The production overlay records this override.
+
 ## Context
 
 The goal is 2,000 new Sessions submitted within a short time, each sending its
@@ -139,7 +142,7 @@ the Metrics API scaler, reading the API's internal demand endpoint:
   between C and N absorbs.
   `sessions.status` is not used; it does not say whether a Turn is running.
 - **Target** C = 40 per Runner, below N = 50: the place between them absorbs
-  claim skew and the children that bypass N. Replicas = ⌈D / C⌉, at least 2,
+  claim skew and the children that bypass N. Replicas = ⌈D / C⌉, at least 1 in production,
   at most 50. A render test asserts C < N for every environment.
 - **Scale-up** adds at most 10 Pods per 15 s, with no stabilization window.
 - **Scale-down** waits for a 600-second stabilization window and removes at
@@ -209,8 +212,8 @@ the rounds from multiplying.
 
 ### Operation
 
-- The base `oma-runner` Deployment declares no `replicas`. The production
-  overlay pins its replica count until production has a ScaledObject.
+- Neither the base `oma-runner` Deployment nor either overlay declares `replicas`;
+  each environment’s ScaledObject owns its count.
   Removing the field from a manifest `kubectl apply` already applied would
   reset the replicas to 1 through `last-applied-configuration`; the release
   procedure in `deploy/README.md` handles it.
