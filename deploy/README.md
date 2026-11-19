@@ -732,3 +732,25 @@ Agent presets are not shipped here; supply business Skills through the platform.
 The manifest was aligned with the Shanghai deployment on 2026-09-16, including
 its direct Pi gateway mounts, internal E2B endpoints, proxy overrides and Host
 4 CPU / 8 GiB limits. Secrets are referenced by name only.
+
+### Promoting an already verified video-production image
+
+Production mounts `sandbox/environments/video-production` through a generated,
+content-hashed ConfigMap. This keeps the built-in definition current even when
+reusing an older image-builder server image. The production overlay contains the
+mount; the test overlay remains independent.
+
+A verified Environment image can be promoted without rebuilding it. An operator
+must first verify the immutable digest, matching Base Image and production cache
+readiness. With no active builds, pause only the image-builder; lock the target
+Environment and atomically update its init script, image, manifest and last-build
+reference. Preserve its ID, owner, variables and encrypted secrets. Record an
+explicit existing-image promotion (zero build attempts) with a log identifying
+the source successful build. Mount the matching definition before restarting the
+builder, so startup sees no definition change and queues no rebuild. The normal
+warm-pool reconciler then checks the cache and updates the pool.
+
+Do not update only the SandboxSet image: reconciliation follows the Environment.
+Do not update only the database script: an older built-in definition would queue
+a rebuild at the next builder startup. The 2026-11-19 operator execution and
+verification are recorded in `docs/verification/video-production-v0326-promotion.md`.

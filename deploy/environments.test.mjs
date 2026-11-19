@@ -102,7 +102,9 @@ test("each environment's Runners claim from their Warm Pool; the image is each S
 
 test("no environment injects the removed per-Agent or default Sandbox variables (ADR-0024)", () => {
   for (const env of ["test", "production"]) {
-    const text = render(env).join("\n---\n");
+    // The builder's definition file legitimately declares platform secretRef
+    // names; it is a read-only file mount, not process variable injection.
+    const text = render(env).filter((doc) => !( /^kind: ConfigMap$/m.test(doc) && /^  name: oma-video-production-definition-[a-z0-9]+$/m.test(doc))).join("\n---\n");
     assert.doesNotMatch(text, /oma-auto-story-env|AUTO_STORY_|OPENGROVE_WW_|name: DEFAULT_SANDBOX_/, env);
   }
   assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /oma-auto-story-env|AUTO_STORY_|OPENGROVE_WW_|name: DEFAULT_SANDBOX_/);
@@ -352,4 +354,19 @@ test("each builder keeps its Runners' Warm Pool on video-production, cached firs
     const rbac = readFileSync(new URL(rbacFile, root), "utf8");
     assert.match(rbac, new RegExp(`resourceNames: \\[${field(builder, "SANDBOX_TEMPLATE")}\\]`), env);
   }
+});
+
+
+test("production mounts the versioned builtin definition without changing runner configuration", () => {
+  const docs = render("production");
+  const cm = docs.find((doc) => /^kind: ConfigMap$/m.test(doc) && /^  name: oma-video-production-definition-[a-z0-9]+$/m.test(doc));
+  assert.ok(cm);
+  assert.match(cm, /vfs-cli_v0\.3\.26_linux_amd64\.tar\.gz/);
+  const name = cm.match(/^  name: (oma-video-production-definition-[a-z0-9]+)$/m)[1];
+  const builder = deployment(docs, "oma-image-builder");
+  assert.ok(builder.includes(`name: ${name}`));
+  assert.match(builder, /mountPath: \/app\/sandbox\/environments\/video-production/);
+  assert.match(builder, /readOnly: true/);
+  assert.doesNotMatch(deployment(docs, "oma-runner"), /video-production-definition/);
+  assert.doesNotMatch(render("test").join("\n"), /oma-video-production-definition/);
 });
