@@ -4,6 +4,7 @@ kind: Kustomization
 namespace: oma-infra
 resources:
 - ../../app
+- ../../../sandbox/environments/video-production
 patches:
 # The public /api route still targets the legacy oma-server Service, whose
 # selector was switched to app=oma-api during the API/Runner cutover.
@@ -21,3 +22,26 @@ patches:
     name: oma-runner
   patch: |-
     - {op: add, path: /spec/replicas, value: 5}
+
+# Keep the promoted definition independent of the older builder server image.
+- target:
+    kind: Deployment
+    name: oma-image-builder
+  patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: oma-image-builder
+    spec:
+      template:
+        spec:
+          volumes:
+          - name: video-production-definition
+            configMap:
+              name: oma-video-production-definition
+          containers:
+          - name: builder
+            volumeMounts:
+            - name: video-production-definition
+              mountPath: /app/sandbox/environments/video-production
+              readOnly: true
