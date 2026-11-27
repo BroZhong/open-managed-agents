@@ -1,5 +1,20 @@
 {
   "providers": {
+    "google": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "api": "google-generative-ai",
+      "apiKey": "${GEMINI_API_KEY}",
+      "models": [
+        {
+          "id": "gemini-4-neon",
+          "name": "Gemini 4 Neon",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 65536
+        }
+      ]
+    },
     "kimi-coding-plan": {
       "baseUrl": "https://api.kimi.com/coding/v1",
       "api": "openai-completions",
