@@ -55,6 +55,9 @@ it("reads all pages without owner credentials, opens Workspace links read-only a
   await screen.findByText("File not found");
   expect(screen.queryByRole("heading", { name: "分享已失效" })).toBeNull();
   expect(localStorage.getItem("oma_api_key")).toBe("owner-secret");
+  fireEvent.click(screen.getByRole("button", { name: "Trajectory (2)" }));
+  expect(screen.getByText("2 recorded actions")).toBeTruthy();
+  expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Behavior mix: Output 100%");
 });
 
 it("shows an unavailable page without clearing ordinary login state or redirecting", async () => {

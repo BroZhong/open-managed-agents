@@ -3,7 +3,7 @@ import { useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { ConversationView } from "@/components/conversation-view";
 import { SessionLoading } from "@/components/session-loading";
-import { TimelineView } from "@/components/timeline-view";
+import { TrajectoryView } from "@/components/trajectory-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { FileManager } from "@/components/file-manager";
 import { createSharedWorkspaceFileSource } from "@/lib/file-source";
@@ -73,7 +73,7 @@ function SharedSessionContent({ shareId }: { shareId: string }) {
           <Button variant="ghost" aria-pressed={tab === "trajectory"} onClick={() => setTab("trajectory")}>Trajectory ({data.events.length})</Button>
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">
-          {tab === "conversation" ? <ConversationView sessionId={data.session.id} events={data.events} sessionStatus="idle" resources={{ loadEventData, shared: true, agentId: "", skills: [], onOpenWorkspacePath: openFile }} /> : <TimelineView events={data.events} sessionId={data.session.id} loadEventData={loadEventData} />}
+          {tab === "conversation" ? <ConversationView sessionId={data.session.id} events={data.events} sessionStatus="idle" resources={{ loadEventData, shared: true, agentId: "", skills: [], onOpenWorkspacePath: openFile }} /> : <TrajectoryView events={data.events} sessionId={data.session.id} loadEventData={loadEventData} />}
         </div>
       </>}
     />}
