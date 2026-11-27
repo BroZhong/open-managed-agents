@@ -322,8 +322,10 @@ spec:
               key: OMA_PROXY_URL
         - name: http_proxy
           value: $(HTTP_PROXY)
+        # Managed model hosts reachable from the VPC stay direct, so only
+        # blocked ones (Google) depend on sing-box. Tenant providers ignore this.
         - name: NO_PROXY
-          value: localhost,127.0.0.1,::1,.svc,.cluster.local,172.17.255.52
+          value: localhost,127.0.0.1,::1,.svc,.cluster.local,172.17.255.52,api.deepseek.com,api.kimi.com,open.bigmodel.cn,47.252.6.181
         - name: no_proxy
           value: $(NO_PROXY)
         - name: OMA_PROVIDER_ENCRYPTION_KEY
