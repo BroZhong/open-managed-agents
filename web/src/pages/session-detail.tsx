@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { SessionLoading } from "@/components/session-loading";
 import { ConversationView } from "@/components/conversation-view";
-import { TimelineView } from "@/components/timeline-view";
+import { TrajectoryView } from "@/components/trajectory-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { SessionShareDialog } from "@/components/session-share-dialog";
@@ -179,7 +179,7 @@ function SessionConversation({ id, session, stream, openWorkspaceFile }: {
       {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
       <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
         <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
-        <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Trajectry{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
+        <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Trajectory{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
         <TabButton active={activeTab === "subagents"} onClick={() => setActiveTab("subagents")}>SubAgent</TabButton>
         {childTabs.map(({ execution, label }) => <div key={execution.childId} className="flex shrink-0 items-center" title={execution.prompt}>
           <TabButton active={activeTab === execution.childId} onClick={() => setActiveTab(execution.childId)}>{label}</TabButton>
@@ -212,7 +212,7 @@ function SessionConversation({ id, session, stream, openWorkspaceFile }: {
         <SessionUsageFooter events={events} />
       </div>
       <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
-        {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TimelineView events={events} sessionId={id} />}
+        {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TrajectoryView events={events} sessionId={id} />}
       </div>
       {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
         <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />
