@@ -111,6 +111,13 @@ catalog update and a Web release. Verify a real Turn through the deployed Runner
 before treating the new choice as available; a capability lookup only confirms
 that its model definition loaded.
 
+Managed-model requests use the Runner's environment proxy (`OMA_PROXY_URL`, else
+`HTTP(S)_PROXY`) with `NO_PROXY`. Importing the Pi SDK replaces Node's proxy
+dispatcher, so the Runner reinstalls it after the import. Production lists the
+managed hosts reachable from the VPC in `NO_PROXY`; Google is not listed and goes
+through sing-box. Add a new managed host to `NO_PROXY` only if it is directly
+reachable.
+
 The Host needs these model credentials; the tool Sandbox does not need them.
 Keep actual credentials out of images and version control. Existing Host Pi
 volumes must receive the model definitions as well as updated SDK code.

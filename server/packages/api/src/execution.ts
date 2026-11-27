@@ -25,10 +25,13 @@ export async function startExecution(deps: PgStores & {
   // A Runner with an invalid capacity refuses to start (ADR-0026).
   const capacity = runnerCapacityFromEnv(process.env);
   const owner = runnerClaimOwnerId(process.env);
-  const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
-  if (proxyUrl && !deps.local) {
-    const { ProxyAgent, setGlobalDispatcher } = await import("undici");
-    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  // Importing the Pi SDK (undici 8) replaces Node's env-proxy dispatcher with a
+  // direct Agent, so reinstall it here, after the import. OMA_PROXY_URL wins;
+  // otherwise HTTP(S)_PROXY apply. NO_PROXY is honoured either way.
+  if (!deps.local) {
+    const { EnvHttpProxyAgent, setGlobalDispatcher } = await import("undici");
+    const proxyUrl = process.env.OMA_PROXY_URL;
+    setGlobalDispatcher(new EnvHttpProxyAgent(proxyUrl ? { httpProxy: proxyUrl, httpsProxy: proxyUrl } : {}));
   }
   const workspaceConfig = deps.local ? undefined : workspaceConfigFromEnv(process.env);
   // The platform values Environments' platform secret references resolve to
