@@ -7,6 +7,7 @@ Pi Agents can select these model ids in the console or the Agent API:
 | K3 (Kimi official) | `kimi-coding-plan/k3` | `xhigh` | `max` |
 | GLM-5.3 (BigModel) | `bigmodel/glm-5.3` | `xhigh` | `max` |
 | DeepSeek V4.1 Flash | `deepseek/deepseek-flash` | `xhigh` | `max` |
+| Gemini 4 Neon | `google/gemini-4-neon` | `high` | Pi dynamic thinking budget |
 | GPT-6 Astra | `openai-codex/gpt-6-astra` | `max` | `max` |
 | GPT-6.1 Sol | `openai-codex/gpt-6.1-sol` | `max` | `max` |
 | GPT-5.6 Sol | `openai-codex/gpt-5.6-sol` | `max` | `max` |
@@ -96,6 +97,19 @@ and cached catalogs without initiating a network catalog refresh.
   reasoning content (`thinkingFormat: deepseek`).
 - Astra and Sol use the `openai-codex` OAuth credential in Pi's `auth.json`,
   against `https://chatgpt.com/backend-api`.
+- Gemini 4 Neon uses Google's native `google-generative-ai` API at
+  `https://generativelanguage.googleapis.com/v1beta`. Its checked-in credential
+  reference is `${GEMINI_API_KEY}` (including the interpolation syntax), resolved
+  in the Host environment. The configured limits are 1,048,576 context tokens and
+  65,536 output tokens, with text/image input. Pi 0.83.0 uses its dynamic thinking
+  budget fallback for this model; the listed thinking levels do not establish
+  distinct upstream effort settings. Pricing is omitted, not free inference.
+
+The official picker is the static `PI_MODELS` list in
+`web/src/lib/agent-runtime.ts`. Adding a managed model requires both the Host
+catalog update and a Web release. Verify a real Turn through the deployed Runner
+before treating the new choice as available; a capability lookup only confirms
+that its model definition loaded.
 
 The Host needs these model credentials; the tool Sandbox does not need them.
 Keep actual credentials out of images and version control. Existing Host Pi
@@ -105,7 +119,7 @@ volumes must receive the model definitions as well as updated SDK code.
 
 Production mounts `oma-infra/oma-pi-gateway` at `/opt/pi-agent-seed`, including
 `models.json` and `auth.json`. Merge catalog changes into that Secret while
-preserving unrelated providers and credentials. The three API keys are stored
+preserving unrelated providers and credentials. Managed API keys are stored
 in the Secret's model definitions; the checked-in environment references are
 for other deployment environments. These credentials are Host-only.
 
